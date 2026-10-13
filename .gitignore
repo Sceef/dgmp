@@ -1,0 +1,7 @@
+/build/
+/runtime/
+/profiles/
+/logs/
+/DGMPLauncher.exe
+/control.ini
+/telemetry.json
