@@ -3,6 +3,7 @@
 #include "devmenu.h"
 #include <windows.h>
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <map>
@@ -53,11 +54,7 @@ template<typename T> bool Write(UObject* o,const char* name,T value) {
     auto p=Property(o,name); if(!p) return false;
     Field<T>(o,Field<int>(p,off::UProperty_Offset))=value; return true;
 }
-UObject* Instance(const char* name) {
-    auto cls=FindClass(name); if(!cls) return nullptr;
-    for(int i=0,n=NumObjects();i<n;++i) { auto o=ObjectAt(i); if(o && !(o->ObjectFlags&0x10) && IsValid(o) && IsA(o,cls)) return o; }
-    return nullptr;
-}
+UObject* Instance(const char* name) { return FindRuntimeInstance(name); }
 bool BoolCall(UObject* o,const char* function) {
     auto f=IsValid(o)?Fn(o,function):nullptr; if(!f) return false;
     Params p(f); Call(o,function,&p); return p.GetBool("ReturnValue");
@@ -124,6 +121,14 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
         return;
     }
     if(storyOff && object==localPawn && (name=="EnteredInfestation" || name=="LeftInfestation" || name=="OnEnteredInfestation_Event_0" || name=="PlayInventoryVO" || name=="CheckAmmoCounts")) return;
+    if(storyOff && object==hudWidget && name=="AreTutorialsDisabled" && parameters) {
+        if(auto p=FindProperty(function,"ReturnValue")) {
+            auto byte=static_cast<uint8_t*>(parameters)+Field<int>(p,off::UProperty_Offset)+Field<uint8_t>(p,off::BoolProperty_ByteOffset);
+            *byte|=Field<uint8_t>(p,off::BoolProperty_FieldMask);
+        }
+        return;
+    }
+    if(storyOff && object==hudWidget && (name=="DisplaySimpleTutorial" || name=="ProcessSimpleTutorialQueue")) return;
     if(storyOff && object==hudWidget && (name=="DisplayObjective" || name=="AddObjectiveUnlocked" || name=="DisplayMissionInfoPopup" || name=="EnableMissionFailMessage")) return;
     if(onlyMap && object==menu && NonMapInput(name)) {
         ++state.blockedMenus; dg::Log("Non-map shortcut blocked: %s",name.c_str()); return;
@@ -160,12 +165,13 @@ int ResolveMapEnum() {
         Params p(fn); if(!p.Set("Menu",value)) return -1; Call(menu,"GetMenu",&p);
         auto widget=p.Get<UObject*>("UserWidget");
         if(IsValid(widget) && IsAByName(widget,"UI_MapMenuWidget3D_C")) {
-            mapWidget=widget; dg::Log("Resolved map menu enum=%u from GetMenu",value); return value;
+            dg::Log("Resolved map menu enum=%u from GetMenu",value); return value;
         }
     } return -1;
 }
 void Hide(UObject* widget) {
     if(!IsValid(widget)) return;
+    if(Read<uint8_t>(widget,"Visibility",255)==1 && !GetBoolProp(widget,"bIsEnabled")) return;
     auto fn=Fn(widget,"SetVisibility"); if(!fn) return;
     Params p(fn); p.Set<uint8_t>("InVisibility",1); Call(widget,"SetVisibility",&p); // Collapsed
     if(auto f=Fn(widget,"SetIsEnabled")) { Params q(f); q.SetBool("bInIsEnabled",false); Call(widget,"SetIsEnabled",&q); }
@@ -227,7 +233,7 @@ void ApplySavingPolicy(UObject* gameMode) {
 void HideMapControls() {
     if(!onlyMap || !IsValid(mapWidget)) return;
     unsigned int count=0;
-    for(const char* name:{"MenuInteract_Skills","MenuInteract_Inventory","MenuInteract_Modifiers","MenuInteract_Storylines","MenuInteract_Storylines2","MenuInteract_Storylines3","MenuInteract_Storylines4","MenuInteract_Deacon","Mission_Box","Mission_Overlay","MissionInfoBox","SelectedStorylinePanel","Arcade_Mission_Box","ArcadeInteract_Modifiers","RegionEntryBorder","RegionStatusBorder","Region_Info","Region_Percent","Storyline_Overlay","StorylineAccent","StorylineBackground"}) {
+    for(const char* name:{"MenuInteract_Skills","MenuInteract_Inventory","MenuInteract_Modifiers","MenuInteract_Storylines","MenuInteract_Storylines2","MenuInteract_Storylines3","MenuInteract_Storylines4","MenuInteract_Deacon","Mission_Box","Mission_Overlay","MissionInfoBox","SelectedStorylinePanel","Arcade_Mission_Box","ArcadeInteract_Modifiers","RegionEntryBorder","RegionStatusBorder","Region_Info","Region_Percent","Storyline_Overlay","StorylineAccent","StorylineBackground","StorylinePrompt_Panel","StorylinePrompt_TitleBorder","StorylinePrompt_Ttile","Storyline_Banner","ObjectivePromptLayout"}) {
         auto widget=Read<UObject*>(mapWidget,name); if(IsValid(widget)) { Hide(widget); ++count; }
     }
     state.hiddenControls=count;
@@ -300,13 +306,18 @@ void SceneVisible(UObject* component,bool visible) {
 void SuppressPresentation() {
     auto miniClass=FindClass("MiniMapLocationComponent"),iconClass=FindClass("MapWidgetComponent");
     auto objectiveClass=FindClass("BendObjective"),triggerClass=FindClass("BendGameMissionTrigger"),jobMarkerClass=FindClass("BendJobMiniMapMarker"),jobScriptClass=FindClass("BendJobScript"),zoneClass=FindClass("BendNestingZoneActor");
-    state.hiddenMarkers=state.visibleFuelMarkers=state.disabledZones=0;
+    static int cursor=0;
+    const int n=NumObjects();
+    if(cursor>=n) cursor=0;
+    if(cursor==0) state.hiddenMarkers=state.visibleFuelMarkers=state.disabledZones=0;
     std::vector<UObject*> objects;
-    for(int i=0,n=NumObjects();i<n;++i) {
+    const int end=std::min(n,cursor+2048);
+    for(int i=cursor;i<end;++i) {
         auto o=ObjectAt(i); if(!o || !IsValid(o)) continue;
         if((miniClass && IsA(o,miniClass)) || (iconClass && IsA(o,iconClass)) || (storyOff && ((objectiveClass && IsA(o,objectiveClass)) || (triggerClass && IsA(o,triggerClass)) || (jobMarkerClass && IsA(o,jobMarkerClass)) || (jobScriptClass && IsA(o,jobScriptClass)) || (zoneClass && IsA(o,zoneClass)))))
             if(RuntimeObject(o)) objects.push_back(o);
     }
+    cursor=end;
     for(auto o:objects) {
         if(miniClass && IsA(o,miniClass)) {
             const bool visible=MarkerAllowed(o);
@@ -353,6 +364,9 @@ void SuppressPresentation() {
             if(auto c=Read<UObject*>(o,"AudioComponent");IsValid(c)) Call(c,"Stop");
         }
     }
+    static ULONGLONG nextHud=0;
+    if(GetTickCount64()<nextHud) return;
+    nextHud=GetTickCount64()+500;
     if(storyOff && IsValid(localPawn)) {
         BoolArg(localPawn,"SetCanPlayVO","CanPlayVO",false);
         BoolArg(localPawn,"SetCanPlayResponseVO","CanPlayResponseVO",false);
@@ -377,6 +391,7 @@ void SuppressPresentation() {
         }
         if(IsValid(hudWidget)) {
             Install(hudWidget);
+            if(First(hudWidget)) { Call(hudWidget,"ClearTutorials"); Call(hudWidget,"ClearTutorialMultis"); }
             state.hiddenHudControls=0;
             for(const char* key:{"_Objectives","MissionPopup","NotifyBanner","NotifyCollectible","NotifyLevelReward","NotifyStandardWrapper","NotifyStoryline","SimpleTutorialOverlay","ObjCallout","XP"})
                 if(auto w=Read<UObject*>(hudWidget,key);IsValid(w)) { Hide(w); ++state.hiddenHudControls; }
@@ -439,19 +454,26 @@ void PauseNativeJobs(UObject* gameMode) {
 }
 void CleanWorld() {
     if(!storyOff) return;
+    const auto tutorialSimple=FindClass("BendTutorialSimpleData"),tutorialMulti=FindClass("BendTutorialMultiData");
     const auto nestClass=FindClass("BendNest"),pieceClass=FindClass("FreakerNestPieceBase_C"),spawnClass=FindClass("BendNestSpawnLocation");
     const auto meshClass=FindClass("StaticMeshComponent"),blockerClass=FindClass("BendSplineBlocker"),restrictedClass=FindClass("XpecRestrictArea");
     const auto barricadeClass=FindClass("BP_AmbushZoneBarricade_MASTER_C"),doorClass=FindClass("BendDoor"),zoneClass=FindClass("BendNestingZone");
     auto material=Read<UObject*>(map,"MapMID");
     auto scalarFn=IsValid(material)?Fn(material,"SetScalarParameterValue"):nullptr;
-    state.nestObjectsHidden=state.storyBlockersDisabled=state.doorsUnlocked=state.zoneParametersCleared=0;
+    static int cursor=0;
+    const int n=NumObjects();
+    if(cursor>=n) cursor=0;
+    if(cursor==0) state.nestObjectsHidden=state.storyBlockersDisabled=state.doorsUnlocked=state.zoneParametersCleared=0;
     std::vector<UObject*> objects;
-    for(int i=0,n=NumObjects();i<n;++i) {
+    const int end=std::min(n,cursor+2048);
+    for(int i=cursor;i<end;++i) {
         auto o=ObjectAt(i); if(!o || !IsValid(o)) continue;
+        if((tutorialSimple && IsA(o,tutorialSimple)) || (tutorialMulti && IsA(o,tutorialMulti))) { SetBoolProp(o,"bTutorialDisplayed",true); continue; }
         const bool zone=zoneClass && IsA(o,zoneClass) && !(o->ObjectFlags&0x10);
         if(zone || ((nestClass && IsA(o,nestClass)) || (pieceClass && IsA(o,pieceClass)) || (spawnClass && IsA(o,spawnClass)) || (meshClass && IsA(o,meshClass)) || (blockerClass && IsA(o,blockerClass)) || (restrictedClass && IsA(o,restrictedClass)) || (barricadeClass && IsA(o,barricadeClass)) || (doorClass && IsA(o,doorClass))))
             if(zone || RuntimeObject(o)) objects.push_back(o);
     }
+    cursor=end;
     for(auto o:objects) {
         if(zoneClass && IsA(o,zoneClass)) {
             if(scalarFn) { Params p(scalarFn); p.Set("ParameterName",o->Name); p.Set<float>("Value",0); Call(material,"SetScalarParameterValue",&p); ++state.zoneParametersCleared; }
@@ -481,7 +503,8 @@ void CleanWorld() {
         }
     }
     state.zoneOverlayHidden=state.zoneParametersCleared>0;
-    ClearTrackedRoute();
+    static ULONGLONG nextRoute=0;
+    if(GetTickCount64()>=nextRoute) { nextRoute=GetTickCount64()+500; ClearTrackedRoute(); }
 }
 void EditorAbilities(UObject* controller) {
     if(abilityController!=controller) { abilityController=controller; abilitiesBlocked=false; }
@@ -514,7 +537,7 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
         ApplySavingPolicy(gameMode);
         if(!IsValid(menu)) { menu=Instance("BP_Menu3D_C"); state.mapEnum=-1; }
         if(!IsValid(map)) map=Instance("BP_Map3D_C");
-        if(!IsValid(mapWidget) && IsValid(menu)) mapWidget=Read<UObject*>(menu,"Menu_Base_Map");
+        if(!IsValid(mapWidget)) mapWidget=Instance("UI_MapMenuWidget3D_C");
         if(IsValid(menu)) { Install(menu); ApplyMenuPolicy(); }
         if(IsValid(map)) {
             const bool wasFog=GetBoolProp(map,"bDisableFog");
@@ -536,8 +559,12 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
             }
         }
         PauseNativeJobs(gameMode);
-        SuppressPresentation();
-        CleanWorld();
+
+    }
+    static ULONGLONG nextBatch=0;
+    if(GetTickCount64()>=nextBatch) {
+        nextBatch=GetTickCount64()+8;
+        SuppressPresentation(); CleanWorld();
     }
     if(IsValid(menu)) state.menuActive=BoolCall(menu,"IsMenuActive");
     if(!onlyMap) state.mapOnly=false;

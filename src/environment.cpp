@@ -17,6 +17,8 @@ Snapshot published;
 std::deque<Request> requests;
 uint64_t revision=0,processed=0;
 UObject* manager=nullptr;
+FWeakObjectPtr precipitationRef{-1,0};
+int forcedWeather=-1;
 float resumeRate=1;
 bool paused=false,automatic=true,automaticOverride=false;
 std::string message="Waiting for world";
@@ -28,10 +30,31 @@ template<typename T> T Read(UObject* o,const char* key,T fallback={}) {
     for(auto cls=o?o->Class:nullptr;cls;cls=SuperOf(cls)) if(auto p=FindProperty(cls,key)) return Field<T>(o,Field<int>(p,off::UProperty_Offset));
     return fallback;
 }
-UObject* FindManager() {
-    auto cls=FindClass("BendWorldManager"); if(!cls) return nullptr;
-    for(int i=0,n=NumObjects();i<n;++i) if(auto o=ObjectAt(i);o && !(o->ObjectFlags&0x30) && IsValid(o) && IsA(o,cls)) return o;
-    return nullptr;
+UObject* FindManager() { return FindRuntimeInstance("BendWorldManager"); }
+template<typename T> bool Write(UObject* o,const char* key,T value) {
+    for(auto cls=o?o->Class:nullptr;cls;cls=SuperOf(cls)) if(auto p=FindProperty(cls,key)) { Field<T>(o,Field<int>(p,off::UProperty_Offset))=value; return true; }
+    return false;
+}
+UObject* Precipitation() {
+    if(auto o=Resolve(precipitationRef);IsValid(o)) return o;
+    auto o=FindRuntimeInstance("BendPrecipitationManager");
+    if(IsValid(o)) precipitationRef={o->InternalIndex,SerialAt(o->InternalIndex)};
+    return o;
+}
+bool ApplyPrecipitation(int id) {
+    auto o=Precipitation(); if(!IsValid(o)) return false;
+    // The shipping game samples its cloud simulation, ignoring legacy WorldSpec weather.
+    // Use that simulation's interpolated inputs; native particles, audio and wetness still update normally.
+    if(!SetBoolProp(o,"SampleWeatherDataDynamically",false)) return false;
+    const float rain=id==2?0.3f:id==4?1.f:0.f;
+    const float snow=id==3?0.3f:id==5?1.f:0.f;
+    const float cloud=id==0?0.f:id==1?0.75f:1.f;
+    const bool written=Write(o,"InterpolatedRainfallIntensity",rain) && Write(o,"InterpolatedSnowfallIntensity",snow)
+        && Write(o,"InterpolatedCloudCover",cloud)
+        && Write(o,"RainIntensity",rain) && Write(o,"SnowIntensity",snow)
+        && Write(manager,"RainIntensity",rain) && Write(manager,"SnowIntensity",snow)
+        && Write(manager,"RainIntensityCloudSimulation",rain) && Write(manager,"CloudIntensity",cloud);
+    return written;
 }
 bool OneFloat(const char* name,float value) {
     auto f=Fn(manager,name); auto first=FirstParam(f);
@@ -78,14 +101,18 @@ bool Apply(const Request& r) {
     }
     if(r.kind==Kind::Automatic) {
         automatic=r.value!=0; automaticOverride=true;
+        if(auto o=Precipitation();IsValid(o)) SetBoolProp(o,"SampleWeatherDataDynamically",automatic);
+        if(automatic) forcedWeather=-1;
         return SetBoolProp(manager,"EnableAmbientWeatherChange",automatic);
     }
     const auto id=uint32_t(r.value);
     if(std::none_of(catalog.begin(),catalog.end(),[id](const auto& info){return info.id==id;})) return false;
+    if(!ApplyPrecipitation(int(id))) return false;
     auto f=Fn(manager,"SelectWorldWeather"); if(!f) return false;
     Params p(f);
     if(!p.Set<uint8_t>("NewWeather",uint8_t(id)) || !p.Set<uint8_t>("NewWeatherTransitionRate",1) || !p.Set<float>("RelativeTime",0)) return false;
     if(!Call(manager,"SelectWorldWeather",&p)) return false;
+    forcedWeather=int(id);
     automatic=false; automaticOverride=true;
     SetBoolProp(manager,"EnableAmbientWeatherChange",false); return true;
 }
@@ -112,6 +139,7 @@ void Update(bool ready) {
             message=applied?"Applied":"Engine rejected environment request";
             dg::Log("Environment request %llu kind=%u value=%.3f applied=%d",static_cast<unsigned long long>(r.revision),unsigned(r.kind),r.value,applied);
         }
+        if(!automatic && forcedWeather>=0) ApplyPrecipitation(forcedWeather);
         if(paused) OneFloat("SetWorldTimeRate",0);
         if(automaticOverride) SetBoolProp(manager,"EnableAmbientWeatherChange",automatic);
     }

@@ -74,6 +74,7 @@ bool IsA(const UObject* o, const UObject* cls);
 bool IsAByName(const UObject* o, const char* className);
 
 UObject* FindClass(const char* shortName);
+UObject* FindRuntimeInstance(const char* className);
 UObject* FindObject(const char* fullPath);
 UObject* FindFunction(const UObject* cls, const char* name);
 UObject* FindProperty(const UObject* strct, const char* name);

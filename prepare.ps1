@@ -12,7 +12,7 @@ $sourceBin = Join-Path $gameRoot 'BendGame\Binaries\Win64'
 $runtimeRoot = Join-Path $dgmpRoot 'runtime'
 $runtimeBin = Join-Path $runtimeRoot 'BendGame\Binaries\Win64'
 $profile = Join-Path $dgmpRoot 'profiles\editor\BendGame\Saved'
-if (Get-Process -Name DaysGone -ErrorAction SilentlyContinue) { throw 'Close Days Gone before preparing or launching DGMP.' }
+if (Get-Process -Name DaysGone -ErrorAction SilentlyContinue | Where-Object { !$_.HasExited }) { throw 'Close Days Gone before preparing or launching DGMP.' }
 if (!(Test-Path -LiteralPath (Join-Path $dgmpRoot 'build\version.dll'))) { throw 'Build DGMP first: run build.bat.' }
 New-Item -ItemType Directory -Path $runtimeBin,$profile,(Join-Path $dgmpRoot 'logs'),(Join-Path $dgmpRoot 'maps') -Force | Out-Null
 foreach ($name in @('telemetry.json','control.ini')) {

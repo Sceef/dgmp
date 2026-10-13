@@ -50,11 +50,7 @@ std::map<int,int> processed;
 fs::path Ini() { return fs::path(profile::Root())/L"DGMP.ini"; }
 double Now() { return GetTickCount64()/1000.0; }
 
-UObject* Instance(const char* className) {
-    auto cls=FindClass(className); if(!cls) return nullptr;
-    for(int i=0,n=NumObjects();i<n;++i) { auto o=ObjectAt(i); if(o && !(o->ObjectFlags&0x10) && IsValid(o) && IsA(o,cls)) return o; }
-    return nullptr;
-}
+UObject* Instance(const char* className) { return FindRuntimeInstance(className); }
 bool BoolArg(UObject* o,const char* function,const char* name,bool value) {
     auto fn=o?Fn(o,function):nullptr; if(!fn) return false;
     Params p(fn); if(!p.SetBool(name,value)) return false; return Call(o,function,&p);
@@ -279,11 +275,13 @@ void BlockTriggers() {
 }
 bool Once(UObject* o) { if(!o) return false; const int serial=SerialAt(o->InternalIndex); if(processed[o->InternalIndex]==serial) return false; processed[o->InternalIndex]=serial; return true; }
 void Sweep(double now) {
-    if(now<nextSweep) return; nextSweep=now+1;
+    if(now<nextSweep) return; nextSweep=now+0.008;
+    static double nextManagers=0;
+    if(now>=nextManagers) { nextManagers=now+1;
     if(suppressStory) {
         if(auto mission=Instance("BendGameMission")) {
             SetBoolProp(mission,"MissionAndJobProgressionBlocked",true);
-            if(Once(mission)) { BoolArg(mission,"SetActorTickEnabled","bEnabled",false); dg::Log("Mission progression blocked; active=%d",GetBoolProp(mission,"IsMissionActive")); }
+            if(Once(mission)) { dg::Log("Mission progression blocked; active=%d",GetBoolProp(mission,"IsMissionActive")); }
         }
         for(const char* key:{"CascadeLocked","BelknapLocked","LostLakeLocked","CraterLakeLocked"}) SetBoolProp(gameMode,key,false);
     }
@@ -295,9 +293,12 @@ void Sweep(double now) {
             if(auto f=Fn(gen,"SetImportanceToBlockBelow")) { Params p(f); p.Set<uint8_t>("importance",255); Call(gen,"SetImportanceToBlockBelow",&p); }
         }
     }
+    }
     auto triggerCls=FindClass("BendGameMissionTrigger"), restrictCls=FindClass("XpecRestrictArea"), aiCls=FindClass("BendAIPawn");
     std::vector<UObject*> hide;
-    for(int i=0,n=NumObjects();i<n;++i) {
+    static int cursor=0; const int n=NumObjects(); if(cursor>=n) cursor=0;
+    const int end=std::min(n,cursor+2048);
+    for(int i=cursor;i<end;++i) {
         auto o=ObjectAt(i); if(!o || o==pawn || (o->ObjectFlags&0x10) || !IsValid(o)) continue;
         if(suppressStory && ((triggerCls && IsA(o,triggerCls)) || (restrictCls && IsA(o,restrictCls)))) {
             if(Once(o)) { hide.push_back(o); ++triggers; }
@@ -305,6 +306,7 @@ void Sweep(double now) {
             if(Once(o)) { hide.push_back(o); ++removedAI; }
         }
     }
+    cursor=end;
     for(auto o:hide) {
         BoolArg(o,"SetActorHiddenInGame","bNewHidden",true);
         BoolArg(o,"SetActorEnableCollision","bNewActorEnableCollision",false);
@@ -414,8 +416,26 @@ void Status(double now) {
         file << "]}\n";
     }
     MoveFileExW(tmp.c_str(),dest.c_str(),MOVEFILE_REPLACE_EXISTING);
-    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(text);
+    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.1 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(text);
     static double nextLog=0; if(now>=nextLog) { nextLog=now+10; dg::Log("Status %s ready=%d fly=%d pos=(%.1f %.1f %.1f) triggers=%u ai=%u",stage.c_str(),ready,flying,pos.X,pos.Y,pos.Z,triggers,removedAI); }
+}
+void FinishBootstrapFade() {
+    if(!suppressStory) return;
+    auto mission=Instance("BendGameMission"); if(!IsValid(mission)) return;
+    if(GetBoolProp(mission,"FadingFromBlack")) {
+        Call(mission,"StopFading");
+        if(auto f=Fn(mission,"FadeFromBlackDone")) { Params p(f); Call(mission,"FadeFromBlackDone",&p); }
+        // The native fade component can retain its last near-black blend while story jobs are paused.
+        if(auto f=Fn(mission,"GetFadingPostProcess")) {
+            Params p(f); Call(mission,"GetFadingPostProcess",&p);
+            if(auto component=p.Get<UObject*>("ReturnValue");IsValid(component)) {
+                for(auto cls=component->Class;cls;cls=SuperOf(cls)) if(auto property=FindProperty(cls,"BlendWeight")) {
+                    Field<float>(component,Field<int>(property,off::UProperty_Offset))=0; break;
+                }
+            }
+        }
+        dg::Log("Bootstrap native fade completed: fading=%d",GetBoolProp(mission,"FadingFromBlack"));
+    }
 }
 void Update(float dt) {
     const double now=Now(); lastDelta=dt; Refresh(now);
@@ -441,6 +461,7 @@ void Update(float dt) {
     policy::Update(pawn,controller,gameMode,flying || devmenu::IsOpen() || !ready || pendingArrival,revealMap,true,suppressStory);
     if(!bootstrapComplete || panel::IsLoading()) {
         if(ready && spawnApplied && !pendingArrival && !Loading()) {
+            FinishBootstrapFade();
             bootstrapComplete=true; panel::Loading(false,1.f,L"Мир готов");
             dg::Log("Loading cover released: world ready and spawn fully aligned");
         } else if(pendingArrival) panel::Loading(true,0.88f,L"Подготовка точки спавна");
@@ -453,13 +474,18 @@ void ReportException(unsigned long code) {
     ++errors; dg::Log("DGMP frame exception 0x%08X (%u)",code,errors);
     if(errors>=5) { disabled=true; panel::Text(L"DGMP disabled after repeated errors. See logs/DGMP.log"); }
 }
+int CaptureException(EXCEPTION_POINTERS* info) {
+    dg::Log("Exception site=%p gameRVA=%llX",info->ExceptionRecord->ExceptionAddress,
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress)-Base()));
+    return EXCEPTION_EXECUTE_HANDLER;
+}
 void SafeUpdate(float dt) {
     __try { if(!disabled) Update(dt); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { ReportException(GetExceptionCode()); }
+    __except(CaptureException(GetExceptionInformation())) { ReportException(GetExceptionCode()); }
 }
 void SafeInputPolicy() {
     __try { if(!disabled) { DevInputPolicy(); policy::Update(pawn,controller,gameMode,flying || devmenu::IsOpen() || !ready || pendingArrival,revealMap,true,suppressStory); } }
-    __except(EXCEPTION_EXECUTE_HANDLER) { ReportException(GetExceptionCode()); }
+    __except(CaptureException(GetExceptionInformation())) { ReportException(GetExceptionCode()); }
 }
 using TickFn=void(__fastcall*)(UObject*,float,bool);
 TickFn originalTick=nullptr;
@@ -472,7 +498,7 @@ UObject* FindEngine() {
 void DGMPInitThread() {
     const auto logPath=fs::path(profile::Root())/L"logs"/L"DGMP.log";
     dg::LogOpen(logPath.string().c_str()); panel::Start();
-    dg::Log("DGMP v0.5 loading; built %s %s; profile imports patched=%d",__DATE__,__TIME__,profile::PatchedCount());
+    dg::Log("DGMP v0.5.1 loading; built %s %s; profile imports patched=%d",__DATE__,__TIME__,profile::PatchedCount());
     dg::Log("Isolated profile: %ls",profile::Saved().c_str());
     panel::Loading(true,0.1f,L"Подготовка DGMP");
     if(!ue::Init()) { panel::Text(L"DGMP: unsupported game build; see log"); panel::Loading(true,0,L"Эта сборка игры не поддерживается"); return; }

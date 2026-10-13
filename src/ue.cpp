@@ -115,7 +115,7 @@ std::string NameOf(FName n)
 FName FindName(const char* str)
 {
     static std::unordered_map<std::string, int32_t> cache;
-    if (auto it = cache.find(str); it != cache.end()) return {it->second, 0};
+    if (auto it = cache.find(str); it != cache.end() && it->second>=0) return {it->second, 0};
     uint8_t** chunks = *g_names;
     const int32_t count = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(chunks) + 0x400);
     for (int32_t i = 0; i < count; ++i) {
@@ -197,10 +197,11 @@ UObject* FindClass(const char* shortName)
     if (it != g_classCache.end() && IsValid(it->second)) return it->second;
     const uint64_t nowMs = GetTickCount64();
     if (auto m = missUntil.find(shortName); m != missUntil.end() && nowMs < m->second) return nullptr;
-    for (int32_t i = 0, n = NumObjects(); i < n; ++i) {
+    const auto wanted = FindName(shortName);
+    for (int32_t i = 0, n = NumObjects(); wanted.Index >= 0 && i < n; ++i) {
         UObject* o = ObjectAt(i);
         if (!o || !o->Class) continue;
-        if (GetName(o) != shortName) continue;
+        if (o->Name.Index != wanted.Index || o->Name.Number != 0) continue;
         std::string cn = GetName(o->Class);
         if (cn == "Class" || cn == "BlueprintGeneratedClass" || cn == "WidgetBlueprintGeneratedClass") {
             g_classCache[shortName] = o;
@@ -208,6 +209,27 @@ UObject* FindClass(const char* shortName)
         }
     }
     missUntil[shortName] = nowMs + 5000; // not loaded (yet); don't rescan every frame
+    return nullptr;
+}
+
+UObject* FindRuntimeInstance(const char* className) {
+    struct Entry { FWeakObjectPtr object{-1,0}; uint64_t retry=0; };
+    static thread_local std::unordered_map<std::string,Entry> cache;
+    auto& entry=cache[className];
+    if(auto o=Resolve(entry.object);IsValid(o) && IsAByName(o,className)) return o;
+    const auto now=GetTickCount64(); if(now<entry.retry) return nullptr;
+    entry.retry=now+1000;
+    auto cls=FindClass(className); if(!cls) return nullptr;
+    for(int i=0,n=NumObjects();i<n;++i) {
+        auto o=ObjectAt(i); if(!IsValid(o) || !IsA(o,cls)) continue;
+        bool runtime=true;
+        for(auto outer=o;outer;outer=outer->Outer) {
+            if(outer->ObjectFlags&0x30) { runtime=false; break; }
+            const auto type=GetName(outer->Class);
+            if(type=="Class" || type=="BlueprintGeneratedClass" || type=="WidgetBlueprintGeneratedClass") { runtime=false; break; }
+        }
+        if(runtime) { entry.object={i,SerialAt(i)}; return o; }
+    }
     return nullptr;
 }
 
@@ -253,10 +275,18 @@ UObject* FindFunction(const UObject* cls, const char* name)
 
 UObject* FindProperty(const UObject* strct, const char* name)
 {
-    if (!strct) return nullptr;
-    for (UObject* p = Field<UObject*>(strct, off::UStruct_Children); p; p = Field<UObject*>(p, off::UField_Next))
-        if (GetName(p) == name) return p;
-    return nullptr;
+    if (!IsValid(strct)) return nullptr;
+    struct Entry { int serial=0; std::unordered_map<std::string,UObject*> fields; };
+    static thread_local std::unordered_map<const UObject*,Entry> cache;
+    auto& entry=cache[strct];
+    const int serial=SerialAt(strct->InternalIndex);
+    if(entry.serial!=serial || entry.fields.empty()) {
+        entry.serial=serial; entry.fields.clear();
+        for(auto p=Field<UObject*>(strct,off::UStruct_Children);p;p=Field<UObject*>(p,off::UField_Next))
+            entry.fields.emplace(GetName(p),p);
+    }
+    const auto it=entry.fields.find(name);
+    return it==entry.fields.end()?nullptr:it->second;
 }
 
 void ProcessEvent(UObject* obj, UObject* fn, void* params) { g_processEvent(obj, fn, params); }
