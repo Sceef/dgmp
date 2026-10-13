@@ -404,7 +404,7 @@ void Status(double now) {
              << ",\"blockedGameplay\":" << ui.blockedGameplay << ",\"hiddenNativeMarkers\":" << ui.hiddenMarkers << ",\"visibleFuelMarkers\":" << ui.visibleFuelMarkers
              << ",\"disabledNestZones\":" << ui.disabledZones << ",\"hiddenHudControls\":" << ui.hiddenHudControls << ",\"mapMarkerMask\":" << ui.markerMask
              << ",\"playerVODisabled\":" << ui.playerVODisabled << ",\"openWorldVOPaused\":" << ui.openWorldVOPaused << ",\"zoneOverlayHidden\":" << ui.zoneOverlayHidden
-             << ",\"savingBlocked\":" << ui.savingBlocked << ",\"blockedSaveRequests\":" << ui.blockedSaveRequests << ",\"blockedSaveFileWrites\":" << profile::BlockedSaveWrites() << ",\"hiddenSaveControls\":" << ui.hiddenSaveControls << ",\"activeNativeJobs\":" << ui.activeNativeJobs << ",\"pausedNativeJobs\":" << ui.pausedNativeJobs << ",\"nativeMissionActive\":" << ui.nativeMissionActive << ",\"trackingCleared\":" << ui.trackingCleared << ",\"nestObjectsHidden\":" << ui.nestObjectsHidden << ",\"storyBlockersDisabled\":" << ui.storyBlockersDisabled
+             << ",\"savingBlocked\":" << ui.savingBlocked << ",\"blockedSaveRequests\":" << ui.blockedSaveRequests << ",\"blockedSaveFileWrites\":" << profile::BlockedSaveWrites() << ",\"hiddenSaveControls\":" << ui.hiddenSaveControls << ",\"removedPauseControls\":" << ui.removedPauseControls << ",\"blockedPauseRequests\":" << ui.blockedPauseRequests << ",\"activeNativeJobs\":" << ui.activeNativeJobs << ",\"pausedNativeJobs\":" << ui.pausedNativeJobs << ",\"nativeMissionActive\":" << ui.nativeMissionActive << ",\"trackingCleared\":" << ui.trackingCleared << ",\"nestObjectsHidden\":" << ui.nestObjectsHidden << ",\"storyBlockersDisabled\":" << ui.storyBlockersDisabled
              << ",\"doorsUnlocked\":" << ui.doorsUnlocked << ",\"zoneParametersCleared\":" << ui.zoneParametersCleared;
         const auto env=environment::GetSnapshot();
         file << ",\"devMenuOpen\":" << devmenu::IsOpen() << ",\"environmentAvailable\":" << bool(env.state.available)
@@ -416,7 +416,7 @@ void Status(double now) {
         file << "]}\n";
     }
     MoveFileExW(tmp.c_str(),dest.c_str(),MOVEFILE_REPLACE_EXISTING);
-    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.1 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(text);
+    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.2 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(text);
     static double nextLog=0; if(now>=nextLog) { nextLog=now+10; dg::Log("Status %s ready=%d fly=%d pos=(%.1f %.1f %.1f) triggers=%u ai=%u",stage.c_str(),ready,flying,pos.X,pos.Y,pos.Z,triggers,removedAI); }
 }
 void FinishBootstrapFade() {
@@ -498,7 +498,7 @@ UObject* FindEngine() {
 void DGMPInitThread() {
     const auto logPath=fs::path(profile::Root())/L"logs"/L"DGMP.log";
     dg::LogOpen(logPath.string().c_str()); panel::Start();
-    dg::Log("DGMP v0.5.1 loading; built %s %s; profile imports patched=%d",__DATE__,__TIME__,profile::PatchedCount());
+    dg::Log("DGMP v0.5.2 loading; built %s %s; profile imports patched=%d",__DATE__,__TIME__,profile::PatchedCount());
     dg::Log("Isolated profile: %ls",profile::Saved().c_str());
     panel::Loading(true,0.1f,L"Подготовка DGMP");
     if(!ue::Init()) { panel::Text(L"DGMP: unsupported game build; see log"); panel::Loading(true,0,L"Эта сборка игры не поддерживается"); return; }

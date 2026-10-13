@@ -78,6 +78,8 @@ UObject* FindRuntimeInstance(const char* className);
 UObject* FindObject(const char* fullPath);
 UObject* FindFunction(const UObject* cls, const char* name);
 UObject* FindProperty(const UObject* strct, const char* name);
+// Uses Kismet's native generic Array_Remove, including destruction of FText/struct entries.
+bool RemoveArrayEntry(UObject* object, const char* propertyName, int32_t index);
 
 template <typename T>
 inline T& Field(const void* o, int offset) { return *reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(o) + offset); }

@@ -28,6 +28,10 @@ UObject* worldVO=nullptr;
 UObject* saveGameMode=nullptr;
 UObject* optionsMenu=nullptr;
 UObject* weaponHud=nullptr;
+UObject* dlcUi=nullptr;
+UObject* pauseControls=nullptr;
+std::array<bool,256> blockedPauseOptions{};
+bool pauseOptionsResolved=false;
 std::map<int,int> configuredObjects;
 struct MarkerBaseline { int serial; bool waypoint; };
 std::map<int,MarkerBaseline> markerBaselines;
@@ -80,6 +84,19 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
     const std::string name=GetName(function);
     if(devmenu::IsOpen() && (object==localPawn || object==abilityController) && (name.rfind("InpActEvt_",0)==0 || name.rfind("InpAxisEvt_",0)==0)) return;
     const bool quickSave=Has(name,"QuickSave") || Has(name,"Quicksave");
+    if(object==optionsMenu) {
+        const bool forbidden=name=="OnLoadGameSelected" || name=="OnFileSelectedForLoad" || name=="OnFileSelectedForCriticalLoad"
+            || name=="OnPhotoModeSelected" || name=="OnQuitSelected" || name=="QuitToMainMenu"
+            || name=="QuitToMainMenu_ForChallengeMenu" || name=="QuitToMainMenu_ForArcadeMenu";
+        bool forbiddenSelection=false;
+        if(name=="HandleSelectedProfileOption" && parameters) if(auto p=FindProperty(function,"ProfileOption"))
+            forbiddenSelection=blockedPauseOptions[Field<uint8_t>(parameters,Field<int>(p,off::UProperty_Offset))];
+        if(forbidden || forbiddenSelection) {
+            ++state.blockedPauseRequests;
+            if(state.blockedPauseRequests<=8) dg::Log("Native pause option blocked: %s",name.c_str());
+            return;
+        }
+    }
     const bool saveMenu=object==optionsMenu && (name=="OnSaveGameSelected" || name=="OnFileSelectedForSave" || name=="PrepareGameStateForSave" || name=="SpawnOverwriteSavePopup" || name=="OnSaveConfirm" || name=="OnSaveConfirmPS5");
     const bool savePrompt=(object==localPawn || object==weaponHud) && (name=="DisplaySaveGameUI" || name=="DisplaySaveGameUIOnCheckpoint" || name=="DisplaySaveGameNotification" || quickSave);
     if(saveMenu || savePrompt || ((object==localPawn || object==abilityController) && quickSave)) {
@@ -128,7 +145,14 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
         }
         return;
     }
-    if(storyOff && object==hudWidget && (name=="DisplaySimpleTutorial" || name=="ProcessSimpleTutorialQueue")) return;
+    // Image popups (infestation zones etc.) are "multi" tutorials registered on the HUD; the
+    // DLC UI manager exposes the same interface. Dropping the request also skips their pause.
+    if(storyOff && (object==hudWidget || object==dlcUi) && (name=="DisplaySimpleTutorial" || name=="ProcessSimpleTutorialQueue"
+        || name=="SpawnSimpleTutorial" || name=="I_SpawnSimpleTutorial" || name=="RegisterTutorialMulti" || name=="I_RegisterTutorialMulti")) {
+        ++state.blockedTutorials;
+        if(state.blockedTutorials<=8) dg::Log("Native tutorial blocked: %s",name.c_str());
+        return;
+    }
     if(storyOff && object==hudWidget && (name=="DisplayObjective" || name=="AddObjectiveUnlocked" || name=="DisplayMissionInfoPopup" || name=="EnableMissionFailMessage")) return;
     if(onlyMap && object==menu && NonMapInput(name)) {
         ++state.blockedMenus; dg::Log("Non-map shortcut blocked: %s",name.c_str()); return;
@@ -176,17 +200,76 @@ void Hide(UObject* widget) {
     Params p(fn); p.Set<uint8_t>("InVisibility",1); Call(widget,"SetVisibility",&p); // Collapsed
     if(auto f=Fn(widget,"SetIsEnabled")) { Params q(f); q.SetBool("bInIsEnabled",false); Call(widget,"SetIsEnabled",&q); }
 }
-bool SaveOption(UObject* enumObject,uint8_t value) {
-    if(!IsValid(enumObject) || GetName(enumObject->Class)!="Enum") return false;
+void ResolvePauseOptions() {
+    if(pauseOptionsResolved) return;
+    auto structure=FindObject("/Script/BendGame.PlayerProfileSubMenuClass");
+    auto property=structure?FindProperty(structure,"ProfileOption"):nullptr;
+    auto enumObject=property?Field<UObject*>(property,0x78):nullptr;
+    if(!IsValid(enumObject) || GetName(enumObject->Class)!="Enum") return;
     struct EnumItem { FName name; uint8_t value; uint8_t padding[7]; };
     struct EnumArray { EnumItem* data; int32_t num,max; };
     const auto names=Field<EnumArray>(enumObject,0x40);
-    if(!names.data || names.num<1 || names.num>256) return false;
-    for(int i=0;i<names.num;++i) if(names.data[i].value==value) {
+    if(!names.data || names.num<1 || names.num>256) return;
+    unsigned int found=0;
+    for(int i=0;i<names.num;++i) {
         const auto name=NameOf(names.data[i].name);
-        return Has(name,"::Save") || Has(name,"::QuickSave") || Has(name,"::Quicksave");
+        if(name=="EPlayerSaveProfileType::Menu_SaveGame" || name=="EPlayerSaveProfileType::Menu_LoadGame"
+            || name=="EPlayerSaveProfileType::Menu_PhotoMode" || name=="EPlayerSaveProfileType::Menu_QuitToMainMenu") {
+            blockedPauseOptions[names.data[i].value]=true; ++found;
+        }
     }
-    return false;
+    pauseOptionsResolved=found==4;
+    if(pauseOptionsResolved) dg::Log("Resolved all four forbidden native pause options");
+}
+void FilterPauseMenu() {
+    ResolvePauseOptions();
+    if(!pauseOptionsResolved || !IsValid(optionsMenu)) return;
+    struct Array { uint8_t* data; int32_t num,max; };
+    struct Widgets { UObject** data; int32_t num,max; };
+    auto category=Read<UObject*>(optionsMenu,"OptionsCategoryWidget");
+    auto profiles=Read<Array>(optionsMenu,"ActiveMenuProfile");
+    auto widgets=Read<Widgets>(category,"CategoryWidgets");
+    // This build's native layout is PlayerProfileSubMenuClass (64 bytes), with ProfileOption at +1.
+    // Remove matching UI entries and profile entries together so category indices stay aligned.
+    const bool aligned=profiles.data && profiles.num>0 && profiles.num<=128 && widgets.data
+        && widgets.num>=profiles.num && widgets.num<=128 && Read<int>(category,"MaxCategoryIndex")==profiles.num;
+    bool changed=false;
+    if(aligned) for(int i=profiles.num-1;i>=0;--i) if(blockedPauseOptions[profiles.data[i*0x40+1]]) {
+        auto widget=widgets.data[i];
+        profiles.data[i*0x40+0x38]=1;
+        if(IsValid(widget)) { Hide(widget); SetBoolProp(widget,"bDisabled",true); }
+        if(RemoveArrayEntry(optionsMenu,"ActiveMenuProfile",i)) {
+            if(IsValid(widget)) Call(widget,"RemoveFromParent");
+            if(!RemoveArrayEntry(category,"CategoryWidgets",i)) {
+                dg::Log("Pause category removal failed at index %d",i); break;
+            }
+            widgets=Read<Widgets>(category,"CategoryWidgets");
+            profiles=Read<Array>(optionsMenu,"ActiveMenuProfile");
+            ++state.removedPauseControls; changed=true;
+        }
+    }
+    if(changed) {
+        Write<int>(category,"MaxCategoryIndex",profiles.num);
+        for(int i=0;i<profiles.num;++i) if(IsValid(widgets.data[i])) Write<int>(widgets.data[i],"CursorPosition",i);
+        if(auto f=Fn(category,"SetCategory")) { Params p(f); p.Set<int>("Index",0); Call(category,"SetCategory",&p); }
+        dg::Log("Pause menu filtered: remaining=%d; removed=%u",profiles.num,state.removedPauseControls);
+    }
+    for(const char* key:{"MenuProfiles","MenuProfilesMain_savedOff","MenuProfiles_ResettingJobs"}) {
+        auto source=Read<Array>(optionsMenu,key);
+        if(!source.data || source.num<1 || source.num>128) continue;
+        for(int i=source.num-1;i>=0;--i) if(blockedPauseOptions[source.data[i*0x40+1]]) {
+            source.data[i*0x40+0x38]=1;
+            RemoveArrayEntry(optionsMenu,key,i);
+            source=Read<Array>(optionsMenu,key);
+        }
+    }
+    // If a future menu layout cannot be matched safely, keep the forbidden entries disabled and collapsed.
+    profiles=Read<Array>(optionsMenu,"ActiveMenuProfile"); widgets=Read<Widgets>(category,"CategoryWidgets");
+    if(profiles.data && profiles.num>=0 && profiles.num<=128) for(int i=0;i<profiles.num;++i)
+        if(blockedPauseOptions[profiles.data[i*0x40+1]]) {
+            profiles.data[i*0x40+0x38]=1;
+            if(widgets.data && i<widgets.num && IsValid(widgets.data[i])) { Hide(widgets.data[i]); SetBoolProp(widgets.data[i],"bDisabled",true); }
+        }
 }
 void ApplySavingPolicy(UObject* gameMode) {
     saveGameMode=gameMode;
@@ -200,35 +283,30 @@ void ApplySavingPolicy(UObject* gameMode) {
         SetBoolProp(gameMode,"bWantsOWSave",false);
         state.savingBlocked=BoolCall(gameMode,"IsSavingBlockedByBlueprint");
     }
-    if(!IsValid(optionsMenu)) optionsMenu=Instance("OptionsTopMenuWidget_C");
     if(!IsValid(weaponHud)) weaponHud=Instance("UI_HudWeapon_C");
     state.hiddenSaveControls=0;
     if(IsValid(weaponHud)) {
         Install(weaponHud);
         for(const char* key:{"QuicksaveIcon","SaveLabel","SavePrompt"}) if(auto w=Read<UObject*>(weaponHud,key);IsValid(w)) { Hide(w); ++state.hiddenSaveControls; }
     }
-    if(IsValid(optionsMenu)) {
-        Install(optionsMenu);
-        // Decode the native option enum rather than guessing a localized label
-        // or a category index. The profile structure is from this build's SDK.
-        auto structure=FindObject("/Script/BendGame.PlayerProfileSubMenuClass");
-        auto type=structure?FindProperty(structure,"Type"):nullptr;
-        auto enumeration=type?Field<UObject*>(type,0x70):nullptr;
-        struct Array { uint8_t* data; int32_t num,max; };
-        struct Widgets { UObject** data; int32_t num,max; };
-        auto category=Read<UObject*>(optionsMenu,"OptionsCategoryWidget");
-        const auto widgets=Read<Widgets>(category,"CategoryWidgets");
-        for(const char* key:{"MenuProfiles","ActiveMenuProfile","MenuProfilesMain_savedOff"}) {
-            const auto profiles=Read<Array>(optionsMenu,key);
-            if(!profiles.data || profiles.num<0 || profiles.num>128) continue;
-            for(int i=0;i<profiles.num;++i) if(SaveOption(enumeration,profiles.data[i*0x40])) {
-                profiles.data[i*0x40+0x38]=1; // SelectionDetails.bDisabled
-                if(std::string(key)=="ActiveMenuProfile" && widgets.data && widgets.num==profiles.num && IsValid(widgets.data[i])) {
-                    Hide(widgets.data[i]); SetBoolProp(widgets.data[i],"bDisabled",true); ++state.hiddenSaveControls;
-                }
-            }
-        }
+}
+void UpdatePauseMenu() {
+    // The game builds a new OptionsTopMenuWidget_C on every pause; the previous one stays valid
+    // until GC, so a cached instance goes stale. Pause_Controls_C points at the live one.
+    if(!IsValid(pauseControls)) pauseControls=Instance("Pause_Controls_C");
+    auto current=Read<UObject*>(pauseControls,"PauseMenuWidget");
+    if(!IsValid(current) || !IsAByName(current,"OptionsTopMenuWidget_C")) current=nullptr;
+    const ULONGLONG now=GetTickCount64();
+    static ULONGLONG nextFilter=0,fastUntil=0;
+    if(current && current!=optionsMenu) {
+        optionsMenu=current; Install(current);
+        fastUntil=now+2000; // entries appear over the first frames of the open animation
     }
+    if(!current && !IsValid(optionsMenu)) optionsMenu=Instance("OptionsTopMenuWidget_C"); // no Pause_Controls_C: old lookup
+    if(!IsValid(optionsMenu) || (now>=fastUntil && now<nextFilter)) return;
+    nextFilter=now+250;
+    Install(optionsMenu);
+    FilterPauseMenu();
 }
 void HideMapControls() {
     if(!onlyMap || !IsValid(mapWidget)) return;
@@ -398,6 +476,24 @@ void SuppressPresentation() {
         }
     }
 }
+void DismissTutorials(UObject* controller) {
+    if(!storyOff || !IsValid(hudWidget)) return;
+    struct Widgets { UObject** data; int32_t num,max; };
+    std::vector<UObject*> open;
+    auto multi=Read<Widgets>(hudWidget,"ActiveTutorialMultiWidgets");
+    if(multi.data && multi.num>0 && multi.num<=64) open.assign(multi.data,multi.data+multi.num);
+    if(auto w=Read<UObject*>(hudWidget,"ActiveSimpleTutorialWidget");IsValid(w)) open.push_back(w);
+    if(open.empty()) {
+        // Without an open panel nothing may keep the player's input locked.
+        if(IsValid(controller)) SetBoolProp(controller,"bTutorialBlockingInputActive",false);
+        return;
+    }
+    // A request that slipped past the hook (other call path): close it the native way so its pause ends too.
+    for(auto w:open) if(IsValid(w)) { if(!Call(w,"Dismiss")) Call(w,"RemoveFromParent"); }
+    Call(hudWidget,"ClearTutorialMultis"); Call(hudWidget,"ClearTutorials");
+    state.dismissedTutorials+=unsigned(open.size());
+    if(state.dismissedTutorials<=8) dg::Log("Native tutorial panels dismissed: %zu",open.size());
+}
 void ActorOff(UObject* actor) {
     if(!IsValid(actor)) return;
     BoolArg(actor,"SetActorHiddenInGame","bNewHidden",true);
@@ -559,6 +655,10 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
             }
         }
         PauseNativeJobs(gameMode);
+        if(storyOff) {
+            if(!IsValid(dlcUi)) dlcUi=Instance("DLC_UIManagerBP_C");
+            if(IsValid(dlcUi)) Install(dlcUi);
+        }
 
     }
     static ULONGLONG nextBatch=0;
@@ -566,6 +666,8 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
         nextBatch=GetTickCount64()+8;
         SuppressPresentation(); CleanWorld();
     }
+    DismissTutorials(controller);
+    UpdatePauseMenu();
     if(IsValid(menu)) state.menuActive=BoolCall(menu,"IsMenuActive");
     if(!onlyMap) state.mapOnly=false;
     if(state.menuActive) HideMapControls();

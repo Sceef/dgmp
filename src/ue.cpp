@@ -291,6 +291,28 @@ UObject* FindProperty(const UObject* strct, const char* name)
 
 void ProcessEvent(UObject* obj, UObject* fn, void* params) { g_processEvent(obj, fn, params); }
 
+bool RemoveArrayEntry(UObject* object, const char* propertyName, int32_t index)
+{
+    if (!IsValid(object)) return false;
+    UObject* property = nullptr;
+    for (auto cls = object->Class; cls && !property; cls = SuperOf(cls)) property = FindProperty(cls, propertyName);
+    if (!property || GetName(property->Class) != "ArrayProperty") return false;
+    auto inner = Field<UObject*>(property, 0x78);
+    if (!IsValid(inner)) return false;
+    struct Array { void* data; int32_t num, max; };
+    auto& array = Field<Array>(object, Field<int32_t>(property, off::UProperty_Offset));
+    if (!array.data || index < 0 || index >= array.num || array.num > array.max || array.max > 32768) return false;
+    // Verified from execArray_Remove at RVA 0x2E29260 for the supported executable:
+    // RCX=array address, RDX=UArrayProperty, R8D=index. It calls FScriptArrayHelper::RemoveValues.
+    constexpr uintptr_t rva = 0x2917F70;
+    constexpr uint8_t signature[]{0x48, 0x85, 0xC9, 0x0F, 0x84};
+    if (memcmp(reinterpret_cast<void*>(Base() + rva), signature, sizeof(signature)) != 0) return false;
+    const int32_t before = array.num;
+    using RemoveFn = void(__fastcall*)(void*, UObject*, int32_t);
+    reinterpret_cast<RemoveFn>(Base() + rva)(&array, property, index);
+    return array.num == before - 1;
+}
+
 UObject* NewObject(UObject* cls, UObject* outer)
 {
     // Bend fork signature: (Class, Outer, Name, Flags, InternalFlags, Template, bCopyTransients, InstanceGraph, bAssumeArchetype)

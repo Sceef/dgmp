@@ -18,6 +18,8 @@ struct State {
     bool nativeMissionActive=false;
     bool savingBlocked=false;
     unsigned int blockedSaveRequests=0,hiddenSaveControls=0;
+    unsigned int removedPauseControls=0,blockedPauseRequests=0;
+    unsigned int blockedTutorials=0,dismissedTutorials=0;
     unsigned int nestObjectsHidden=0,storyBlockersDisabled=0,doorsUnlocked=0,zoneParametersCleared=0;
     uint32_t markerMask=(1u<<0)|(1u<<1)|(1u<<7);
 };
