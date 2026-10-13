@@ -202,7 +202,7 @@ UObject* FindClass(const char* shortName)
         if (!o || !o->Class) continue;
         if (GetName(o) != shortName) continue;
         std::string cn = GetName(o->Class);
-        if (cn == "Class" || cn == "BlueprintGeneratedClass") {
+        if (cn == "Class" || cn == "BlueprintGeneratedClass" || cn == "WidgetBlueprintGeneratedClass") {
             g_classCache[shortName] = o;
             return o;
         }

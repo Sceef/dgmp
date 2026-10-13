@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "difficulty": "normal",
+  "createdUtc": "2026-10-13T18:57:46.4461319Z",
+  "sourceWorldSavedUtc": "2026-10-13T18:49:58.3875892Z",
+  "progression": "post-prologue-unleveled",
+  "sourceSlot": 2,
+  "sourceStateVerification": "user-confirmed; runtime verification pending",
+  "gameBuild": 1752517958,
+  "id": "post-prologue-normal-v1",
+  "files": [
+    {
+      "bytes": 612627,
+      "name": "world.sav",
+      "sha256": "5B330C5C3CE37308742AC029B22838EA6C281ECDE3E6F5CA0621BAB87DFAA025"
+    },
+    {
+      "bytes": 14236,
+      "name": "profile.sav",
+      "sha256": "A2AD947B6BF495EA902CD75366034F9769FC14078EEC93BED54BF9DE5F73927C"
+    }
+  ]
+}
