@@ -112,6 +112,23 @@ std::string NameOf(FName n)
     return s;
 }
 
+std::vector<std::string> SearchNames(const char* fragment, int max)
+{
+    std::vector<std::string> out;
+    std::string want(fragment); for (auto& c : want) c = char(tolower(static_cast<unsigned char>(c)));
+    uint8_t** chunks = *g_names;
+    const int32_t count = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(chunks) + 0x400);
+    for (int32_t i = 0; i < count && int(out.size()) < max; ++i) {
+        uint8_t** chunk = reinterpret_cast<uint8_t**>(chunks[i >> 14]);
+        uint8_t* e = chunk ? chunk[i & 0x3FFF] : nullptr;
+        if (!e || (*reinterpret_cast<int32_t*>(e) & 1)) continue;
+        std::string name(reinterpret_cast<const char*>(e + 0x12)), low = name;
+        for (auto& c : low) c = char(tolower(static_cast<unsigned char>(c)));
+        if (low.find(want) != std::string::npos) out.push_back(name);
+    }
+    return out;
+}
+
 FName FindName(const char* str)
 {
     static std::unordered_map<std::string, int32_t> cache;

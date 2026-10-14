@@ -5,3 +5,9 @@
 /DGMPLauncher.exe
 /control.ini
 /telemetry.json
+/dgmp-server.exe
+/dgmp-server.pdb
+/DGMP.exe
+/DGMPEditor.exe
+/dev/
+/data/*/

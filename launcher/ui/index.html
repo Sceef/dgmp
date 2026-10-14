@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DGMP</title>
+<link rel="stylesheet" href="app.css?v=0.6.0">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">DGMP</div>
+      <div class="tagline">Days Gone Multiplayer</div>
+    </div>
+
+    <section class="nick-card">
+      <label for="nick">Ник</label>
+      <div class="nick-row">
+        <input id="nick" maxlength="24" spellcheck="false" autocomplete="off" placeholder="Введите ник">
+        <span id="nick-state" class="nick-state" aria-live="polite"></span>
+      </div>
+      <div class="hint" id="nick-help">3–24 символа: буквы, цифры, _ - . [ ] ( )</div>
+    </section>
+
+    <nav class="nav" role="tablist">
+      <button class="nav-item active" data-page="servers" role="tab"><span class="ico">◉</span>Серверы</button>
+      <button class="nav-item" data-page="host" role="tab"><span class="ico">▲</span>Создать сервер<span class="dot" id="server-dot" hidden></span></button>
+      <button class="nav-item" data-page="editor" role="tab"><span class="ico">✎</span>Редактор</button>
+    </nav>
+
+    <div class="side-foot">
+      <button class="link" data-open="modes">Папка режимов</button>
+      <button class="link" data-open="logs">Логи</button>
+      <div class="version" id="version"></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- SERVERS -->
+    <section class="page active" id="page-servers">
+      <header class="page-head">
+        <h1>Серверы</h1>
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-list="favorites">Избранное</button>
+          <button class="tab" data-list="recent">Недавние</button>
+          <button class="tab" data-list="lan">Локальная сеть</button>
+        </div>
+      </header>
+
+      <div class="toolbar">
+        <input id="address" class="grow" placeholder="IP:порт, например 192.168.1.20:7777" spellcheck="false" autocomplete="off">
+        <button class="btn" id="add-fav">В избранное</button>
+        <button class="btn" id="direct">Подключиться</button>
+        <button class="btn icon" id="refresh" title="Обновить (F5)">⟳</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="servers">
+          <thead><tr><th class="c-lock"></th><th>Название</th><th class="c-mode">Режим</th><th class="c-players">Игроки</th><th class="c-ping">Пинг</th><th class="c-act"></th></tr></thead>
+          <tbody id="server-rows"></tbody>
+        </table>
+        <div class="empty" id="empty"></div>
+      </div>
+
+      <footer class="detail" id="detail" hidden>
+        <div class="detail-info">
+          <div class="detail-name" id="d-name"></div>
+          <div class="detail-meta" id="d-meta"></div>
+        </div>
+        <button class="btn ghost" id="d-fav"></button>
+        <button class="btn primary big" id="d-play">Играть</button>
+      </footer>
+    </section>
+
+    <!-- HOST -->
+    <section class="page" id="page-host">
+      <header class="page-head"><h1>Создать сервер</h1></header>
+      <div class="host-grid">
+        <form class="card form" id="host-form" autocomplete="off">
+          <div class="field">
+            <label for="h-name">Название сервера</label>
+            <input id="h-name" maxlength="64" required>
+          </div>
+          <div class="field">
+            <label for="h-mode">Режим</label>
+            <select id="h-mode"></select>
+            <div class="mode-desc" id="h-mode-desc"></div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="h-port">Порт (UDP)</label>
+              <input id="h-port" type="number" min="1024" max="65535" value="7777">
+            </div>
+            <div class="field">
+              <label for="h-max">Слоты</label>
+              <input id="h-max" type="number" min="1" max="64" value="16">
+            </div>
+          </div>
+          <div class="field">
+            <label for="h-pass">Пароль <span class="muted">(необязательно)</span></label>
+            <input id="h-pass" type="password" maxlength="64">
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary big" id="h-play">Запустить и играть</button>
+            <button type="button" class="btn" id="h-only">Только сервер</button>
+          </div>
+        </form>
+
+        <div class="card console-card" id="console-card">
+          <div class="console-head">
+            <div>
+              <div class="console-title">Консоль сервера</div>
+              <div class="console-sub" id="srv-state">Сервер не запущен</div>
+            </div>
+            <button class="btn danger" id="srv-stop" hidden>Остановить</button>
+          </div>
+          <div class="addresses" id="srv-addr" hidden></div>
+          <pre class="console" id="console" aria-live="polite"></pre>
+          <form class="console-input" id="console-form">
+            <input id="console-line" placeholder="Команда: help, status, say, kick, bot, reload…" spellcheck="false" autocomplete="off" disabled>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- EDITOR -->
+    <section class="page" id="page-editor">
+      <header class="page-head"><h1>Редактор</h1></header>
+      <div class="card editor-card">
+        <p>Одиночный режим для создания карт и режимов: полёт (F2), дев-меню (F3), маркеры (F6), сохранение точки старта (F5). Сюжет, сохранения и фоторежим отключены.</p>
+        <label class="check"><input type="checkbox" id="e-refresh"> Восстановить исходный шаблон мира перед запуском</label>
+        <div class="actions"><button class="btn primary big" id="e-run">Открыть редактор</button></div>
+      </div>
+    </section>
+
+    <div class="statusbar" id="statusbar">
+      <span class="spinner" id="spinner" hidden></span>
+      <span id="status-text">Готово</span>
+      <span class="game-pill" id="game-pill" hidden>Игра запущена</span>
+    </div>
+  </main>
+</div>
+
+<div class="modal" id="pass-modal" hidden>
+  <form class="modal-box" id="pass-form">
+    <h2>Сервер защищён паролем</h2>
+    <div class="muted" id="pass-server"></div>
+    <input id="pass-input" type="password" placeholder="Пароль" autocomplete="off">
+    <div class="actions">
+      <button type="button" class="btn" id="pass-cancel">Отмена</button>
+      <button type="submit" class="btn primary">Подключиться</button>
+    </div>
+  </form>
+</div>
+
+<script src="app.js?v=0.6.0"></script>
+</body>
+</html>

@@ -15,6 +15,11 @@ inline FILE*& LogFile()
 
 inline void LogOpen(const char* path)
 {
+    // Keep the previous session's log (e.g. DGMP.prev.log) so a crash can still be read after a relaunch.
+    std::string previous(path);
+    const auto dot = previous.rfind('.');
+    previous.insert(dot == std::string::npos ? previous.size() : dot, ".prev");
+    MoveFileExA(path, previous.c_str(), MOVEFILE_REPLACE_EXISTING);
     LogFile() = _fsopen(path, "w", _SH_DENYNO); // readable while the game runs
 }
 

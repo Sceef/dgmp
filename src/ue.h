@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace ue {
 
@@ -60,6 +61,8 @@ UObject* Resolve(const FWeakObjectPtr& w);
 std::string NameOf(FName n);
 // Looks an existing name up in GNames (no new names are added). Index -1 if absent.
 FName FindName(const char* str);
+// Names in the name table containing `fragment` (case-insensitive), for research tools.
+std::vector<std::string> SearchNames(const char* fragment, int max);
 // Reads a (possibly bitfield) bool UPROPERTY by name from obj's class chain.
 bool SetBoolProp(UObject* obj, const char* name, bool value);
 // First parameter property of a function (for calls whose parameter names we don't know).

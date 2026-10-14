@@ -75,7 +75,7 @@ void Paint(HDC dc,RECT r) {
     RECT label{margin,height-145,width-margin,height-94}; DrawTextLine(dc,label,stage,24,RGB(25,38,43));
     RECT bar{margin,height-80,width-margin,height-72}; Fill(dc,bar,RGB(212,219,218));
     bar.right=bar.left+int((bar.right-bar.left)*std::clamp(amount,0.f,1.f)); Fill(dc,bar,RGB(20,120,111));
-    RECT info{margin,height-61,width-margin,height-27}; DrawTextLine(dc,info,L"Подготовка мира редактора",17,RGB(87,102,103));
+    RECT info{margin,height-61,width-margin,height-27}; DrawTextLine(dc,info,L"Подготовка мира",17,RGB(87,102,103));
 }
 LRESULT CALLBACK Proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
     if(msg==WM_SETCURSOR && (IsLoading() || devmenu::IsOpen())) { SetCursor(LoadCursorW(nullptr,MAKEINTRESOURCEW(32512))); return TRUE; }
@@ -92,6 +92,8 @@ LRESULT CALLBACK Proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
         const HWND game=GameWindow();
         if(!game || GetForegroundWindow()!=game || IsIconic(game)) { ShowWindow(h,SW_HIDE); return 0; }
         RECT r; GetClientRect(game,&r); const bool cover=IsLoading(),dev=devmenu::IsOpen();
+        bool empty; { std::lock_guard lock(mutex); empty=text.empty(); }
+        if(!cover && !dev && empty) { ShowWindow(h,SW_HIDE); return 0; }  // multiplayer: no editor info box
         const int width=cover?int(r.right):dev?std::min(660,std::max(1,int(r.right)-24)):650;
         const int height=cover?int(r.bottom):dev?std::min(620,std::max(1,int(r.bottom)-24)):145;
         POINT p{cover?0:dev?std::max(0,int(r.right)-width-12):12,cover?0:12}; ClientToScreen(game,&p);

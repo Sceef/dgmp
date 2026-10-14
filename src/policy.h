@@ -24,6 +24,35 @@ struct State {
     uint32_t markerMask=(1u<<0)|(1u<<1)|(1u<<7);
 };
 void ConfigureMarkers(uint32_t mask);
+// Map markers created by DGMP itself (other players): always shown, whatever the category mask.
+void AllowMarker(ue::UObject* component,bool allowed);
+// While true the game's mission waypoint and its road route belong to a server marker: the story
+// suppression stops hiding them.
+void SetRouteOwned(bool owned);
+// While a server quest is shown, the objective HUD (panel, popups, meter) is not hidden or blocked.
+void SetQuestHud(bool active);
+// The completion/reward screens of a server quest pause the game and expect a game mission to
+// unpause it: for a while, a pause with nothing on screen is lifted.
+void WatchRewardScreens();
+bool RewardPanelOpen();  // the quest reward panel is up
+bool TakeDeath();  // the local player died since the last call
+// Multiplayer: a hit that would kill the local player is cancelled (ModifyDamage returns 0) and
+// reported here instead; the mode's death (body, respawn) follows. Set by mp.
+void SetInterceptLethalHits(bool on);
+bool TakeLethalHit();
+void SetBlockDeathReload(bool on);  // multiplayer: the game's checkpoint reload after a death is skipped
+bool TakeDeathReloadBlocked();     // it was skipped since the last call (the player lies dead)
+// Server quest pickups: offered as takeable even with a full backpack.
+void SetTakeable(ue::UObject* pickup,bool takeable);
+// Dev: logs every distinct event the local pawn, controller and their components receive for
+// `seconds` (finding the game functions behind looting, pickups, interactions...). Returns hooked count.
+int TraceEvents(double seconds);
+// Game events (gameevents.cpp): every event of an observed object is passed to the observer.
+void SetObserver(void(*observer)(ue::UObject* object,const std::string& name));
+void Observe(ue::UObject* object);
+// Shows the game's own tutorial popup (title, text, optional Texture2D asset path) for a mode/server hint.
+// Empty title = survival-tip line at the bottom, closed automatically after `seconds` (default 5).
+bool ShowNativeHint(ue::UObject* controller,const std::wstring& title,const std::wstring& text,const std::string& image,bool pause,float seconds=0);
 void Update(ue::UObject* pawn,ue::UObject* controller,ue::UObject* gameMode,bool editor,bool reveal,bool mapOnly,bool suppressStory);
 State GetState();
 void OpenMap();

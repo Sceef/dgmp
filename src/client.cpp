@@ -5,8 +5,13 @@
 #include "policy.h"
 #include "environment.h"
 #include "devmenu.h"
+#include "mp.h"
+#include "devcmd.h"
+#include "audio.h"
+#include "hud.h"
 #include "../api/dgmp.h"
 #include <windows.h>
+#include <malloc.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -27,6 +32,9 @@ FWeakObjectPtr pawnIdentity{-1,0};
 bool ready=false, flying=false, disabled=false, requested=false;
 bool autoLoad=true, autoFly=true, suppressStory=true, suppressAI=true;
 bool revealMap=true;
+bool multiplayer=false;          // launched by DGMP.exe to join a server
+bool mpSpawned=false;            // the server's spawn teleport has been applied
+double mpJoinedAt=0, mpFailedAt=0;
 unsigned int editorLeft=0,editorRight=0;
 bool spawnApplied=false, wantedFly=true;
 bool pendingArrival=false;
@@ -235,28 +243,81 @@ void SavePoint(bool spawn) {
     }
     dg::Log("%s saved: %.3f %.3f %.3f yaw=%.3f",spawn?"Spawn":"Marker",pos.X,pos.Y,pos.Z,view.Yaw);
 }
-void ReturnSpawn() {
-    if(!GetPrivateProfileIntW(L"Spawn",L"Enabled",0,Ini().c_str())) return;
-    FVector pos{ReadFloat(L"Spawn",L"X",0),ReadFloat(L"Spawn",L"Y",0),ReadFloat(L"Spawn",L"Z",0)};
-    const float yaw=ReadFloat(L"Spawn",L"Yaw",0);
+// Fast travel (moves the bike along and streams the destination), then AlignArrival snaps exactly.
+void TravelTo(const FVector& pos,float yaw) {
     arrivalPosition=pos; arrivalYaw=yaw; arrivalAfter=Now()+3; pendingArrival=true;
-    panel::Loading(true,0.85f,L"Перемещение на точку спавна");
+    panel::Loading(true,0.85f,L"Перемещение");
     auto fn=Fn(gameMode,"RequestFastTravel");
     if(fn) {
         FTransform player,bike; player.Translation=pos; player.Rotation=RotatorToQuat({0,yaw,0}); bike=player; bike.Translation.Y+=250;
         Params p(fn); p.Set("PlayerTransform",player); p.Set("BikeTransform",bike); p.Set("TravelDestination",FName{0,0}); Call(gameMode,"RequestFastTravel",&p);
     } else SetPosition(pos);
     if(auto f=IsValid(controller)?Fn(controller,"SetControlRotation"):nullptr) { Params p(f); p.Set("NewRotation",FRotator{0,yaw,0}); Call(controller,"SetControlRotation",&p); }
-    dg::Log("Return to spawn requested: %.3f %.3f %.3f yaw=%.3f",pos.X,pos.Y,pos.Z,yaw);
+    dg::Log("Travel requested: %.3f %.3f %.3f yaw=%.3f",pos.X,pos.Y,pos.Z,yaw);
+}
+void ReturnSpawn() {
+    if(!GetPrivateProfileIntW(L"Spawn",L"Enabled",0,Ini().c_str())) return;
+    TravelTo({ReadFloat(L"Spawn",L"X",0),ReadFloat(L"Spawn",L"Y",0),ReadFloat(L"Spawn",L"Z",0)},ReadFloat(L"Spawn",L"Yaw",0));
     note=L"Returning to saved spawn";
 }
+// Server teleports: the first one (spawn) and long jumps travel with the bike; short hops on foot move directly.
+void ApplyServerTeleport() {
+    FVector pos; float yaw; bool initial;
+    if(!mp::TakeTeleport(pos,yaw,initial)) return;
+    const auto here=Position(); const float dx=pos.X-here.X,dy=pos.Y-here.Y,dz=pos.Z-here.Z;
+    const bool onBike=IsValid(pawn) && Fn(pawn,"IsInVehicle") && [&]{ Params p(Fn(pawn,"IsInVehicle")); Call(pawn,"IsInVehicle",&p); return p.GetBool("ReturnValue"); }();
+    if(initial || onBike || dx*dx+dy*dy+dz*dz>20000.f*20000.f) TravelTo(pos,yaw);
+    else {
+        SetPosition(pos);
+        if(auto f=IsValid(controller)?Fn(controller,"SetControlRotation"):nullptr) { Params p(f); p.Set("NewRotation",FRotator{0,yaw,0}); Call(controller,"SetControlRotation",&p); }
+    }
+    if(initial) mpSpawned=true;
+    dg::Log("Server teleport%s: %.0f %.0f %.0f yaw=%.0f",initial?" (spawn)":"",pos.X,pos.Y,pos.Z,yaw);
+}
+// The game's fast-travel fade sometimes never fades back in (black screen with sound, map and pause
+// dead because input stays blocked). If the screen stays fully black outside any travel, fade it in.
+void RecoverStuckFade(double now) {
+    static double blackSince=0,next=0;
+    if(now<next) return; next=now+0.5;
+    auto mission=Instance("BendGameMission");
+    if(pendingArrival || Loading() || !IsValid(mission)) { blackSince=0; return; }
+    float value=0;
+    for(auto cls=mission->Class;cls;cls=SuperOf(cls)) if(auto p=FindProperty(cls,"FadingTimeline_FadingValue_4D9177FC4E790DD0D8692285798AB37D")) { value=Field<float>(mission,Field<int>(p,off::UProperty_Offset)); break; }
+    const bool black=value>=0.99f && !GetBoolProp(mission,"FadingFromBlack");
+    if(!black) { blackSince=0; return; }
+    if(!blackSince) { blackSince=now; return; }
+    if(now-blackSince<4) return;
+    blackSince=0;
+    if(auto f=Fn(mission,"CallFadeOutOfBlack")) { Params p(f); p.SetBool("UnhideHudAtEnd",true); Call(mission,"CallFadeOutOfBlack",&p); }
+    dg::Log("Stuck black screen recovered (fade value %.2f)",value);
+}
+// Fast travel puts the bike too low (half in the ground). Once the player stands on the ground after
+// the arrival, a bike parked next to it is lifted to the player's feet.
+double bikeFixAt=0;
+void FixBikeAfterArrival(double now) {
+    if(!bikeFixAt || now<bikeFixAt) return;
+    bikeFixAt=0;
+    auto f=IsValid(controller)?Fn(controller,"GetAssignedVehicle"):nullptr; if(!f) return;
+    Params p(f); Call(controller,"GetAssignedVehicle",&p);
+    UObject* bike=p.Get<UObject*>("ReturnValue"); if(!IsValid(bike)) return;
+    auto get=Fn(bike,"K2_GetActorLocation"); if(!get) return;
+    Params g(get); Call(bike,"K2_GetActorLocation",&g); FVector at=g.Get<FVector>("ReturnValue");
+    const auto me=Position(); const float dx=at.X-me.X,dy=at.Y-me.Y;
+    if(dx*dx+dy*dy>1500.f*1500.f) return;
+    const float feet=me.Z-88.f;  // capsule half height
+    if(at.Z>feet-10.f) return;
+    at.Z=feet+5.f;
+    if(auto set=Fn(bike,"K2_SetActorLocation")) { Params s(set); s.Set("NewLocation",at); s.SetBool("bTeleport",true); Call(bike,"K2_SetActorLocation",&s); }
+    dg::Log("Bike lifted to the ground after arrival: z=%.0f",at.Z);
+}
 void AlignArrival(double now) {
+    FixBikeAfterArrival(now);
     if(!pendingArrival || now<arrivalAfter || Loading() || !IsValid(pawn)) return;
     // Bend fast travel treats Z as a feet position. Our editor stores the actor's root position.
     const auto before=Position();
     if(!SetPosition(arrivalPosition)) { dg::Log("Could not align arrival; retrying"); arrivalAfter=now+1; return; }
     if(auto f=IsValid(controller)?Fn(controller,"SetControlRotation"):nullptr) { Params p(f); p.Set("NewRotation",FRotator{0,arrivalYaw,0}); Call(controller,"SetControlRotation",&p); }
-    pendingArrival=false; note=L"Saved spawn restored";
+    pendingArrival=false; note=L"Saved spawn restored"; bikeFixAt=now+1.5;
     dg::Log("Spawn aligned exactly: %.3f %.3f %.3f (travel offset %.3f)",arrivalPosition.X,arrivalPosition.Y,arrivalPosition.Z,before.Z-arrivalPosition.Z);
 }
 void BlockTriggers() {
@@ -274,10 +335,9 @@ void BlockTriggers() {
     }
 }
 bool Once(UObject* o) { if(!o) return false; const int serial=SerialAt(o->InternalIndex); if(processed[o->InternalIndex]==serial) return false; processed[o->InternalIndex]=serial; return true; }
-void Sweep(double now) {
-    if(now<nextSweep) return; nextSweep=now+0.008;
-    static double nextManagers=0;
-    if(now>=nextManagers) { nextManagers=now+1;
+// Story and AI managers. After a death reload they exist before they are ready, and calling into them
+// crashes inside the game: such a pass is dropped (SweepManagersSafe) and tried again later.
+void SweepManagers(double now) {
     if(suppressStory) {
         if(auto mission=Instance("BendGameMission")) {
             SetBoolProp(mission,"MissionAndJobProgressionBlocked",true);
@@ -287,12 +347,28 @@ void Sweep(double now) {
     }
     if(suppressAI) {
         if(auto ai=Instance("BendAIManager")) BoolArg(ai,"SetCrowdSimulationEnabled","Enabled",false);
-        if(auto events=Instance("BendAmbientEventManager")) if(Once(events)) { BoolArg(events,"Pause","ForceUnload",true); Call(events,"RemoveAllEventsQueuedToLoad"); }
+        // Ambient events (ambushes, strangers, the "?" map markers) come back after fast travel and
+        // world reloads, so the pause is re-asserted every few seconds instead of once.
+        static double nextEvents=0;
+        if(auto events=Instance("BendAmbientEventManager"); events && (Once(events) || now>=nextEvents)) {
+            nextEvents=now+5; BoolArg(events,"Pause","ForceUnload",true); Call(events,"RemoveAllEventsQueuedToLoad");
+        }
         if(auto gen=Instance("BendAmbientGenerator")) {
             if(Once(gen)) Call(gen,"ForceDespawnAll");
             if(auto f=Fn(gen,"SetImportanceToBlockBelow")) { Params p(f); p.Set<uint8_t>("importance",255); Call(gen,"SetImportanceToBlockBelow",&p); }
         }
     }
+}
+bool SweepManagersSafe(double now) {
+    __try { SweepManagers(now); return true; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void Sweep(double now) {
+    if(now<nextSweep) return; nextSweep=now+0.008;
+    static double nextManagers=0;
+    if(now>=nextManagers) {
+        nextManagers=now+1;
+        if(!SweepManagersSafe(now)) { nextManagers=now+3; dg::Log("World managers not ready; retrying"); }
     }
     auto triggerCls=FindClass("BendGameMissionTrigger"), restrictCls=FindClass("XpecRestrictArea"), aiCls=FindClass("BendAIPawn");
     std::vector<UObject*> hide;
@@ -334,7 +410,8 @@ void Commands(double now) {
     bool menuKeys[6]{}; for(int i=0;i<6;++i) menuKeys[i]=Pressed(keys[i]);
     const bool flyKey=Pressed(VK_F2),saveKey=Pressed(VK_F5),markKey=Pressed(VK_F6),returnKey=Pressed(VK_F8),slower=Pressed(VK_OEM_4),faster=Pressed(VK_OEM_6);
     const bool left=Pressed(VK_LBUTTON),right=Pressed(VK_RBUTTON);
-    if(focus && ready && !panel::IsLoading()) {
+    // Joined players have no editor tools: the server owns time, weather and positions.
+    if(focus && ready && !panel::IsLoading() && !multiplayer) {
         if(devKey && !policy::GetState().menuActive && !Paused()) DGMP_SetDevMenuVisible(!devmenu::IsOpen());
         devmenu::Update(true);
         const bool wasDev=devmenu::IsOpen();
@@ -416,7 +493,7 @@ void Status(double now) {
         file << "]}\n";
     }
     MoveFileExW(tmp.c_str(),dest.c_str(),MOVEFILE_REPLACE_EXISTING);
-    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.2 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(text);
+    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.2 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(multiplayer?L"":text);
     static double nextLog=0; if(now>=nextLog) { nextLog=now+10; dg::Log("Status %s ready=%d fly=%d pos=(%.1f %.1f %.1f) triggers=%u ai=%u",stage.c_str(),ready,flying,pos.X,pos.Y,pos.Z,triggers,removedAI); }
 }
 void FinishBootstrapFade() {
@@ -447,10 +524,11 @@ void Update(float dt) {
         if(!menu && IsValid(pawn) && IsValid(controller) && IsValid(movement) && !Loading()) {
             if(!stableSince) stableSince=now;
             if(now-stableSince>4) {
-                if(!ready) { ready=true; stage="world-ready"; dg::Log("WORLD READY: independent editor profile, player spawned"); }
+                if(!ready) { ready=true; stage="world-ready"; dg::Log("WORLD READY: isolated DGMP profile, player spawned"); }
                 if(wantedFly && !flying) SetFlying(true);
-                if(!spawnApplied) { spawnApplied=true; if(GetPrivateProfileIntW(L"Spawn",L"Enabled",0,Ini().c_str())) ReturnSpawn(); }
-                AlignArrival(now); Sweep(now); Fly(dt);
+                if(!spawnApplied) { spawnApplied=true; if(!multiplayer && GetPrivateProfileIntW(L"Spawn",L"Enabled",0,Ini().c_str())) ReturnSpawn(); }
+                if(multiplayer) ApplyServerTeleport();
+                AlignArrival(now); RecoverStuckFade(now); Sweep(now); Fly(dt);
             }
         } else {
             stableSince=0;
@@ -459,38 +537,89 @@ void Update(float dt) {
         if(requested && !ready && now-requestTime>90 && stage=="load-requested") { stage="load-timeout"; bootstrapComplete=true; panel::Loading(false,0,L"Ошибка загрузки"); note=L"Auto load timed out; see logs/DGMP.log"; dg::Log("Bootstrap load timed out"); }
     }
     policy::Update(pawn,controller,gameMode,flying || devmenu::IsOpen() || !ready || pendingArrival,revealMap,true,suppressStory);
+    if(multiplayer) {
+        const bool inWorld=ready && IsValid(pawn) && !Loading();
+        const bool gameplay=inWorld && !panel::IsLoading() && !policy::GetState().menuActive && !Paused();
+        mp::Update(now,dt,pawn,controller,inWorld,gameplay);
+        const auto phase=mp::GetPhase();
+        if(phase==mp::Phase::Joined && !mpJoinedAt) mpJoinedAt=now;
+        // A server that never sends a spawn still lets the player in after a few seconds.
+        if(mpJoinedAt && !mpSpawned && now-mpJoinedAt>5) mpSpawned=true;
+        if(phase==mp::Phase::Failed && !bootstrapComplete) {
+            if(!mpFailedAt) { mpFailedAt=now; dg::Log("Multiplayer join failed: %ls",mp::FailReason().c_str()); }
+            panel::Loading(true,1.f,L"Не удалось подключиться: "+mp::FailReason());
+            if(now-mpFailedAt>8) {
+                // Back to the launcher: nothing to play without the server.
+                if(auto f=IsValid(controller)?Fn(controller,"ConsoleCommand"):nullptr) {
+                    std::wstring cmd=L"quit"; FString str{cmd.c_str(),int32_t(cmd.size()+1),int32_t(cmd.size()+1)};
+                    Params p(f); p.Set("Command",str); p.SetBool("bWriteToLog",true); Call(controller,"ConsoleCommand",&p);
+                } else ExitProcess(0);
+                mpFailedAt=now+1e9;
+            }
+            Commands(now); environment::Update(ready && !Loading()); Status(now);
+            return;
+        }
+    }
+    if(multiplayer && mp::Respawning() && !pendingArrival) panel::Loading(true,0.9f,L"Возрождение");
     if(!bootstrapComplete || panel::IsLoading()) {
-        if(ready && spawnApplied && !pendingArrival && !Loading()) {
+        if(multiplayer && mp::Respawning() && !pendingArrival) {
+            // death: wait for the server's respawn teleport
+        } else if(multiplayer && ready && !Loading() && !pendingArrival && !mpSpawned) {
+            panel::Loading(true,0.92f,mp::GetPhase()==mp::Phase::Joined?L"Вход на сервер":L"Подключение к серверу");
+        } else if(ready && spawnApplied && !pendingArrival && !Loading()) {
             FinishBootstrapFade();
             bootstrapComplete=true; panel::Loading(false,1.f,L"Мир готов");
             dg::Log("Loading cover released: world ready and spawn fully aligned");
-        } else if(pendingArrival) panel::Loading(true,0.88f,L"Подготовка точки спавна");
+        } else if(pendingArrival) panel::Loading(true,0.88f,L"Перемещение");
         else if(!ready && !requested) panel::Loading(true,0.25f,L"Инициализация мира");
         else if(!ready) panel::Loading(true,Loading()?0.55f:0.72f,L"Загрузка мира");
     }
     Commands(now); environment::Update(ready && !panel::IsLoading() && !Loading()); Status(now);
+    // Silent while the loading cover is up: no menu music or chatter from the template save.
+    audio::Update(!bootstrapComplete || panel::IsLoading());
+    devcmd::Update(pawn,controller,gameMode);
 }
 void ReportException(unsigned long code) {
     ++errors; dg::Log("DGMP frame exception 0x%08X (%u)",code,errors);
     if(errors>=5) { disabled=true; panel::Text(L"DGMP disabled after repeated errors. See logs/DGMP.log"); }
 }
+// "module+rva" for an address: version.dll offsets resolve with build/version.map.
+void Where(const void* address,char* out,size_t size) {
+    HMODULE module=nullptr; char path[MAX_PATH]="?";
+    if(GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,static_cast<const char*>(address),&module) && module) {
+        GetModuleFileNameA(module,path,MAX_PATH);
+        const char* name=strrchr(path,'\\'); name=name?name+1:path;
+        snprintf(out,size,"%s+%llX",name,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address)-reinterpret_cast<uintptr_t>(module)));
+    } else snprintf(out,size,"%p",address);
+}
 int CaptureException(EXCEPTION_POINTERS* info) {
-    dg::Log("Exception site=%p gameRVA=%llX",info->ExceptionRecord->ExceptionAddress,
-        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress)-Base()));
+    char where[160]; Where(info->ExceptionRecord->ExceptionAddress,where,sizeof(where));
+    dg::Log("Exception 0x%08X at %s",info->ExceptionRecord->ExceptionCode,where);
+    // The filter runs on the faulting stack, so the captured frames include the code that failed.
+    void* frames[40]; const USHORT count=CaptureStackBackTrace(0,40,frames,nullptr);
+    for(USHORT i=0;i<count;++i) { Where(frames[i],where,sizeof(where)); dg::Log("  #%u %s",i,where); }
     return EXCEPTION_EXECUTE_HANDLER;
+}
+void Recover(unsigned long code) {
+    // A caught stack overflow leaves the guard page consumed: restore it or the next one kills the game.
+    if(code==EXCEPTION_STACK_OVERFLOW) _resetstkoflw();
+    ReportException(code);
 }
 void SafeUpdate(float dt) {
     __try { if(!disabled) Update(dt); }
-    __except(CaptureException(GetExceptionInformation())) { ReportException(GetExceptionCode()); }
+    __except(CaptureException(GetExceptionInformation())) { Recover(GetExceptionCode()); }
 }
 void SafeInputPolicy() {
     __try { if(!disabled) { DevInputPolicy(); policy::Update(pawn,controller,gameMode,flying || devmenu::IsOpen() || !ready || pendingArrival,revealMap,true,suppressStory); } }
-    __except(CaptureException(GetExceptionInformation())) { ReportException(GetExceptionCode()); }
+    __except(CaptureException(GetExceptionInformation())) { Recover(GetExceptionCode()); }
 }
 using TickFn=void(__fastcall*)(UObject*,float,bool);
 TickFn originalTick=nullptr;
 void* copiedVtable[512];
-void __fastcall Tick(UObject* engine,float dt,bool idle) { SafeInputPolicy(); originalTick(engine,dt,idle); SafeUpdate(dt); }
+void __fastcall Tick(UObject* engine,float dt,bool idle) {
+    static bool guarded=false; if(!guarded) { ULONG reserve=64*1024; SetThreadStackGuarantee(&reserve); guarded=true; }  // room to log a stack overflow
+    SafeInputPolicy(); originalTick(engine,dt,idle); SafeUpdate(dt);
+}
 UObject* FindEngine() {
     for(int i=0,n=NumObjects();i<n;++i) { auto o=ObjectAt(i); if(o && !(o->ObjectFlags&0x10) && IsValid(o) && o->Class && GetName(o->Class)=="GameEngine") return o; } return nullptr;
 }
@@ -515,6 +644,8 @@ void DGMPInitThread() {
     if(GetPrivateProfileIntW(L"Map",L"OtherNativeMarkers",0,Ini().c_str())) mapMask|=0x3FFFFFFFu&~((1u<<0)|(1u<<1)|(1u<<7)|(1u<<9));
     policy::ConfigureMarkers(mapMask);
     speed=std::clamp(ReadFloat(L"DGMP",L"FlySpeed",2000),100.f,40000.f); startTime=Now();
+    multiplayer=mp::Init();
+    if(multiplayer) { autoFly=wantedFly=false; dg::Log("Multiplayer client session: editor tools disabled"); }
     UObject* engine=nullptr;
     for(int i=0;i<240 && !engine;++i) { Sleep(250); if(NumObjects()>1000) engine=FindEngine(); }
     if(!engine) { dg::Log("GameEngine not found"); panel::Text(L"DGMP: GameEngine not found"); return; }
