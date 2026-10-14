@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DGMP</title>
-<link rel="stylesheet" href="app.css?v=0.6.0">
+<link rel="stylesheet" href="app.css?v=0.6.2">
 </head>
 <body>
 <div class="app">
@@ -15,24 +15,30 @@
     </div>
 
     <section class="nick-card">
-      <label for="nick">Ник</label>
+      <label for="nick" data-i18n="nick.label">Ник</label>
       <div class="nick-row">
-        <input id="nick" maxlength="24" spellcheck="false" autocomplete="off" placeholder="Введите ник">
+        <input id="nick" maxlength="24" spellcheck="false" autocomplete="off" placeholder="Введите ник" data-i18n-placeholder="nick.placeholder">
         <span id="nick-state" class="nick-state" aria-live="polite"></span>
       </div>
-      <div class="hint" id="nick-help">3–24 символа: буквы, цифры, _ - . [ ] ( )</div>
+      <div class="hint" id="nick-help" data-i18n="nick.help">3–24 символа: буквы, цифры, _ - . [ ] ( )</div>
     </section>
 
     <nav class="nav" role="tablist">
-      <button class="nav-item active" data-page="servers" role="tab"><span class="ico">◉</span>Серверы</button>
-      <button class="nav-item" data-page="host" role="tab"><span class="ico">▲</span>Создать сервер<span class="dot" id="server-dot" hidden></span></button>
-      <button class="nav-item" data-page="editor" role="tab"><span class="ico">✎</span>Редактор</button>
+      <button class="nav-item active" data-page="servers" role="tab"><span class="ico">◉</span><span data-i18n="nav.servers">Серверы</span></button>
+      <button class="nav-item" data-page="host" role="tab"><span class="ico">▲</span><span data-i18n="nav.host">Создать сервер</span><span class="dot" id="server-dot" hidden></span></button>
+      <!-- Quests are edited in the quest window that opens with the editor (index.html?view=quests). -->
+      <button class="nav-item" data-page="editor" role="tab"><span class="ico">✎</span><span data-i18n="nav.editor">Редактор</span></button>
     </nav>
 
     <div class="side-foot">
-      <button class="link" data-open="modes">Папка режимов</button>
-      <button class="link" data-open="logs">Логи</button>
-      <div class="version" id="version"></div>
+      <button class="link" data-open="modes" data-i18n="foot.modes">Папка режимов</button>
+      <button class="link" data-open="logs" data-i18n="foot.logs">Логи</button>
+      <div class="foot-row">
+        <div class="version" id="version"></div>
+        <div class="lang" role="group" data-i18n-title="lang.title" title="Язык">
+          <button data-lang="en">EN</button><button data-lang="ru">RU</button>
+        </div>
+      </div>
     </div>
   </aside>
 
@@ -40,24 +46,24 @@
     <!-- SERVERS -->
     <section class="page active" id="page-servers">
       <header class="page-head">
-        <h1>Серверы</h1>
+        <h1 data-i18n="nav.servers">Серверы</h1>
         <div class="tabs" role="tablist">
-          <button class="tab active" data-list="favorites">Избранное</button>
-          <button class="tab" data-list="recent">Недавние</button>
-          <button class="tab" data-list="lan">Локальная сеть</button>
+          <button class="tab active" data-list="favorites" data-i18n="list.favorites">Избранное</button>
+          <button class="tab" data-list="recent" data-i18n="list.recent">Недавние</button>
+          <button class="tab" data-list="lan" data-i18n="list.lan">Локальная сеть</button>
         </div>
       </header>
 
       <div class="toolbar">
-        <input id="address" class="grow" placeholder="IP:порт, например 192.168.1.20:7777" spellcheck="false" autocomplete="off">
-        <button class="btn" id="add-fav">В избранное</button>
-        <button class="btn" id="direct">Подключиться</button>
-        <button class="btn icon" id="refresh" title="Обновить (F5)">⟳</button>
+        <input id="address" class="grow" placeholder="IP:порт, например 192.168.1.20:7777" data-i18n-placeholder="address.placeholder" spellcheck="false" autocomplete="off">
+        <button class="btn" id="add-fav" data-i18n="fav.add">В избранное</button>
+        <button class="btn" id="direct" data-i18n="connect">Подключиться</button>
+        <button class="btn icon" id="refresh" title="Обновить (F5)" data-i18n-title="refresh">⟳</button>
       </div>
 
       <div class="table-wrap">
         <table class="servers">
-          <thead><tr><th class="c-lock"></th><th>Название</th><th class="c-mode">Режим</th><th class="c-players">Игроки</th><th class="c-ping">Пинг</th><th class="c-act"></th></tr></thead>
+          <thead><tr><th class="c-lock"></th><th data-i18n="th.name">Название</th><th class="c-mode" data-i18n="mode">Режим</th><th class="c-players" data-i18n="th.players">Игроки</th><th class="c-ping" data-i18n="th.ping">Пинг</th><th class="c-act"></th></tr></thead>
           <tbody id="server-rows"></tbody>
         </table>
         <div class="empty" id="empty"></div>
@@ -69,91 +75,174 @@
           <div class="detail-meta" id="d-meta"></div>
         </div>
         <button class="btn ghost" id="d-fav"></button>
-        <button class="btn primary big" id="d-play">Играть</button>
+        <button class="btn primary big" id="d-play" data-i18n="play">Играть</button>
       </footer>
     </section>
 
     <!-- HOST -->
     <section class="page" id="page-host">
-      <header class="page-head"><h1>Создать сервер</h1></header>
+      <header class="page-head"><h1 data-i18n="nav.host">Создать сервер</h1></header>
       <div class="host-grid">
         <form class="card form" id="host-form" autocomplete="off">
           <div class="field">
-            <label for="h-name">Название сервера</label>
+            <label for="h-name" data-i18n="host.name">Название сервера</label>
             <input id="h-name" maxlength="64" required>
           </div>
           <div class="field">
-            <label for="h-mode">Режим</label>
+            <label for="h-mode" data-i18n="mode">Режим</label>
             <select id="h-mode"></select>
             <div class="mode-desc" id="h-mode-desc"></div>
           </div>
           <div class="row">
             <div class="field">
-              <label for="h-port">Порт (UDP)</label>
+              <label for="h-port" data-i18n="host.port">Порт (UDP)</label>
               <input id="h-port" type="number" min="1024" max="65535" value="7777">
             </div>
             <div class="field">
-              <label for="h-max">Слоты</label>
+              <label for="h-max" data-i18n="host.slots">Слоты</label>
               <input id="h-max" type="number" min="1" max="64" value="16">
             </div>
           </div>
           <div class="field">
-            <label for="h-pass">Пароль <span class="muted">(необязательно)</span></label>
+            <label for="h-pass"><span data-i18n="password">Пароль</span> <span class="muted" data-i18n="optional">(необязательно)</span></label>
             <input id="h-pass" type="password" maxlength="64">
           </div>
           <div class="actions">
-            <button type="submit" class="btn primary big" id="h-play">Запустить и играть</button>
-            <button type="button" class="btn" id="h-only">Только сервер</button>
+            <button type="submit" class="btn primary big" id="h-play" data-i18n="host.play">Запустить и играть</button>
+            <button type="button" class="btn" id="h-only" data-i18n="host.only">Только сервер</button>
           </div>
         </form>
 
         <div class="card console-card" id="console-card">
           <div class="console-head">
             <div>
-              <div class="console-title">Консоль сервера</div>
-              <div class="console-sub" id="srv-state">Сервер не запущен</div>
+              <div class="console-title" data-i18n="console.title">Консоль сервера</div>
+              <div class="console-sub" id="srv-state" data-i18n="srv.stopped">Сервер не запущен</div>
             </div>
-            <button class="btn danger" id="srv-stop" hidden>Остановить</button>
+            <button class="btn danger" id="srv-stop" hidden data-i18n="srv.stop">Остановить</button>
           </div>
           <div class="addresses" id="srv-addr" hidden></div>
           <pre class="console" id="console" aria-live="polite"></pre>
           <form class="console-input" id="console-form">
-            <input id="console-line" placeholder="Команда: help, status, say, kick, bot, reload…" spellcheck="false" autocomplete="off" disabled>
+            <input id="console-line" placeholder="Команда: help, status, say, kick, bot, reload…" data-i18n-placeholder="console.placeholder" spellcheck="false" autocomplete="off" disabled>
           </form>
         </div>
       </div>
     </section>
 
+    <!-- QUESTS -->
+    <section class="page" id="page-quests">
+      <header class="page-head">
+        <h1 data-i18n="quests.title">Квесты</h1>
+        <div class="pick-hint" data-i18n="quests.pickHint">В игре: F6 — точка, F7 — объект, F9 — предмет для шага</div>
+        <div class="tele" id="q-tele" data-i18n="tele.off">игра не запущена</div>
+      </header>
+      <div class="arm-wait" id="q-arm" hidden>
+        <span class="spinner"></span>
+        <span class="grow" id="q-arm-text" data-i18n="arm.text">Кликните ЛКМ в игре…</span>
+        <label class="check inline"><input type="checkbox" id="q-arm-repeat"> <span data-i18n="arm.repeat">Повторять</span></label>
+        <button type="button" class="btn small" id="q-arm-cancel" data-i18n="cancel">Отмена</button>
+      </div>
+      <div class="quest-grid">
+        <div class="card quest-side">
+          <button class="btn primary" id="q-new" data-i18n="q.new">Новый квест</button>
+          <div class="quest-list" id="q-list"></div>
+          <div class="empty-note" id="q-list-empty" hidden data-i18n-html="q.listEmpty">Квестов пока нет.<br>Файлы лежат в папке quests.</div>
+        </div>
+
+        <div class="card quest-edit">
+          <div class="empty-note" id="q-none" data-i18n="q.none">Выберите квест слева или создайте новый.</div>
+          <form class="quest-form" id="q-form" autocomplete="off" spellcheck="false" hidden>
+            <div class="quest-actions">
+              <div class="quest-file" id="q-file"></div>
+              <button type="button" class="btn danger" id="q-delete" data-i18n="delete">Удалить</button>
+              <button type="submit" class="btn" id="q-save" data-i18n="save">Сохранить</button>
+              <button type="button" class="btn primary" id="q-test" title="Сохранить, запустить сервер с режимом questtest и войти в игру" data-i18n="q.test" data-i18n-title="q.testHint">Проверить</button>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label for="q-id">Id <span class="muted" data-i18n="q.idHint">(имя файла: a-z, 0-9, _ и -)</span></label>
+                <input id="q-id" data-q="id" maxlength="64">
+              </div>
+              <div class="field">
+                <label for="q-title" data-i18n="q.title">Название</label>
+                <input id="q-title" data-q="title" maxlength="120">
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="q-category" data-i18n="q.category">Категория</label>
+                <select id="q-category" data-q="category"></select>
+              </div>
+              <div class="field">
+                <label for="q-style" data-i18n="q.style">Вид маркеров</label>
+                <select id="q-style" data-q="style"></select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="q-text" data-i18n="q.text">Текст «Новое задание»</label>
+              <textarea id="q-text" data-q="text" rows="2" maxlength="500"></textarea>
+            </div>
+
+            <div class="field">
+              <label data-i18n="q.reward">Награда</label>
+              <div class="row narrow">
+                <div class="field">
+                  <span class="sub-label" data-i18n="q.xp">Опыт</span>
+                  <input id="q-xp" data-q="xp" type="number" min="0" step="10" placeholder="0">
+                </div>
+              </div>
+              <div class="rows" id="q-reward"></div>
+              <button type="button" class="btn small" id="q-reward-add" data-i18n="q.addItem">+ Предмет</button>
+            </div>
+
+            <div class="field">
+              <label data-i18n="q.steps">Шаги</label>
+              <div class="steps" id="q-steps"></div>
+              <div class="actions">
+                <button type="button" class="btn small" data-add-step="goto" data-i18n="addStep.goto">+ Дойти до точки</button>
+                <button type="button" class="btn small" data-add-step="hold" data-i18n="addStep.hold">+ Удерживать зону</button>
+                <button type="button" class="btn small" data-add-step="collect" data-i18n="addStep.collect">+ Сделать N раз</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+      <datalist id="item-keys"></datalist>
+    </section>
+
     <!-- EDITOR -->
     <section class="page" id="page-editor">
-      <header class="page-head"><h1>Редактор</h1></header>
+      <header class="page-head"><h1 data-i18n="nav.editor">Редактор</h1></header>
       <div class="card editor-card">
-        <p>Одиночный режим для создания карт и режимов: полёт (F2), дев-меню (F3), маркеры (F6), сохранение точки старта (F5). Сюжет, сохранения и фоторежим отключены.</p>
-        <label class="check"><input type="checkbox" id="e-refresh"> Восстановить исходный шаблон мира перед запуском</label>
-        <div class="actions"><button class="btn primary big" id="e-run">Открыть редактор</button></div>
+        <p data-i18n="editor.desc">Одиночный режим для создания карт, режимов и квестов: полёт (F2), дев-меню (F3), сохранение точки старта (F5). Вместе с игрой открывается окно квестов. Сюжет, сохранения и фоторежим отключены.</p>
+        <label class="check"><input type="checkbox" id="e-refresh"> <span data-i18n="editor.refresh">Восстановить исходный шаблон мира перед запуском</span></label>
+        <div class="actions"><button class="btn primary big" id="e-run" data-i18n="editor.run">Открыть редактор</button></div>
       </div>
     </section>
 
+    <div class="toast" id="toast" hidden></div>
     <div class="statusbar" id="statusbar">
       <span class="spinner" id="spinner" hidden></span>
-      <span id="status-text">Готово</span>
-      <span class="game-pill" id="game-pill" hidden>Игра запущена</span>
+      <span id="status-text" data-i18n="status.ready">Готово</span>
+      <span class="game-pill" id="game-pill" hidden data-i18n="game.running">Игра запущена</span>
     </div>
   </main>
 </div>
 
 <div class="modal" id="pass-modal" hidden>
   <form class="modal-box" id="pass-form">
-    <h2>Сервер защищён паролем</h2>
+    <h2 data-i18n="pass.title">Сервер защищён паролем</h2>
     <div class="muted" id="pass-server"></div>
-    <input id="pass-input" type="password" placeholder="Пароль" autocomplete="off">
+    <input id="pass-input" type="password" placeholder="Пароль" data-i18n-placeholder="password" autocomplete="off">
     <div class="actions">
-      <button type="button" class="btn" id="pass-cancel">Отмена</button>
-      <button type="submit" class="btn primary">Подключиться</button>
+      <button type="button" class="btn" id="pass-cancel" data-i18n="cancel">Отмена</button>
+      <button type="submit" class="btn primary" data-i18n="connect">Подключиться</button>
     </div>
   </form>
 </div>
 
-<script src="app.js?v=0.6.0"></script>
+<script src="app.js?v=0.6.2"></script>
 </body>
 </html>

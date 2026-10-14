@@ -52,7 +52,7 @@ struct WorldItem {
     uint16_t id = 0;
     std::string key;
     int count = 1;
-    float x = 0, y = 0, z = 0;
+    float x = 0, y = 0, z = 0, yaw = 0;
     uint16_t only = 0xFFFF;           // player id it is shown to; 0xFFFF = everyone
     double onlyJoinedAt = 0;
 };
@@ -69,6 +69,7 @@ struct Player {
     double poseWindow = 0; int posesInWindow = 0;  // relay rate limit
     std::map<std::string, int> inventory;          // last snapshot reported by the client
     std::string look;                              // look asset path the player wears
+    std::string lang = "en";                      // language the client uses ("en", "ru"...)
     std::vector<uint16_t> insideMarkers;           // markers whose radius the player is in
     bool admin = false;
     double eventWindow = 0; int eventCount = 0;    // game event rate limit
@@ -141,6 +142,9 @@ private:
     std::map<uint16_t, WorldItem> items_;
     uint16_t nextItem_ = 1;
     void SendWorldItem(_ENetPeer* peer, const WorldItem& item);
+    std::string worldEdits_;      // modes/<mode>/world.json (validated), sent on join
+    void LoadWorldEdits();
+    void SendWorldEdits(_ENetPeer* peer);
     uint16_t nextMarker_ = 1;
     void RemovePlayer(Player* p, uint8_t reason);
     uint16_t FreeId() const;

@@ -51,8 +51,9 @@ enum class Msg : uint8_t {
     PlayerLook = 79,  // u16 id, str lookPath: that player's look; for your own id it is an order to wear it
     Objective = 81,   // u8 state (EObjectiveHudState), u8 category, u8 style, str title, str text, i32 xp
     ObjectiveMeter = 82,  // u8 show, str title, f32 percent (0..1)
+    WorldEdits = 85,  // u16 part, u16 parts, str chunk: the mode's world.json (docs/world.md), split in chunks; "" = none
     Corpse = 84,      // u16 playerId: that player died where it stands now; leave a body there
-    WorldItem = 83,   // u16 id, u8 op (1 add: str itemKey, i32 count, f32 x,y,z; 2 remove): a pickup placed by the mode
+    WorldItem = 83,   // u16 id, u8 op (1 add: str itemKey, i32 count, f32 x,y,z, f32 yaw; 2 remove): a pickup placed by the mode
     Marker = 80,      // u16 id, u8 op (1 add/update: f32 x,y,z, u8 category, u8 style, u8 route, str icon, str title, str description; 2 remove)
 };
 

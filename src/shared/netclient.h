@@ -56,8 +56,9 @@ public:
         std::function<void(uint16_t id, const std::string& lookPath)> look;  // id == localId(): wear it
         struct MarkerInfo { float x, y, z; uint8_t category, style; bool route; std::string icon, title, description; };
         std::function<void(uint16_t id, const MarkerInfo* info)> marker;  // info null = removed
-        std::function<void(uint16_t id, const std::string* item, int count, float x, float y, float z)> worldItem;  // item null = removed
+        std::function<void(uint16_t id, const std::string* item, int count, float x, float y, float z, float yaw)> worldItem;  // item null = removed
         std::function<void(uint16_t playerId)> corpse;
+        std::function<void(const std::string& json)> worldEdits;  // whole world.json once all parts arrived
         std::function<void(uint8_t state, uint8_t category, uint8_t style, const std::string& title, const std::string& text, int xp)> objective;
         std::function<void(bool show, const std::string& title, float percent)> objectiveMeter;
     } on;
@@ -79,6 +80,7 @@ public:
     const std::map<uint16_t, RemotePlayer>& players() const { return players_; }
 
 private:
+    std::string worldEditsBuffer_;  // Msg::WorldEdits parts
     void OnPacket(const uint8_t* data, size_t size, double now);
     void Fail(const std::string& reason);
     _ENetHost* host_ = nullptr;

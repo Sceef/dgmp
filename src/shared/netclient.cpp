@@ -1,4 +1,5 @@
 #include "netclient.h"
+#include <windows.h>
 #include <enet/enet.h>
 #include <algorithm>
 #include <chrono>
@@ -158,6 +159,8 @@ void Client::Service(double now) {
         case ENET_EVENT_TYPE_CONNECT: {
             status_ = Status::Handshake;
             Writer w; w.Op(Msg::Hello); w.U16(kProtocolVersion); w.Str(nick_); w.Str(password_);
+            char lang[16] = "en"; DWORD n = GetEnvironmentVariableA("DGMP_LANG", lang, sizeof(lang)); if (!n || n >= sizeof(lang)) strcpy_s(lang, "en");
+            w.Str(lang);
             enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
             break;
         }
@@ -235,13 +238,22 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.objectiveMeter) on.objectiveMeter(show != 0, title, percent);
         break;
     }
+    case Msg::WorldEdits: {
+        const auto part = r.U16(), parts = r.U16(); auto chunk = r.Str();
+        if (!r.ok()) break;
+        if (part == 0) worldEditsBuffer_.clear();
+        worldEditsBuffer_ += chunk;
+        if (part + 1 >= parts && on.worldEdits) on.worldEdits(worldEditsBuffer_);
+        break;
+    }
     case Msg::Corpse: { const auto id = r.U16(); if (r.ok() && on.corpse) on.corpse(id); break; }
     case Msg::WorldItem: {
         const auto id = r.U16(); const auto op = r.U8();
         if (!r.ok() || !on.worldItem) break;
-        if (op == 2) { on.worldItem(id, nullptr, 0, 0, 0, 0); break; }
+        if (op == 2) { on.worldItem(id, nullptr, 0, 0, 0, 0, 0); break; }
         const auto key = r.Str(kItemKeyMax); const int count = r.I32(); const float x = r.F32(), y = r.F32(), z = r.F32();
-        if (r.ok()) on.worldItem(id, &key, count, x, y, z);
+        const float yaw = r.left() >= 4 ? r.F32() : 0.f;
+        if (r.ok()) on.worldItem(id, &key, count, x, y, z, yaw);
         break;
     }
     case Msg::Marker: {

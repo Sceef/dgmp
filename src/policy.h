@@ -36,6 +36,7 @@ void SetQuestHud(bool active);
 void WatchRewardScreens();
 bool RewardPanelOpen();  // the quest reward panel is up
 bool TakeDeath();  // the local player died since the last call
+void SetEditorSession(bool on);  // single-player editor: no pause when the window loses focus
 // Multiplayer: a hit that would kill the local player is cancelled (ModifyDamage returns 0) and
 // reported here instead; the mode's death (body, respawn) follows. Set by mp.
 void SetInterceptLethalHits(bool on);

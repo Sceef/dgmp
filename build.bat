@@ -19,9 +19,15 @@ if not exist build\enet.lib (
   lib /nologo /OUT:build\enet.lib build\enet\*.obj || exit /b 1
 )
 
+if not exist build\imgui.lib (
+  if not exist build\imgui mkdir build\imgui
+  cl /nologo /std:c++20 /O2 /MT /W0 /EHsc /c /Ithird_party\imgui /Ithird_party\imguizmo /Fo"build\imgui\\" third_party\imgui\imgui.cpp third_party\imgui\imgui_draw.cpp third_party\imgui\imgui_tables.cpp third_party\imgui\imgui_widgets.cpp third_party\imgui\backends\imgui_impl_dx11.cpp third_party\imgui\backends\imgui_impl_win32.cpp third_party\imguizmo\ImGuizmo.cpp || exit /b 1
+  lib /nologo /OUT:build\imgui.lib build\imgui\*.obj || exit /b 1
+)
+
 rem ---- game client DLL (version.dll proxy) ----
 if not exist build\dll mkdir build\dll
-cl %CXXFLAGS% /Ithird_party\enet\include /Fo"build\dll\\" /DDGMP_BUILD src\client.cpp src\policy.cpp src\environment.cpp src\devmenu.cpp src\dllmain.cpp src\profile.cpp src\panel.cpp src\ue.cpp src\proxy.cpp src\mp.cpp src\hud.cpp src\devcmd.cpp src\inventory.cpp src\gameevents.cpp src\audio.cpp src\shared\netclient.cpp /LD /Fe"build\version.dll" /link /DEF:src\version.def /MAP:build\version.map build\enet.lib ws2_32.lib winmm.lib user32.lib gdi32.lib gdiplus.lib || exit /b 1
+cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\imgui /Ithird_party\imguizmo /Fo"build\dll\\" /DDGMP_BUILD src\client.cpp src\policy.cpp src\environment.cpp src\devmenu.cpp src\dllmain.cpp src\profile.cpp src\panel.cpp src\ue.cpp src\proxy.cpp src\mp.cpp src\hud.cpp src\devcmd.cpp src\inventory.cpp src\gameevents.cpp src\overlay.cpp src\editorui.cpp src\worldedit.cpp src\audio.cpp src\shared\netclient.cpp /LD /Fe"build\version.dll" /link /DEF:src\version.def /MAP:build\version.map build\enet.lib ws2_32.lib winmm.lib user32.lib gdi32.lib gdiplus.lib build\imgui.lib d3d11.lib dxgi.lib || exit /b 1
 
 rem ---- dedicated server ----
 cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\lua\src /Fo"build\server\\" src\server\main.cpp src\server\server.cpp src\server\script.cpp /Zi /Fd"build\server\\" /Fe"dgmp-server.exe" /link /DEBUG /OPT:REF /OPT:ICF build\lua.lib build\enet.lib ws2_32.lib winmm.lib dbghelp.lib bcrypt.lib || exit /b 1

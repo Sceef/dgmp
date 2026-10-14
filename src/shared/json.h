@@ -29,6 +29,7 @@ public:
     bool isObject() const { return type_ == Type::Object; }
     bool isArray() const { return type_ == Type::Array; }
     bool isString() const { return type_ == Type::String; }
+    bool isNumber() const { return type_ == Type::Number; }
 
     bool asBool(bool d = false) const { return type_ == Type::Bool ? b_ : d; }
     double asNumber(double d = 0) const { return type_ == Type::Number ? n_ : d; }

@@ -9,6 +9,9 @@
 #include "devcmd.h"
 #include "audio.h"
 #include "hud.h"
+#include "overlay.h"
+#include "editorui.h"
+#include "lang.h"
 #include "../api/dgmp.h"
 #include <windows.h>
 #include <malloc.h>
@@ -18,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -97,7 +101,7 @@ void DevInputMode(UObject* target,bool ui) {
     }
 }
 void DevInputPolicy() {
-    if(devInputLocked && (!devmenu::IsOpen() || devInputController!=controller)) {
+    if(devInputLocked && (!(devmenu::IsOpen() || overlay::CursorMode()) || devInputController!=controller)) {
         if(IsValid(devInputController)) {
             BoolArg(devInputController,"SetIgnoreMoveInput","bNewMoveInput",false);
             BoolArg(devInputController,"SetIgnoreLookInput","bNewLookInput",false);
@@ -106,7 +110,7 @@ void DevInputPolicy() {
         }
         devInputLocked=false; devInputController=nullptr;
     }
-    if(devmenu::IsOpen() && !devInputLocked && IsValid(controller)) {
+    if((devmenu::IsOpen() || overlay::CursorMode()) && !devInputLocked && IsValid(controller)) {
         devInputController=controller;
         devPreviousCursor=GetBoolProp(controller,"bShowMouseCursor");
         SetBoolProp(controller,"bShowMouseCursor",true);
@@ -123,6 +127,17 @@ bool Paused() {
     auto gs=FindObject("/Script/Engine.Default__GameplayStatics"); auto f=gs?Fn(gs,"IsGamePaused"):nullptr;
     if(!f || !IsValid(gameMode)) return false;
     Params p(f); p.Set("WorldContextObject",gameMode); Call(gs,"IsGamePaused",&p); return p.GetBool("ReturnValue");
+}
+// The player's body (and what hangs on it: weapons, backpack) is hidden while flying in the editor.
+void HideBody(bool hidden) {
+    if(!IsValid(pawn)) return;
+    BoolArg(pawn,"SetActorHiddenInGame","bNewHidden",hidden);
+    if(auto f=Fn(pawn,"GetAttachedActors")) {
+        Params p(f); Call(pawn,"GetAttachedActors",&p);
+        struct Arr { UObject** data; int32_t num,max; };
+        const auto arr=p.Get<Arr>("OutActors");
+        for(int i=0;i<arr.num && arr.data;++i) if(IsValid(arr.data[i])) BoolArg(arr.data[i],"SetActorHiddenInGame","bNewHidden",hidden);
+    }
 }
 void SetFlying(bool on) {
     if(!IsValid(pawn) || !IsValid(controller) || !IsValid(movement) || flying==on) return;
@@ -144,6 +159,7 @@ void SetFlying(bool on) {
     }
     if(auto fn=Fn(movement,"SetMovementMode")) { Params p(fn); p.Set<uint8_t>("NewMovementMode",on?0:previousMovement); p.Set<uint8_t>("NewCustomMode",0); Call(movement,"SetMovementMode",&p); }
     flying=on; wantedFly=on;
+    if(!multiplayer) HideBody(on);
     dg::Log("Fly %s; prior movement=%u collision=%d ignored=%d",on?"ON":"OFF",previousMovement,previousCollision,previousIgnoreMove);
 }
 void Refresh(double now) {
@@ -202,7 +218,7 @@ void RequestLoad(double now) {
     }
     if(bootstrapSlot<0 || bootstrapSlot>255) {
         requested=true; stage="load-slot-missing"; bootstrapComplete=true;
-        panel::Loading(false,0,L"Не найден стартовый слот");
+        panel::Loading(false,0,lang::Pick(L"Не найден стартовый слот",L"Start slot not found"));
         note=L"Manual save enum unavailable; see logs/DGMP.log";
         return;
     }
@@ -218,7 +234,7 @@ void RequestLoad(double now) {
         Call(menu,"OnLoadSuccess");
     } else if(!loaded) {
         stage="load-failed"; bootstrapComplete=true;
-        panel::Loading(false,0,L"Ошибка загрузки шаблона");
+        panel::Loading(false,0,lang::Pick(L"Ошибка загрузки шаблона",L"Template load error"));
         note=L"Template load failed; see logs/DGMP.log";
     }
 }
@@ -246,7 +262,7 @@ void SavePoint(bool spawn) {
 // Fast travel (moves the bike along and streams the destination), then AlignArrival snaps exactly.
 void TravelTo(const FVector& pos,float yaw) {
     arrivalPosition=pos; arrivalYaw=yaw; arrivalAfter=Now()+3; pendingArrival=true;
-    panel::Loading(true,0.85f,L"Перемещение");
+    panel::Loading(true,0.85f,lang::Pick(L"Перемещение",L"Travelling"));
     auto fn=Fn(gameMode,"RequestFastTravel");
     if(fn) {
         FTransform player,bike; player.Translation=pos; player.Rotation=RotatorToQuat({0,yaw,0}); bike=player; bike.Translation.Y+=250;
@@ -394,7 +410,7 @@ void Sweep(double now) {
 void Fly(float dt) {
     if(!flying) return;
     if(Field<uint8_t>(movement,0x198)!=0) { auto fn=Fn(movement,"SetMovementMode"); if(fn) { Params p(fn); p.Set<uint8_t>("NewMovementMode",0); Call(movement,"SetMovementMode",&p); } }
-    if(!Foreground() || Paused() || policy::GetState().menuActive || panel::IsLoading() || devmenu::IsOpen()) return;
+    if(!Foreground() || Paused() || policy::GetState().menuActive || panel::IsLoading() || devmenu::IsOpen() || overlay::CursorMode()) return;
     const auto r=View(); const float rad=0.01745329252f;
     const float cy=cosf(r.Yaw*rad),sy=sinf(r.Yaw*rad),cp=cosf(r.Pitch*rad),sp=sinf(r.Pitch*rad);
     const float forward=float(Down('W'))-float(Down('S')),right=float(Down('D'))-float(Down('A')),up=float(Down(VK_SPACE))-float(Down(VK_CONTROL));
@@ -403,12 +419,29 @@ void Fly(float dt) {
     auto pos=Position(); const float distance=speed*std::clamp(dt,0.f,0.1f)*(Down(VK_SHIFT)?4.f:1.f)/std::max(1.f,len);
     pos.X+=delta.X*distance; pos.Y+=delta.Y*distance; pos.Z+=delta.Z*distance; SetPosition(pos);
 }
+struct Aim;
+Aim AimTarget();
+void Pick(const char* kind);
+// The quest window can arm a pick ("Назначить точку" ...): the next left click in the editor takes it.
+// It writes editor_pick_mode.json {"kind":"point"|"object"|"item"}; the game deletes it when used.
+bool ArmedPick(bool fire) {
+    const auto file=fs::path(profile::Root())/L"editor_pick_mode.json";
+    std::ifstream in(file); std::stringstream ss; ss << in.rdbuf(); in.close();
+    const std::string text=ss.str();
+    const char* kind=text.find("\"object\"")!=std::string::npos?"object":text.find("\"item\"")!=std::string::npos?"item":text.find("\"point\"")!=std::string::npos?"point":nullptr;
+    if(!kind) return false;
+    if(fire) { std::error_code ec; fs::remove(file,ec); Pick(kind); }
+    return true;
+}
 void Commands(double now) {
     bool focus=Foreground();
     const bool devKey=Pressed(VK_F3);
     const int keys[]{VK_UP,VK_DOWN,VK_LEFT,VK_RIGHT,VK_RETURN,VK_ESCAPE};
     bool menuKeys[6]{}; for(int i=0;i<6;++i) menuKeys[i]=Pressed(keys[i]);
-    const bool flyKey=Pressed(VK_F2),saveKey=Pressed(VK_F5),markKey=Pressed(VK_F6),returnKey=Pressed(VK_F8),slower=Pressed(VK_OEM_4),faster=Pressed(VK_OEM_6);
+    // While a text field of the editor UI has the keyboard, editor hotkeys stay quiet; in cursor mode
+    // clicks belong to the UI (editorui handles clicks into the world).
+    if(overlay::Typing()) focus=false;
+    const bool flyKey=Pressed(VK_F2),saveKey=Pressed(VK_F5),markKey=Pressed(VK_F6),objectKey=Pressed(VK_F7),itemKey=Pressed(VK_F9),returnKey=Pressed(VK_F8),slower=Pressed(VK_OEM_4),faster=Pressed(VK_OEM_6);
     const bool left=Pressed(VK_LBUTTON),right=Pressed(VK_RBUTTON);
     // Joined players have no editor tools: the server owns time, weather and positions.
     if(focus && ready && !panel::IsLoading() && !multiplayer) {
@@ -418,10 +451,11 @@ void Commands(double now) {
         if(wasDev) {
             for(int i=0;i<6;++i) if(menuKeys[i]) devmenu::Key(keys[i]);
         } else {
-            if(flyKey) SetFlying(!flying); if(saveKey) SavePoint(true); if(markKey) SavePoint(false); if(returnKey) ReturnSpawn();
+            if(flyKey) SetFlying(!flying); if(saveKey) SavePoint(true); if(markKey) { SavePoint(false); Pick("point"); } if(returnKey) ReturnSpawn();
+            if(objectKey) Pick("object"); if(itemKey) Pick("item");
             if(slower) speed=std::max(100.f,speed/2); if(faster) speed=std::min(40000.f,speed*2);
-            if(flying && !policy::GetState().menuActive && !Paused()) {
-                if(left) { ++editorLeft; note=L"Editor LMB reserved"; dg::Log("Editor LMB: %.3f %.3f %.3f",Position().X,Position().Y,Position().Z); }
+            if(flying && !overlay::CursorMode() && !policy::GetState().menuActive && !Paused()) {
+                if(left) { ++editorLeft; if(!ArmedPick(true)) { note=L"Editor LMB reserved"; dg::Log("Editor LMB: %.3f %.3f %.3f",Position().X,Position().Y,Position().Z); } }
                 if(right) { ++editorRight; note=L"Editor RMB reserved"; dg::Log("Editor RMB: %.3f %.3f %.3f",Position().X,Position().Y,Position().Z); }
             }
         }
@@ -461,6 +495,72 @@ void Commands(double now) {
         }
     }
 }
+// What the camera points at (up to 50 m), for the launcher's quest editor: the world object a quest
+// can name (a searchable car, door, pickup, explosive near the hit point) or else the hit actor, and the
+// hit point. Written into telemetry.json as "aim".
+struct Aim { bool valid=false,object=false; std::string id,cls; FVector at{}; };  // object: a quest-usable world object
+Aim AimTarget() {
+    Aim aim;
+    UObject* mgr=IsValid(controller)?Field<UObject*>(controller,off::PC_CameraManager):nullptr;
+    static UObject* kismet=nullptr; static UObject* statics=nullptr;
+    if(!IsValid(kismet)) kismet=FindObject("/Script/Engine.Default__KismetSystemLibrary");
+    if(!IsValid(statics)) statics=FindObject("/Script/Engine.Default__GameplayStatics");
+    auto trace=kismet?Fn(kismet,"LineTraceSingle_NEW"):nullptr; auto brk=statics?Fn(statics,"BreakHitResult"):nullptr;
+    if(!IsValid(mgr) || !IsValid(pawn) || !trace || !brk) return aim;
+    const FVector from=Field<FVector>(mgr,off::CamMgr_POV_Location);
+    const FRotator rot=Field<FRotator>(mgr,off::CamMgr_POV_Location+0xC);  // FMinimalViewInfo: Location, Rotation
+    const float rad=0.01745329252f, cp=cosf(rot.Pitch*rad);
+    const FVector to{from.X+cosf(rot.Yaw*rad)*cp*5000.f,from.Y+sinf(rot.Yaw*rad)*cp*5000.f,from.Z+sinf(rot.Pitch*rad)*5000.f};
+    Params t(trace); t.Set("WorldContextObject",pawn); t.Set("Start",from); t.Set("End",to); t.Set<uint8_t>("TraceChannel",0); t.SetBool("bTraceComplex",false); t.SetBool("bIgnoreSelf",true);
+    Call(kismet,"LineTraceSingle_NEW",&t);
+    if(!t.GetBool("ReturnValue")) return aim;
+    Params b(brk);
+    auto hitProp=FindProperty(trace,"OutHit"),inProp=FindProperty(brk,"Hit");
+    if(!hitProp || !inProp) return aim;
+    std::memcpy(static_cast<uint8_t*>(b.Data())+Field<int>(inProp,off::UProperty_Offset),static_cast<uint8_t*>(t.Data())+Field<int>(hitProp,off::UProperty_Offset),136);
+    Call(statics,"BreakHitResult",&b);
+    aim.valid=true; aim.at=b.Get<FVector>("ImpactPoint");
+    UObject* hit=b.Get<UObject*>("HitActor");
+    // A quest names the interactable, which usually sits next to (not on) the mesh the trace hits.
+    static std::vector<UObject*> classes;
+    if(classes.empty()) for(const char* c:{"BendBasicInteract","BendInventoryPickup","BendDoor","Explosive_C"}) if(auto cls=FindClass(c)) classes.push_back(cls);
+    UObject* best=nullptr; float bestDist=250.f*250.f;
+    for(int i=0,n=NumObjects();i<n;++i) {
+        UObject* o=ObjectAt(i);
+        if(!o || (o->ObjectFlags&0x10) || !IsValid(o)) continue;
+        bool wanted=false; for(auto cls:classes) if(IsA(o,cls)) { wanted=true; break; }
+        if(!wanted) continue;
+        auto f=Fn(o,"K2_GetActorLocation"); if(!f) continue;
+        Params l(f); Call(o,"K2_GetActorLocation",&l); const FVector at=l.Get<FVector>("ReturnValue");
+        const float dx=at.X-aim.at.X,dy=at.Y-aim.at.Y,dz=at.Z-aim.at.Z,d=dx*dx+dy*dy+dz*dz;
+        if(d<bestDist) { bestDist=d; best=o; }
+    }
+    aim.object=best!=nullptr;
+    if(!best) best=hit;
+    if(IsValid(best)) { aim.id=GetName(best); aim.cls=GetName(best->Class); }
+    return aim;
+}
+// Quest editor picks (F6 point, F7 object, F9 item): what the camera points at, appended to
+// editor_picks.jsonl for the launcher's quest window, which puts it into the selected step.
+void Pick(const char* kind) {
+    static bool fresh=false;
+    const auto path=fs::path(profile::Root())/L"editor_picks.jsonl";
+    if(!fresh) { fresh=true; std::ofstream(path,std::ios::trunc); }  // a new editor session
+    const Aim aim=AimTarget();
+    FVector at=aim.valid?aim.at:Position();
+    if(!strcmp(kind,"object") && !aim.object) {
+        note=L"F7: наведитесь на багажник, дверь, предмет или бочку";
+        policy::ShowNativeHint(controller,L"",note,"",false,2);
+        return;
+    }
+    std::ofstream file(path,std::ios::app); file.precision(9);
+    file << "{\"seq\":" << GetTickCount64() << ",\"kind\":\"" << kind << "\",\"x\":" << at.X << ",\"y\":" << at.Y << ",\"z\":" << at.Z
+         << ",\"id\":\"" << (strcmp(kind,"object")?"":aim.id) << "\",\"class\":\"" << (strcmp(kind,"object")?"":aim.cls) << "\"}\n";
+    const std::wstring what=!strcmp(kind,"point")?L"точка":!strcmp(kind,"object")?L"объект":L"предмет";
+    note=L"Квест: "+what+L" добавлен"+(strcmp(kind,"object")?L"":L" ("+std::wstring(aim.id.begin(),aim.id.end())+L")");
+    policy::ShowNativeHint(controller,L"",L"Квест: "+what+L" отправлен в окно квестов","",false,2);
+    dg::Log("Quest editor pick %s at %.0f %.0f %.0f %s",kind,at.X,at.Y,at.Z,aim.id.c_str());
+}
 void Status(double now) {
     if(now<nextStatus) return; nextStatus=now+1;
     const auto pos=IsValid(pawn)?Position():FVector{}; const auto rotation=IsValid(controller)?View():FRotator{};
@@ -490,10 +590,17 @@ void Status(double now) {
              << ",\"environmentRequested\":" << env.state.requestedRevision << ",\"environmentProcessed\":" << env.state.processedRevision
              << ",\"environmentLastResult\":" << env.state.lastRequestResult << ",\"weatherCatalog\":[";
         for(size_t i=0;i<env.weather.size();++i) { if(i) file << ','; file << "{\"id\":" << env.weather[i].id << ",\"name\":\"" << env.weather[i].name << "\"}"; }
-        file << "]}\n";
+        file << "]";
+        const Aim aim=AimTarget();
+        if(aim.valid) file << ",\"aim\":{\"id\":\"" << aim.id << "\",\"class\":\"" << aim.cls << "\",\"object\":" << aim.object << ",\"x\":" << aim.at.X << ",\"y\":" << aim.at.Y << ",\"z\":" << aim.at.Z << "}";
+        else file << ",\"aim\":null";
+        file << "}\n";
     }
     MoveFileExW(tmp.c_str(),dest.c_str(),MOVEFILE_REPLACE_EXISTING);
-    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.2 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str()); panel::Text(multiplayer?L"":text);
+    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.2 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str());
+    // In the editor the status lives in the in-game UI (bottom left, folded); the old panel only if that is not up.
+    if(!multiplayer && overlay::Visible()) { editorui::SetStatus(text); panel::Text(L""); }
+    else panel::Text(multiplayer?L"":text);
     static double nextLog=0; if(now>=nextLog) { nextLog=now+10; dg::Log("Status %s ready=%d fly=%d pos=(%.1f %.1f %.1f) triggers=%u ai=%u",stage.c_str(),ready,flying,pos.X,pos.Y,pos.Z,triggers,removedAI); }
 }
 void FinishBootstrapFade() {
@@ -524,7 +631,7 @@ void Update(float dt) {
         if(!menu && IsValid(pawn) && IsValid(controller) && IsValid(movement) && !Loading()) {
             if(!stableSince) stableSince=now;
             if(now-stableSince>4) {
-                if(!ready) { ready=true; stage="world-ready"; dg::Log("WORLD READY: isolated DGMP profile, player spawned"); }
+                if(!ready) { ready=true; stage="world-ready"; dg::Log("WORLD READY: isolated DGMP profile, player spawned"); if(!multiplayer) editorui::Start(); }
                 if(wantedFly && !flying) SetFlying(true);
                 if(!spawnApplied) { spawnApplied=true; if(!multiplayer && GetPrivateProfileIntW(L"Spawn",L"Enabled",0,Ini().c_str())) ReturnSpawn(); }
                 if(multiplayer) ApplyServerTeleport();
@@ -534,7 +641,7 @@ void Update(float dt) {
             stableSince=0;
             if(ready && menu) { ready=false; stage="main-menu"; }
         }
-        if(requested && !ready && now-requestTime>90 && stage=="load-requested") { stage="load-timeout"; bootstrapComplete=true; panel::Loading(false,0,L"Ошибка загрузки"); note=L"Auto load timed out; see logs/DGMP.log"; dg::Log("Bootstrap load timed out"); }
+        if(requested && !ready && now-requestTime>90 && stage=="load-requested") { stage="load-timeout"; bootstrapComplete=true; panel::Loading(false,0,lang::Pick(L"Ошибка загрузки",L"Loading failed")); note=L"Auto load timed out; see logs/DGMP.log"; dg::Log("Bootstrap load timed out"); }
     }
     policy::Update(pawn,controller,gameMode,flying || devmenu::IsOpen() || !ready || pendingArrival,revealMap,true,suppressStory);
     if(multiplayer) {
@@ -547,7 +654,7 @@ void Update(float dt) {
         if(mpJoinedAt && !mpSpawned && now-mpJoinedAt>5) mpSpawned=true;
         if(phase==mp::Phase::Failed && !bootstrapComplete) {
             if(!mpFailedAt) { mpFailedAt=now; dg::Log("Multiplayer join failed: %ls",mp::FailReason().c_str()); }
-            panel::Loading(true,1.f,L"Не удалось подключиться: "+mp::FailReason());
+            panel::Loading(true,1.f,std::wstring(lang::Pick(L"Не удалось подключиться: ",L"Could not connect: "))+mp::FailReason());
             if(now-mpFailedAt>8) {
                 // Back to the launcher: nothing to play without the server.
                 if(auto f=IsValid(controller)?Fn(controller,"ConsoleCommand"):nullptr) {
@@ -560,21 +667,22 @@ void Update(float dt) {
             return;
         }
     }
-    if(multiplayer && mp::Respawning() && !pendingArrival) panel::Loading(true,0.9f,L"Возрождение");
+    if(multiplayer && mp::Respawning() && !pendingArrival) panel::Loading(true,0.9f,lang::Pick(L"Возрождение",L"Respawning"));
     if(!bootstrapComplete || panel::IsLoading()) {
         if(multiplayer && mp::Respawning() && !pendingArrival) {
             // death: wait for the server's respawn teleport
         } else if(multiplayer && ready && !Loading() && !pendingArrival && !mpSpawned) {
-            panel::Loading(true,0.92f,mp::GetPhase()==mp::Phase::Joined?L"Вход на сервер":L"Подключение к серверу");
+            panel::Loading(true,0.92f,mp::GetPhase()==mp::Phase::Joined?lang::Pick(L"Вход на сервер",L"Joining the server"):lang::Pick(L"Подключение к серверу",L"Connecting to the server"));
         } else if(ready && spawnApplied && !pendingArrival && !Loading()) {
             FinishBootstrapFade();
-            bootstrapComplete=true; panel::Loading(false,1.f,L"Мир готов");
+            bootstrapComplete=true; panel::Loading(false,1.f,lang::Pick(L"Мир готов",L"World ready"));
             dg::Log("Loading cover released: world ready and spawn fully aligned");
-        } else if(pendingArrival) panel::Loading(true,0.88f,L"Перемещение");
-        else if(!ready && !requested) panel::Loading(true,0.25f,L"Инициализация мира");
-        else if(!ready) panel::Loading(true,Loading()?0.55f:0.72f,L"Загрузка мира");
+        } else if(pendingArrival) panel::Loading(true,0.88f,lang::Pick(L"Перемещение",L"Travelling"));
+        else if(!ready && !requested) panel::Loading(true,0.25f,lang::Pick(L"Инициализация мира",L"Initializing the world"));
+        else if(!ready) panel::Loading(true,Loading()?0.55f:0.72f,lang::Pick(L"Загрузка мира",L"Loading the world"));
     }
     Commands(now); environment::Update(ready && !panel::IsLoading() && !Loading()); Status(now);
+    if(!multiplayer && ready && !Loading()) { editorui::Update(now,pawn,controller); mp::UpdateEditorPreview(now,pawn); }
     // Silent while the loading cover is up: no menu music or chatter from the template save.
     audio::Update(!bootstrapComplete || panel::IsLoading());
     devcmd::Update(pawn,controller,gameMode);
@@ -627,10 +735,11 @@ UObject* FindEngine() {
 void DGMPInitThread() {
     const auto logPath=fs::path(profile::Root())/L"logs"/L"DGMP.log";
     dg::LogOpen(logPath.string().c_str()); panel::Start();
+    if(overlay::Install()) overlay::SetCover(&panel::DrawCover);  // the loading cover lives in the game's frames
     dg::Log("DGMP v0.5.2 loading; built %s %s; profile imports patched=%d",__DATE__,__TIME__,profile::PatchedCount());
     dg::Log("Isolated profile: %ls",profile::Saved().c_str());
-    panel::Loading(true,0.1f,L"Подготовка DGMP");
-    if(!ue::Init()) { panel::Text(L"DGMP: unsupported game build; see log"); panel::Loading(true,0,L"Эта сборка игры не поддерживается"); return; }
+    panel::Loading(true,0.1f,lang::Pick(L"Подготовка DGMP",L"Preparing DGMP"));
+    if(!ue::Init()) { panel::Text(L"DGMP: unsupported game build; see log"); panel::Loading(true,0,lang::Pick(L"Эта сборка игры не поддерживается",L"This game build is not supported")); return; }
     autoLoad=GetPrivateProfileIntW(L"DGMP",L"AutoLoad",1,Ini().c_str())!=0;
     autoFly=GetPrivateProfileIntW(L"DGMP",L"AutoFly",1,Ini().c_str())!=0; wantedFly=autoFly;
     suppressStory=GetPrivateProfileIntW(L"DGMP",L"SuppressStory",1,Ini().c_str())!=0;
@@ -645,6 +754,7 @@ void DGMPInitThread() {
     policy::ConfigureMarkers(mapMask);
     speed=std::clamp(ReadFloat(L"DGMP",L"FlySpeed",2000),100.f,40000.f); startTime=Now();
     multiplayer=mp::Init();
+    policy::SetEditorSession(!multiplayer);
     if(multiplayer) { autoFly=wantedFly=false; dg::Log("Multiplayer client session: editor tools disabled"); }
     UObject* engine=nullptr;
     for(int i=0;i<240 && !engine;++i) { Sleep(250); if(NumObjects()>1000) engine=FindEngine(); }

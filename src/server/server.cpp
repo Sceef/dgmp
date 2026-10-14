@@ -1,4 +1,5 @@
 #include "server.h"
+#include "../shared/json.h"
 #include "script.h"
 #include <enet/enet.h>
 #include <algorithm>
@@ -71,7 +72,8 @@ bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
     Log("DGMP server \"%s\" listening on UDP %u, %d slots%s", cfg_.name.c_str(), cfg_.port, cfg_.maxPlayers, cfg_.password.empty() ? "" : ", password protected");
     LoadLooks();
     script_ = std::make_unique<Script>(*this);
-    if (!script_->Load(cfg_.mode)) Log("Mode \"%s\" failed to load; the server runs without a mode (fix the script, it reloads automatically)", cfg_.mode.c_str());
+    if (script_->Load(cfg_.mode)) LoadWorldEdits();
+    else Log("Mode \"%s\" failed to load; the server runs without a mode (fix the script, it reloads automatically)", cfg_.mode.c_str());
     return true;
 }
 
@@ -213,6 +215,8 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
 void Server::OnHello(ENetPeer* peer, net::Reader& r) {
     const uint16_t protocol = r.U16();
     const std::string nick = r.Str(96), password = r.Str(128);
+    std::string lang = r.left() >= 2 ? r.Str(16) : std::string("en");
+    if (lang.empty()) lang = "en";
     auto reject = [&](const std::string& why) {
         net::Writer w; w.Op(net::Msg::Reject); w.Str(why); SendTo(peer, w, true);
         enet_host_flush(host_);
@@ -228,7 +232,7 @@ void Server::OnHello(ENetPeer* peer, net::Reader& r) {
 
     auto owned = std::make_unique<Player>();
     auto p = owned.get();
-    p->id = FreeId(); p->nick = nick; p->peer = peer; p->joinedAt = Now(); p->ready = true;
+    p->id = FreeId(); p->nick = nick; p->peer = peer; p->joinedAt = Now(); p->ready = true; p->lang = lang;
     for (auto& a : cfg_.admins) if (_stricmp(a.c_str(), nick.c_str()) == 0) p->admin = true;
     p->state.x = cfg_.spawnX; p->state.y = cfg_.spawnY; p->state.z = cfg_.spawnZ; p->state.yaw = cfg_.spawnYaw;
     players_[p->id] = std::move(owned);
@@ -247,6 +251,7 @@ void Server::OnHello(ENetPeer* peer, net::Reader& r) {
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF) SendWorldItem(peer, item);
     if (timeHours_ >= 0) { net::Writer t; t.Op(net::Msg::SetTime); t.F32(timeHours_); t.U8(timePaused_); SendTo(peer, t, true); }
     if (weather_ != -2) { net::Writer t; t.Op(net::Msg::SetWeather); t.I32(weather_); SendTo(peer, t, true); }
+    SendWorldEdits(peer);
     Teleport(p, cfg_.spawnX, cfg_.spawnY, cfg_.spawnZ, cfg_.spawnYaw);
     Log("%s (id %u) joined from %s", nick.c_str(), p->id, Address(peer->address).c_str());
     script_->PlayerJoin(*p);
@@ -331,8 +336,28 @@ bool Server::RemoveMarker(uint16_t id) {
     for (auto& [pid, p] : players_) std::erase(p->insideMarkers, id);
     return true;
 }
+// The mode's edits of the game world (removed/moved objects, added props): every client applies them.
+void Server::LoadWorldEdits() {
+    worldEdits_.clear();
+    const auto file = root_ / "modes" / script_->mode() / "world.json";
+    std::ifstream in(file, std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+    if (ss.str().empty()) return;
+    json::Value v;
+    if (!json::Value::Parse(ss.str(), v) || !v.isObject()) { Log("modes/%s/world.json is not valid JSON; ignored", script_->mode().c_str()); return; }
+    worldEdits_ = ss.str();
+    Log("World edits: %zu removed, %zu moved, %zu added", v["remove"].size(), v["move"].size(), v["add"].size());
+}
+void Server::SendWorldEdits(ENetPeer* peer) {
+    constexpr size_t kChunk = 60000;
+    const size_t parts = std::max<size_t>(1, (worldEdits_.size() + kChunk - 1) / kChunk);
+    for (size_t i = 0; i < parts; ++i) {
+        net::Writer w; w.Op(net::Msg::WorldEdits); w.U16(uint16_t(i)); w.U16(uint16_t(parts));
+        w.Str(worldEdits_.empty() ? std::string() : worldEdits_.substr(i * kChunk, kChunk));
+        SendTo(peer, w, true);
+    }
+}
 void Server::SendWorldItem(ENetPeer* peer, const WorldItem& item) {
-    net::Writer w; w.Op(net::Msg::WorldItem); w.U16(item.id); w.U8(1); w.Str(item.key); w.I32(item.count); w.F32(item.x); w.F32(item.y); w.F32(item.z);
+    net::Writer w; w.Op(net::Msg::WorldItem); w.U16(item.id); w.U8(1); w.Str(item.key); w.I32(item.count); w.F32(item.x); w.F32(item.y); w.F32(item.z); w.F32(item.yaw);
     SendTo(peer, w, true);
 }
 void Server::RestoreInventory(Player* p, const std::map<std::string, int>& inv, const std::vector<std::string>& drop) {
@@ -530,6 +555,8 @@ bool Server::ReloadMode() {
     for (auto id : ids) RemoveWorldItem(id);
     for (auto& [id, p] : players_) if (p->ready && p->peer) { Objective(p.get(), 4, 0, 0, "", ""); ObjectiveMeter(p.get(), false, "", 0); }
     if (!script_->Load(mode)) return false;
+    LoadWorldEdits();
+    for (auto& [id, p] : players_) if (p->ready && p->peer) SendWorldEdits(p->peer);
     return true;
 }
 
@@ -563,7 +590,7 @@ void Server::HandleConsole(const std::string& raw) {
         Log(ReloadMode() ? "Mode reloaded" : "Mode reload failed");
     } else if (cmd == "mode") {
         script_->Unload();
-        if (script_->Load(rest)) { cfg_.mode = rest; Log("Mode switched to %s", rest.c_str()); }
+        if (script_->Load(rest)) { cfg_.mode = rest; LoadWorldEdits(); for (auto& [id, p] : players_) if (p->ready && p->peer) SendWorldEdits(p->peer); Log("Mode switched to %s", rest.c_str()); }
         else { Log("Cannot load mode %s, restoring %s", rest.c_str(), cfg_.mode.c_str()); script_->Load(cfg_.mode); }
     } else if (cmd == "time") {
         SetTime(static_cast<float>(std::atof(rest.c_str())), false); Log("Time set to %.2f", timeHours_);

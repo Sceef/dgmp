@@ -20,5 +20,7 @@ void Update(ue::UObject* pawn, double now, std::vector<Event>& out);
 void Reset();
 // Pickups placed by the server (quest items): spawned near the player, reported as pickups with
 // id "dgmp_item_<id>". key null removes it.
-void SetWorldItem(uint16_t id, const std::string* key, int count, const ue::FVector& pos);
+void SetWorldItem(uint16_t id, const std::string* key, int count, const ue::FVector& pos, float yaw = 0);
+// The editor's preview of a quest item: the same pickup actor, not takeable. Null if the key is unknown.
+ue::UObject* SpawnPreviewItem(const std::string& key, const ue::FVector& pos, float yaw, ue::UObject* context);
 }

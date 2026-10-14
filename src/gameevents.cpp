@@ -1,9 +1,11 @@
 #include "gameevents.h"
+#include "lang.h"
 #include "policy.h"
 #include "inventory.h"
 #include "hud.h"
 #include <windows.h>
 #include "log.h"
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -29,7 +31,7 @@ std::vector<UObject*> classes;
 int cursor = 0;
 std::set<UObject*> fires;            // fire actors already reported
 std::vector<Event> pending;
-struct Placed { std::string key; int count = 1; FVector pos{}; UObject* actor = nullptr; bool taken = false, inRange = false; };
+struct Placed { std::string key; int count = 1; FVector pos{}; float yaw = 0; UObject* actor = nullptr; bool taken = false, inRange = false; };
 std::map<uint16_t, Placed> placed;  // server world items
 
 UObject* SpawnPickup(const Placed& p, UObject* context) {
@@ -38,7 +40,7 @@ UObject* SpawnPickup(const Placed& p, UObject* context) {
     if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
     UObject* cls = FindClass(p.key == "kWeaponID_Gas_Can" ? "BP_BendInventoryPickup_GasCan_C" : "BP_BendInventoryPickup_C");
     if (!item || !statics || !cls) return nullptr;
-    FTransform t; t.Translation = p.pos;
+    FTransform t; t.Translation = p.pos; t.Rotation = FQuat{0, 0, std::sin(p.yaw * 0.00872664626f), std::cos(p.yaw * 0.00872664626f)};
     Params begin(Fn(statics, "BeginSpawningActorFromClass"));
     begin.Set("WorldContextObject", context); begin.Set("ActorClass", cls); begin.Set("SpawnTransform", t); begin.SetBool("bNoCollisionFail", true);
     Call(statics, "BeginSpawningActorFromClass", &begin);
@@ -153,7 +155,7 @@ void Update(UObject* pawn, double, std::vector<Event>& out) {
                 if (inRange && !p.inRange) {
                     UObject* controller = nullptr;
                     for (auto c = pawn->Class; c && !controller; c = SuperOf(c)) if (auto prop = FindProperty(c, "Controller")) controller = Field<UObject*>(pawn, Field<int>(prop, off::UProperty_Offset));
-                    if (!policy::ShowNativeHint(controller, L"", L"Нажмите E, чтобы взять", "", false, 3)) hud::ShowHint(L"", L"[E] Взять", 3.0);
+                    if (!policy::ShowNativeHint(controller, L"", lang::Pick(L"Нажмите E, чтобы взять",L"Press E to take"), "", false, 3)) hud::ShowHint(L"", lang::Pick(L"[E] Взять",L"[E] Take"), 3.0);
                 }
                 p.inRange = inRange;
                 if (inRange && takePressed) {
@@ -175,10 +177,15 @@ void Update(UObject* pawn, double, std::vector<Event>& out) {
 
 void Reset() { cursor = 0; fires.clear(); lastSent.clear(); pending.clear(); for (auto& [id, p] : placed) p.actor = nullptr; }
 
-void SetWorldItem(uint16_t id, const std::string* key, int count, const FVector& pos) {
+UObject* SpawnPreviewItem(const std::string& key, const FVector& pos, float yaw, UObject* context) {
+    Placed p; p.key = key; p.pos = pos; p.yaw = yaw;
+    return SpawnPickup(p, context);
+}
+
+void SetWorldItem(uint16_t id, const std::string* key, int count, const FVector& pos, float yaw) {
     auto it = placed.find(id);
     if (it != placed.end() && IsValid(it->second.actor)) Call(it->second.actor, "K2_DestroyActor");
     if (!key) { if (it != placed.end()) placed.erase(it); return; }
-    placed[id] = Placed{*key, count, pos};
+    placed[id] = Placed{*key, count, pos, yaw};
 }
 }  // namespace gameevents

@@ -14,6 +14,17 @@
 local Quest = {}
 Quest.__index = Quest
 
+-- Texts can be plain strings or per language: { en = "Supplies", ru = "Припасы" }. The player's
+-- language (player.lang, chosen in the launcher) is used, else English, else any.
+function Quest.text(value, player)
+    if type(value) ~= "table" then return value end
+    local lang = player and player.valid and player.lang or "en"
+    if value[lang] and value[lang] ~= "" then return value[lang] end
+    if value.en and value.en ~= "" then return value.en end
+    for _, v in pairs(value) do if v ~= "" then return v end end
+    return ""
+end
+
 function Quest.start(player, opts)
     opts = opts or {}
     local q = setmetatable({
@@ -64,7 +75,7 @@ function Quest:hold(text, target)
     self:clearCollect()
     local quest, player = self, self.player
     local seconds = target.seconds or 10
-    local meter = target.meter or "Поиск"
+    local meter = target.meter or Quest.text({ en = "Searching", ru = "Поиск" }, player)
     local hold = { inside = false, progress = 0 }
     self.holdState = hold
     player:objective({ title = self.title, text = text, state = "update", category = self.category, style = target.style or "search" })
@@ -127,7 +138,7 @@ function Quest:collect(text, spec)
     if spec.spawn then
         ids = {}
         for _, s in ipairs(spec.spawn) do
-            local id = spawnItem({ item = s.item, count = s.count or 1, x = s.x, y = s.y, z = s.z, player = self.player })
+            local id = spawnItem({ item = s.item, count = s.count or 1, x = s.x, y = s.y, z = s.z, yaw = s.yaw, player = self.player })
             spawned[#spawned + 1] = id
             ids[#ids + 1] = "dgmp_item_" .. id
             -- A quest marker over each item (removed when it is taken or the step ends).
@@ -228,5 +239,46 @@ end
 -- complete([xp]): the completion callout shows the XP number when given
 function Quest:complete(xp) self.xp = xp; self:finish("complete") end
 function Quest:fail() self:finish("failed") end
+
+-- ---------------------------------------------------------------- quests from files
+-- quests/<id>.json, made by the launcher's quest editor (format: docs/quests.md).
+function Quest.load(id) return quests.load(id) end
+function Quest.list() return quests.list() end
+
+-- Runs a quest definition for one player: its steps in order, then the reward and the completion
+-- screen. onDone(player, quest) is called at the end. Returns the quest (q:fail() aborts it).
+function Quest.run(player, def, onDone)
+    if not def or not player.valid then return nil end
+    local L = function(v) return Quest.text(v, player) end
+    local q = Quest.start(player, { title = L(def.title), category = def.category or "task", style = def.style, text = L(def.text) })
+    local steps, index = def.steps or {}, 0
+    local nextStep
+    nextStep = function()
+        if not q.active or not player.valid then return end
+        index = index + 1
+        local s = steps[index]
+        if not s then
+            for _, r in ipairs(def.reward or {}) do player:giveItem(r.item, r.count or 1) end
+            q:complete(def.xp)
+            if onDone then onDone(player, q) end
+            return
+        end
+        if s.type == "goto" then
+            q:step(L(s.text), { x = s.x, y = s.y, z = s.z, radius = s.radius or 5, route = s.route ~= false, style = s.style,
+                             onEnter = function() nextStep() end })
+        elseif s.type == "hold" then
+            q:hold(L(s.text), { x = s.x, y = s.y, z = s.z, radius = s.radius or 6, seconds = s.seconds or 10, meter = L(s.meter),
+                             leaveTip = s.leaveTip, style = s.style, onDone = function() nextStep() end })
+        elseif s.type == "collect" then
+            q:collect(L(s.text), { event = s.event, count = s.count, item = s.item, class = s.class, ids = s.ids, area = s.area,
+                                marker = s.marker, route = s.route, spawn = s.spawn, style = s.style, onDone = function() nextStep() end })
+        else
+            log("quest " .. tostring(def.id) .. ": unknown step type " .. tostring(s.type))
+            nextStep()
+        end
+    end
+    nextStep()
+    return q
+end
 
 return Quest

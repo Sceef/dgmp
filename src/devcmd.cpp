@@ -2,6 +2,7 @@
 #include "profile.h"
 #include "log.h"
 #include "policy.h"
+#include "worldedit.h"
 #include <windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -265,6 +266,79 @@ std::string Run(const std::string& line) {
     if (cmd == "trace") {
         const double seconds = a.size() > 1 ? std::stod(a[1]) : 60;
         return "tracing " + std::to_string(policy::TraceEvents(seconds)) + " objects (see DGMP.log, lines TRACE)";
+    }
+    if (cmd == "ray" && a.size() >= 4) {  // ray x y z [complex]: vertical trace through the point, prints the hit
+        static UObject* kismet = nullptr;
+        if (!IsValid(kismet)) kismet = FindObject("/Script/Engine.Default__KismetSystemLibrary");
+        auto trace = kismet ? Fn(kismet, "LineTraceSingle_NEW") : nullptr;
+        if (!trace || !ctxPawn) return "no trace";
+        const FVector p{std::stof(a[1]), std::stof(a[2]), std::stof(a[3])};
+        Params t(trace); t.Set("WorldContextObject", ctxPawn); t.Set("Start", FVector{p.X, p.Y, p.Z + 600}); t.Set("End", FVector{p.X, p.Y, p.Z - 600});
+        t.Set<uint8_t>("TraceChannel", 0); t.SetBool("bTraceComplex", a.size() > 4); t.SetBool("bIgnoreSelf", true);
+        Call(kismet, "LineTraceSingle_NEW", &t);
+        if (!t.GetBool("ReturnValue")) return "no hit";
+        auto hitProp = FindProperty(trace, "OutHit");
+        const uint8_t* h = static_cast<uint8_t*>(t.Data()) + Field<int>(hitProp, off::UProperty_Offset);
+        auto weak = [](const uint8_t* w) -> UObject* { const int idx = *reinterpret_cast<const int*>(w); return idx >= 0 && idx < NumObjects() ? ObjectAt(idx) : nullptr; };
+        UObject* actor = weak(h + 0x64); UObject* comp = weak(h + 0x6C);
+        const float* at = reinterpret_cast<const float*>(h + 0x18);
+        out << "at " << at[0] << " " << at[1] << " " << at[2] << "  item " << *reinterpret_cast<const int*>(h + 0x58) << " face " << *reinterpret_cast<const int*>(h + 0x80) << "\n";
+        out << "actor " << (actor ? FullName(actor) : "?") << "\ncomp " << (comp ? FullName(comp) : "?") << "\n";
+        if (comp) { char b[64]; snprintf(b, sizeof b, "comp @%p  +0x640 %d\n", (void*)comp, *reinterpret_cast<const int*>(reinterpret_cast<uint8_t*>(comp) + 0x640)); out << b; }
+        if (a.back() == "detach" && actor) {  // ray x y z detach: replace the hit collection, print the piece's actor
+            const int piece = worldedit::PieceAt(actor, FVector{at[0], at[1], at[2]});
+            UObject* detached = piece >= 0 ? worldedit::Detach(actor, piece, ctxPawn) : nullptr;
+            char b[96]; snprintf(b, sizeof b, "piece %d actor @%p\n", piece, (void*)detached); out << b;
+            if (detached) out << worldedit::KeyOf(detached) << "\n";
+        }
+        return out.str();
+    }
+    if (cmd == "poke") {  // poke <hexaddr> <float> [float ...]: write floats (research only)
+        float* at = reinterpret_cast<float*>(std::stoull(a[1], nullptr, 16));
+        for (size_t i = 2; i < a.size(); ++i) at[i - 2] = std::stof(a[i]);
+        return "written " + std::to_string(a.size() - 2) + " floats";
+    }
+    if (cmd == "coll") {  // coll [radius] [mesh filter]: merged-mesh collection instances near the pawn (64-byte entries at +0x768)
+        const float radius = a.size() > 1 ? std::stof(a[1]) : 1500.f;
+        const std::string filter = a.size() > 2 ? a[2] : "";
+        FVector me{};
+        if (ctxPawn) if (auto f = Fn(ctxPawn, "K2_GetActorLocation")) { Params l(f); Call(ctxPawn, "K2_GetActorLocation", &l); me = l.Get<FVector>("ReturnValue"); }
+        UObject* cls = FindClass("BendStaticMeshCollectionComponent");
+        int shown = 0;
+        for (int i = 0, n = NumObjects(); i < n; ++i) {
+            UObject* o = ObjectAt(i);
+            if (!o || (o->ObjectFlags & 0x10) || !IsValid(o) || !IsA(o, cls)) continue;
+            const auto base = reinterpret_cast<uint8_t*>(o);
+            const auto inst = *reinterpret_cast<uint8_t**>(base + 0x768); const int count = *reinterpret_cast<int*>(base + 0x770);
+            const auto meshes = *reinterpret_cast<UObject***>(base + 0x5E0); const int meshCount = *reinterpret_cast<int*>(base + 0x5E8);
+            for (int k = 0; k < count && inst; ++k) {
+                const uint8_t* e = inst + size_t(k) * 64;
+                const float* t = reinterpret_cast<const float*>(e + 16);
+                const float dx = t[0] - me.X, dy = t[1] - me.Y, dz = t[2] - me.Z;
+                if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
+                const uint16_t* m = reinterpret_cast<const uint16_t*>(e + 48);
+                const UObject* mesh = m[0] < meshCount && meshes ? meshes[m[0]] : nullptr;
+                if (!filter.empty() && !(mesh && Contains(GetName(mesh), filter))) continue;
+                if (shown >= 400) continue;
+                char row[400];
+                snprintf(row, sizeof row, "%p #%d %s  at %.0f %.0f %.0f  s %.2f  meta %04X %04X %04X %04X %04X %04X %04X %04X  comp %p\n", (void*)e, k, mesh ? GetName(mesh).c_str() : "?",
+                         t[0], t[1], t[2], t[4], m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], (void*)o);
+                out << row; ++shown;
+            }
+        }
+        out << shown << " instances within " << radius << " of " << me.X << " " << me.Y << " " << me.Z << "\n";
+        return out.str();
+    }
+    if (cmd == "mem") {  // mem <hexaddr> [bytes]: raw memory as qwords and floats (no object needed)
+        const uint8_t* at = reinterpret_cast<const uint8_t*>(std::stoull(a[1], nullptr, 16));
+        const size_t bytes = a.size() > 2 ? std::stoul(a[2], nullptr, 0) : 0x80;
+        for (size_t i = 0; i + 16 <= bytes; i += 16) {
+            uint64_t q[2]; float f[4];
+            std::memcpy(q, at + i, 16); std::memcpy(f, at + i, 16);
+            char row[160]; snprintf(row, sizeof row, "  +0x%04zX %016llX %016llX  %12.2f %12.2f %12.2f %12.2f\n", i, (unsigned long long)q[0], (unsigned long long)q[1], f[0], f[1], f[2], f[3]);
+            out << row;
+        }
+        return out.str();
     }
     if (a.size() < 2) return "missing object";
     UObject* o = Resolve(a[1]);

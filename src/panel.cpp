@@ -1,6 +1,9 @@
 #include "panel.h"
 #include "profile.h"
 #include "devmenu.h"
+#include "lang.h"
+#include "overlay.h"
+#include "imgui.h"
 #include "../api/dgmp.h"
 #include <windows.h>
 #include <objidl.h>
@@ -9,15 +12,19 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
 namespace panel {
 namespace {
 std::mutex mutex;
 std::wstring text=L"DGMP: initializing...";
-std::wstring loadingStage=L"Запуск DGMP";
+std::wstring loadingStage=L"DGMP";
 bool loading=true;
 float progress=0.03f;
 HWND window=nullptr;
-std::unique_ptr<Gdiplus::Image> background;
+std::unique_ptr<Gdiplus::Bitmap> background;
+std::vector<uint32_t> pixels;  // the background as BGRA, for the in-game cover
+int pixelsWidth = 0, pixelsHeight = 0;
 HWND GameWindow() {
     struct Context { DWORD pid; HWND result; } c{GetCurrentProcessId(),nullptr};
     EnumWindows([](HWND h,LPARAM p)->BOOL {
@@ -75,7 +82,7 @@ void Paint(HDC dc,RECT r) {
     RECT label{margin,height-145,width-margin,height-94}; DrawTextLine(dc,label,stage,24,RGB(25,38,43));
     RECT bar{margin,height-80,width-margin,height-72}; Fill(dc,bar,RGB(212,219,218));
     bar.right=bar.left+int((bar.right-bar.left)*std::clamp(amount,0.f,1.f)); Fill(dc,bar,RGB(20,120,111));
-    RECT info{margin,height-61,width-margin,height-27}; DrawTextLine(dc,info,L"Подготовка мира",17,RGB(87,102,103));
+    RECT info{margin,height-61,width-margin,height-27}; DrawTextLine(dc,info,lang::Pick(L"Подготовка мира",L"Preparing the world"),17,RGB(87,102,103));
 }
 LRESULT CALLBACK Proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
     if(msg==WM_SETCURSOR && (IsLoading() || devmenu::IsOpen())) { SetCursor(LoadCursorW(nullptr,MAKEINTRESOURCEW(32512))); return TRUE; }
@@ -92,6 +99,7 @@ LRESULT CALLBACK Proc(HWND h,UINT msg,WPARAM w,LPARAM l) {
         const HWND game=GameWindow();
         if(!game || GetForegroundWindow()!=game || IsIconic(game)) { ShowWindow(h,SW_HIDE); return 0; }
         RECT r; GetClientRect(game,&r); const bool cover=IsLoading(),dev=devmenu::IsOpen();
+        if(cover && overlay::Presenting()) { ShowWindow(h,SW_HIDE); return 0; }  // drawn in the game's frames (DrawCover)
         bool empty; { std::lock_guard lock(mutex); empty=text.empty(); }
         if(!cover && !dev && empty) { ShowWindow(h,SW_HIDE); return 0; }  // multiplayer: no editor info box
         const int width=cover?int(r.right):dev?std::min(660,std::max(1,int(r.right)-24)):650;
@@ -117,7 +125,16 @@ DWORD WINAPI Thread(LPVOID) {
     const auto root=std::filesystem::path(profile::Root());
     const auto custom=root/L"assets"/L"loading.png";
     const auto image=std::filesystem::exists(custom)?custom:root.parent_path()/L"BendGame"/L"Content"/L"Splash"/L"Splash.bmp";
-    background.reset(Gdiplus::Image::FromFile(image.c_str()));
+    background.reset(Gdiplus::Bitmap::FromFile(image.c_str()));
+    if(background && background->GetLastStatus()==Gdiplus::Ok && background->GetWidth()) {
+        Gdiplus::BitmapData data{}; Gdiplus::Rect all(0,0,int(background->GetWidth()),int(background->GetHeight()));
+        if(background->LockBits(&all,Gdiplus::ImageLockModeRead,PixelFormat32bppARGB,&data)==Gdiplus::Ok) {
+            std::vector<uint32_t> copy(size_t(all.Width)*all.Height);
+            for(int y=0;y<all.Height;++y) memcpy(&copy[size_t(y)*all.Width],static_cast<uint8_t*>(data.Scan0)+size_t(y)*data.Stride,size_t(all.Width)*4);
+            background->UnlockBits(&data);
+            std::lock_guard lock(mutex); pixels=std::move(copy); pixelsWidth=all.Width; pixelsHeight=all.Height;
+        }
+    }
     auto instance=GetModuleHandleW(nullptr); WNDCLASSW wc{}; wc.lpfnWndProc=Proc; wc.hInstance=instance; wc.hCursor=LoadCursorW(nullptr,MAKEINTRESOURCEW(32512)); wc.lpszClassName=L"DGMPPanel"; RegisterClassW(&wc);
     window=CreateWindowExW(WS_EX_LAYERED|WS_EX_TOPMOST|WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,wc.lpszClassName,L"DGMP",WS_POPUP,0,0,650,145,nullptr,nullptr,instance,nullptr);
     if(window) {
@@ -126,6 +143,34 @@ DWORD WINAPI Thread(LPVOID) {
     }
     background.reset(); if(token) Gdiplus::GdiplusShutdown(token); return 0;
 }
+}
+// The cover drawn into the game's frames (render thread), so it stays when the game is minimized and
+// restored or alt-tabbed. Same layout as the fallback window above.
+void DrawCover() {
+    std::wstring stage; bool cover; float amount;
+    { std::lock_guard lock(mutex); stage=loadingStage; cover=loading; amount=progress; }
+    if(!cover) return;
+    static void* texture=nullptr;
+    if(!texture) { std::lock_guard lock(mutex); if(!pixels.empty()) { texture=overlay::CreateTexture(pixels.data(),pixelsWidth,pixelsHeight); if(texture) { pixels.clear(); pixels.shrink_to_fit(); } } }
+    auto utf8=[](const std::wstring& w) { std::string out(size_t(WideCharToMultiByte(CP_UTF8,0,w.c_str(),-1,nullptr,0,nullptr,nullptr)),'\0'); WideCharToMultiByte(CP_UTF8,0,w.c_str(),-1,out.data(),int(out.size()),nullptr,nullptr); if(!out.empty()) out.pop_back(); return out; };
+    ImDrawList* dl=ImGui::GetForegroundDrawList();
+    const float width=ImGui::GetIO().DisplaySize.x,height=ImGui::GetIO().DisplaySize.y;
+    dl->AddRectFilled(ImVec2(0,0),ImVec2(width,height),IM_COL32(248,248,248,255));
+    static int imageWidth=0,imageHeight=0;
+    if(texture && !imageWidth) { std::lock_guard lock(mutex); imageWidth=pixelsWidth; imageHeight=pixelsHeight; }
+    if(texture && imageWidth) {
+        const float scale=std::min(width*0.88f/imageWidth,height*0.60f/imageHeight);
+        const float w=imageWidth*scale,h=imageHeight*scale,x=(width-w)/2,y=std::max(30.f,(height-h)/2-50);
+        dl->AddImage(ImTextureID(texture),ImVec2(x,y),ImVec2(x+w,y+h));
+    }
+    ImFont* big=static_cast<ImFont*>(overlay::LargeFont()); ImFont* font=ImGui::GetFont();
+    if(!big) big=font;
+    const float margin=std::max(32.f,width/12);
+    dl->AddText(big,26,ImVec2(margin,24),IM_COL32(25,38,43,255),"DGMP");
+    dl->AddText(big,24,ImVec2(margin,height-145),IM_COL32(25,38,43,255),utf8(stage).c_str());
+    dl->AddRectFilled(ImVec2(margin,height-80),ImVec2(width-margin,height-72),IM_COL32(212,219,218,255));
+    dl->AddRectFilled(ImVec2(margin,height-80),ImVec2(margin+(width-2*margin)*std::clamp(amount,0.f,1.f),height-72),IM_COL32(20,120,111,255));
+    dl->AddText(font,17,ImVec2(margin,height-61),IM_COL32(87,102,103,255),utf8(lang::Pick(L"Подготовка мира",L"Preparing the world")).c_str());
 }
 void Start() { auto t=CreateThread(nullptr,0,Thread,nullptr,0,nullptr); if(t) CloseHandle(t); }
 void Text(const std::wstring& value) { std::lock_guard lock(mutex); text=value; }

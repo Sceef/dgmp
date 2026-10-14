@@ -1,4 +1,5 @@
 #include "policy.h"
+#include "lang.h"
 #include "log.h"
 #include "devmenu.h"
 #include <windows.h>
@@ -18,6 +19,7 @@ namespace policy {
 namespace {
 State state;
 bool editorActive=false,revealMap=true,onlyMap=true;
+bool editorSession=false;  // single-player editor (SetEditorSession)
 bool storyOff=true;
 std::atomic<uint32_t> markerMask{(1u<<0)|(1u<<1)|(1u<<7)|(1u<<9)};
 UObject* localPawn=nullptr;
@@ -131,6 +133,8 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
         if(name=="OnConfirmPressed" || name.rfind("BndEvt__MenuInteract_Confirm",0)==0) rewardAutoConfirmUntil=GetTickCount64()/1000.0+2;
     }
     if(observer && observed.count(object)) observer(object,name);
+    // The editor keeps running when its window loses focus (alt-tab to notes, the launcher...).
+    if(editorSession && name=="PauseOnFocusLost") { static int n=0; if(n++<3) dg::Log("Editor: pause on focus loss skipped"); return; }
     // Multiplayer death: no checkpoint reload (it rolls the world and the backpack back to the save);
     // the client brings the player back itself (mp RespawnInPlace).
     if(blockDeathReload && name=="PlayerDeathStartFadeToBlack" && IsAByName(object,"BendGameMode")) { dg::Log("Death reload blocked"); deathReloadBlocked=true; return; }
@@ -325,8 +329,8 @@ bool MakeReturnText(TextValue& out) {
     auto library=FindObject("/Script/Engine.Default__KismetTextLibrary");
     auto f=library?Fn(library,"Conv_StringToText"):nullptr;
     if(!f) { if(++attempts==8) dg::Log("Pause menu: Conv_StringToText unavailable; return entry keeps its native label"); return false; }
-    static const wchar_t label[]=L"Вернуться в игру";
-    Params p(f); if(!p.Set("InString",FString{label,int32_t(std::size(label)),int32_t(std::size(label))})) { attempts=8; return false; }
+    const wchar_t* label=lang::Pick(L"Вернуться в игру",L"Return to game"); const int32_t len=int32_t(wcslen(label)+1);
+    Params p(f); if(!p.Set("InString",FString{label,len,len})) { attempts=8; return false; }
     Call(library,"Conv_StringToText",&p);
     // The parameter frame is never destructed, so the returned reference now belongs to `out`.
     out=p.Get<TextValue>("ReturnValue");
@@ -970,6 +974,7 @@ void SetBlockDeathReload(bool on) { blockDeathReload=on; }
 bool TakeDeathReloadBlocked() { const bool b=deathReloadBlocked; deathReloadBlocked=false; return b; }
 void SetInterceptLethalHits(bool on) { interceptLethal=on; }
 bool TakeLethalHit() { const bool h=lethalHit; lethalHit=false; return h; }
+void SetEditorSession(bool on) { editorSession=on; }
 bool TakeDeath() { const bool d=playerDied; playerDied=false; return d; }
 bool RewardPanelOpen() { return IsValid(rewardsPanel) && Read<bool>(rewardsPanel,"Active"); }
 void SetTakeable(UObject* o,bool on) { if(on) takeable.insert(o); else takeable.erase(o); }

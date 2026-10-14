@@ -243,6 +243,11 @@ bool TakeSnapshot(Snapshot& out, double now) {
 }
 
 UObject* FindItem(const std::string& key) { return Item(key); }
+std::vector<std::pair<std::string, UObject*>> AllItems() {
+    std::vector<std::pair<std::string, UObject*>> out;
+    if (IndexItems()) for (auto& [k, v] : items) out.emplace_back(k, v);
+    return out;
+}
 
 void Reset() { manager = nullptr; items.clear(); ammoById.clear(); reported.clear(); nextSnapshot = 0; }
 

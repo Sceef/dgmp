@@ -62,7 +62,12 @@ button { cursor: pointer; }
 .side-foot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
 .link { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12.5px; }
 .link:hover { color: var(--accent-hi); }
-.version { width: 100%; font-size: 11.5px; color: var(--dim); margin-top: 6px; }
+.foot-row { width: 100%; display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.version { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dim); }
+.lang { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.lang button { background: none; border: 0; padding: 2px 7px; font: 12px var(--head); letter-spacing: 1px; color: var(--dim); }
+.lang button:hover { color: var(--text); }
+.lang button.active { color: var(--text); background: #d2652d26; box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ---------- main ---------- */
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
@@ -167,6 +172,107 @@ table.servers { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .editor-card p { margin: 0; color: var(--muted); line-height: 1.6; }
 .check { display: flex; gap: 10px; align-items: center; color: var(--muted); }
 .check input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* ---------- quests ---------- */
+.page-head .tele { margin-left: auto; font: 12.5px var(--mono); color: var(--dim); padding-bottom: 4px; }
+.page-head .tele.on { color: var(--ok); }
+.quest-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px 1fr; gap: 16px; padding-bottom: 4px; }
+.quest-side { display: flex; flex-direction: column; gap: 12px; min-height: 0; padding: 14px; }
+.quest-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; margin: 0 -6px; }
+.quest-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; background: none; border: 0; border-left: 3px solid transparent;
+  border-radius: 0 4px 4px 0; padding: 7px 10px; text-align: left; color: var(--text); min-width: 0;
+}
+.quest-item:hover { background: #ffffff08; }
+.quest-item.sel { background: #d2652d1f; border-left-color: var(--accent); }
+.quest-item .q-name { font-weight: 600; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quest-item .q-meta { font-size: 12px; color: var(--dim); font-family: var(--mono); }
+.quest-item.broken .q-name { color: var(--bad); }
+.empty-note { color: var(--dim); text-align: center; line-height: 1.6; margin: 30px 10px; }
+
+.quest-edit { min-height: 0; min-width: 0; overflow: auto; padding: 0; }
+.quest-form { display: flex; flex-direction: column; gap: 14px; padding: 0 18px 18px; }
+.quest-actions {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 -18px; padding: 12px 18px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.quest-file { flex: 1; min-width: 0; font: 13px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quest-file .dirty { color: var(--warn); font-family: var(--body); margin-left: 6px; }
+textarea {
+  width: 100%; resize: vertical; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
+  outline: none; user-select: text;
+}
+textarea:focus { border-color: var(--accent); }
+.field input.bad { border-color: var(--bad); }
+.row.narrow { grid-template-columns: 160px; margin-bottom: 8px; }
+.sub-label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
+.btn.small { padding: 5px 10px; font-size: 13.5px; }
+.btn.tiny { padding: 3px 8px; font-size: 12.5px; letter-spacing: .5px; }
+.btn.x { padding: 3px 8px; font-size: 14px; color: var(--muted); }
+.btn.x:hover { color: #f0a198; border-color: #6b2f2a; }
+
+.rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.rows:empty { display: none; }
+.item-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.item-row .key { flex: 1 1 220px; }
+.item-row .cnt { width: 76px; }
+.item-row .coord { width: 104px; }
+
+.steps { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.steps:empty { display: none; }
+.step { border: 1px solid var(--line); border-radius: 6px; background: #1a1815; }
+.step-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.step-num { font: 700 20px/1 var(--head); color: var(--accent); min-width: 26px; }
+.step-head select { width: 210px; min-width: 0; flex: 0 1 auto; padding: 5px 8px; }
+.step { cursor: default; }
+.step.sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.arm-bar { display: none; }
+.quests-view .step.sel .arm-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+.pick-hint { display: none; }
+.arm-wait {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--accent);
+  border-radius: 6px; background: #d2652d1f;
+}
+.toast {
+  position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 5; max-width: calc(100% - 32px);
+  background: #26211c; border: 1px solid #4a433b; border-radius: 6px; padding: 8px 14px; box-shadow: 0 4px 16px #0008;
+}
+.toast.error { color: #f0a198; border-color: #6b2f2a; }
+.step-head .spacer { flex: 1; }
+.step-body { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.step-body .field > label { font-size: 12px; letter-spacing: 1px; margin-bottom: 4px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.coords { display: flex; gap: 6px; align-items: flex-end; flex-wrap: wrap; }
+.coords .field { flex: 1 1 90px; }
+.coords .btns { display: flex; gap: 6px; }
+.events { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.field label.check { display: inline-flex; margin: 0; font: 13px var(--body); letter-spacing: 0; text-transform: none; color: var(--muted); }
+.check.inline { gap: 6px; }
+.checks { display: flex; gap: 20px; }
+
+@media (max-width: 1000px) {
+  .quest-grid { grid-template-columns: 200px 1fr; }
+  .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .grid3 { grid-template-columns: 1fr; }
+}
+
+/* Quest window next to the editor game (index.html?view=quests): only the quests page, compact. */
+.quests-view .app { grid-template-columns: 1fr; }
+.quests-view .side { display: none; }
+.quests-view .page { padding: 10px 12px 0; }
+.quests-view .page-head { margin-bottom: 8px; gap: 4px 12px; }
+.quests-view h1 { display: none; }
+.quests-view .page-head .tele { margin-left: 0; padding: 0; }
+.quests-view .pick-hint { display: block; width: 100%; font-size: 12.5px; color: var(--muted); }
+.quests-view .quest-grid { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+.quests-view .quest-side { flex-direction: row; align-items: flex-start; max-height: 140px; padding: 10px; }
+.quests-view .quest-list { margin: 0; }
+.quests-view .quest-form { padding: 0 12px 12px; }
+.quests-view .quest-actions { margin: 0 -12px; padding: 10px 12px; }
+.quests-view .statusbar { padding: 8px 12px; margin-top: 10px; }
 
 /* ---------- status bar ---------- */
 .statusbar {

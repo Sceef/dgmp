@@ -2,6 +2,13 @@
 #include "hud.h"
 #include "inventory.h"
 #include "gameevents.h"
+#include "worldedit.h"
+#include "lang.h"
+#include <filesystem>
+#include <sstream>
+#include <fstream>
+#include "profile.h"
+#include "shared/json.h"
 #include "panel.h"
 #include "policy.h"
 #include "log.h"
@@ -984,7 +991,7 @@ void HookClient() {
     client.on.welcome = [](const std::string& name, const std::string& mode) {
         serverName = name; modeName = mode; phase = Phase::Joined; lostAfterJoin = false; everJoined = true; reportedLook.clear();
         hud::SetBanner(L"", L"");
-        hud::AddMessage(0xA9C4E4FF, L"Подключено к " + W(name) + L" (" + W(mode) + L")");
+        hud::AddMessage(0xA9C4E4FF, std::wstring(lang::Pick(L"Подключено к ",L"Connected to ")) + W(name) + L" (" + W(mode) + L")");
         dg::Log("MP joined %s (mode %s) as id %u", name.c_str(), mode.c_str(), client.localId());
     };
     client.on.disconnected = [](const std::string& reason) {
@@ -994,8 +1001,8 @@ void HookClient() {
         questMarkers.clear();
         if (!everJoined) { phase = Phase::Failed; failReason = W(reason); return; }
         lostAfterJoin = true; phase = Phase::Connecting;
-        hud::SetBanner(L"Соединение с сервером потеряно", W(reason) + L"  ·  F9 — переподключиться");
-        hud::AddMessage(0xE07070FF, L"Отключено: " + W(reason));
+        hud::SetBanner(lang::Pick(L"Соединение с сервером потеряно",L"Connection to the server lost"), W(reason) + lang::Pick(L"  ·  F9 — переподключиться",L"  ·  F9 — reconnect"));
+        hud::AddMessage(0xE07070FF, std::wstring(lang::Pick(L"Отключено: ",L"Disconnected: ")) + W(reason));
     };
     client.on.playerJoin = [](const net::RemotePlayer& p) {
         auto g = std::make_unique<Ghost>(); g->id = p.id; g->nick = p.nick;
@@ -1080,11 +1087,16 @@ void HookClient() {
         if (auto f = Fn(timer, "SetTimerPaused")) { Params p(f); p.SetBool("IsPaused", true); Call(timer, "SetTimerPaused", &p); }
         if (auto f = Fn(timer, "SetPercent")) { Params p(f); p.Set<float>("Percent", percent); Call(timer, "SetPercent", &p); }
     };
+    client.on.worldEdits = [](const std::string& text) {
+        json::Value v;
+        if (text.empty() || !json::Value::Parse(text, v)) { worldedit::Clear(); return; }
+        worldedit::Set(v, false);
+    };
     client.on.corpse = [](uint16_t id) {
         auto it = ghosts.find(id);
         if (it != ghosts.end() && it->second->body) LeaveCorpse(MeshComp(it->second->body), it->second->lookPath);
     };
-    client.on.worldItem = [](uint16_t id, const std::string* item, int count, float x, float y, float z) { gameevents::SetWorldItem(id, item, count, {x, y, z}); };
+    client.on.worldItem = [](uint16_t id, const std::string* item, int count, float x, float y, float z, float yaw) { gameevents::SetWorldItem(id, item, count, {x, y, z}, yaw); };
     client.on.marker = [](uint16_t id, const net::Client::Events::MarkerInfo* info) {
         auto it = questMarkers.find(id);
         if (!info) { if (it != questMarkers.end()) { DestroyMarker(it->second); questMarkers.erase(it); } return; }
@@ -1103,8 +1115,119 @@ void HookClient() {
 void StartConnect() {
     connectStarted = true; phase = Phase::Connecting; initialTeleportSeen = false;
     dg::Log("MP connecting to %s:%u as %s", host.c_str(), port, nick.c_str());
-    if (!client.Connect(host, port, nick, password)) { phase = Phase::Failed; if (failReason.empty()) failReason = L"Не удалось начать подключение"; }
+    if (!client.Connect(host, port, nick, password)) { phase = Phase::Failed; if (failReason.empty()) failReason = lang::Pick(L"Не удалось начать подключение",L"Could not start connecting"); }
 }
+// ---------------------------------------------------------------- editor: quest preview
+// The launcher's quest window writes the quest being edited to quest_preview.json; its points are
+// shown with the same quest markers a server would send (ids from 50000 up). Selected step: gold.
+constexpr uint16_t kPreviewBase = 50000;
+// Quest items of the previewed quest, as the real pickup models (moved/turned in place when edited).
+struct PreviewItem { std::string key; FVector at{}; float yaw = 0; UObject* actor = nullptr; };
+std::vector<PreviewItem> previewItems;
+void UpdatePreviewItems(const std::vector<PreviewItem>& want) {
+    for (size_t i = want.size(); i < previewItems.size(); ++i) DestroyActor(previewItems[i].actor);
+    previewItems.resize(want.size());
+    for (size_t i = 0; i < want.size(); ++i) {
+        auto& have = previewItems[i];
+        const auto& w = want[i];
+        if (have.key != w.key && have.actor) DestroyActor(have.actor);
+        if (!IsValid(have.actor)) {
+            have = w;
+            have.actor = gameevents::SpawnPreviewItem(w.key, w.at, w.yaw, worldPawn);
+            continue;
+        }
+        if (std::fabs(have.at.X - w.at.X) > 0.5f || std::fabs(have.at.Y - w.at.Y) > 0.5f || std::fabs(have.at.Z - w.at.Z) > 0.5f || std::fabs(have.yaw - w.yaw) > 0.5f) {
+            const float half = w.yaw * 0.00872664626f;
+            SetActorTransform(have.actor, w.at, FQuat{0, 0, std::sin(half), std::cos(half)});
+            have.at = w.at; have.yaw = w.yaw;
+        }
+    }
+}
+void ClearPreview() {
+    UpdatePreviewItems({});
+    for (auto it = questMarkers.begin(); it != questMarkers.end();) {
+        if (it->first >= kPreviewBase) { DestroyMarker(it->second); it = questMarkers.erase(it); } else ++it;
+    }
+}
+// Markers are updated in place (moved, re-dressed, added, removed): rebuilding all of them on every edit
+// destroyed waypoint widgets the renderer was still using.
+void LoadPreview(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+    json::Value quest;
+    if (ss.str().empty() || !json::Value::Parse(ss.str(), quest) || !quest.isObject()) { ClearPreview(); return; }
+    const int selected = int(quest["selected"].asNumber(-1));
+    const json::Value& steps = quest["steps"];
+    std::vector<net::Client::Events::MarkerInfo> want;
+    std::vector<PreviewItem> items;
+    auto add = [&](const json::Value& at, int step, uint8_t style, const std::string& title, const std::string& text) {
+        if (!at["x"].isNumber() || !at["y"].isNumber()) return;
+        net::Client::Events::MarkerInfo m{};
+        m.x = float(at["x"].asNumber()); m.y = float(at["y"].asNumber()); m.z = float(at["z"].asNumber());
+        m.category = step == selected ? 0 : 9;  // story (gold) for the selected step, task otherwise
+        m.style = style; m.route = false;
+        m.title = title; m.description = text;
+        want.push_back(m);
+    };
+    for (size_t i = 0; i < steps.size(); ++i) {
+        const json::Value& st = steps[i];
+        const json::Value& tv = st["text"];
+        const std::string type = st["type"].asString(), text = tv.isObject() ? (tv["en"].asString().empty() ? tv["ru"].asString() : tv["en"].asString()) : tv.asString();
+        const std::string title = lang::Pick("Этап ", "Step ") + std::to_string(i + 1);
+        if (type == "goto") add(st, int(i), 0, title, text);
+        else if (type == "hold") add(st, int(i), 5, title, text);                     // search
+        else if (type == "collect") {
+            if (st["area"].isObject()) add(st["area"], int(i), 2, title, text);        // area look for zones
+            for (const auto& item : st["spawn"].elements()) {
+                items.push_back({item["item"].asString(), {float(item["x"].asNumber()), float(item["y"].asNumber()), float(item["z"].asNumber())}, float(item["yaw"].asNumber())});
+            }
+        }
+    }
+    UpdatePreviewItems(items);
+    unsigned changed = 0;
+    for (size_t i = 0; i < want.size(); ++i) {
+        const uint16_t id = uint16_t(kPreviewBase + i);
+        auto it = questMarkers.find(id);
+        const auto& w = want[i];
+        if (it == questMarkers.end()) { QuestMarker m; m.info = w; questMarkers[id] = m; ++changed; continue; }  // spawned by UpdateMarkers
+        auto& m = it->second;
+        const bool look = m.info.category != w.category || m.info.style != w.style || m.info.title != w.title || m.info.description != w.description;
+        const bool moved = std::fabs(m.info.x - w.x) > 1 || std::fabs(m.info.y - w.y) > 1;
+        if (look && IsValid(m.actor)) DressWaypoint(m.actor, w);
+        if (moved) {
+            m.info = w; m.grounded = false;
+            if (IsValid(m.actor)) SetActorTransform(m.actor, {w.x, w.y, w.z}, FQuat{0, 0, 0, 1});
+        } else if (look) {
+            const float z = m.info.z; m.info = w; m.info.z = z;  // keep the ground-snapped height
+        }
+        changed += look || moved;
+    }
+    for (auto it = questMarkers.lower_bound(uint16_t(kPreviewBase + want.size())); it != questMarkers.end();) {
+        DestroyMarker(it->second); it = questMarkers.erase(it); ++changed;
+    }
+    if (changed) dg::Log("Editor quest preview: %zu markers (%u changed)", want.size(), changed);
+}
+
+}  // namespace
+
+void UpdateEditorPreview(double now, UObject* pawn) {
+    if (!IsValid(pawn)) return;
+    worldPawn = pawn;
+    static double nextCheck = 0;
+    static std::filesystem::file_time_type seen{};
+    if (now >= nextCheck) {
+        nextCheck = now + 0.5;
+        const auto file = std::filesystem::path(profile::Root()) / L"quest_preview.json";
+        std::error_code ec;
+        const auto stamp = std::filesystem::last_write_time(file, ec);
+        if (ec) { if (seen != std::filesystem::file_time_type{}) { seen = {}; ClearPreview(); } }
+        else if (stamp != seen) { seen = stamp; LoadPreview(file); }
+    }
+    FVector here{};
+    if (auto f = Fn(pawn, "K2_GetActorLocation")) { Params p(f); Call(pawn, "K2_GetActorLocation", &p); here = p.Get<FVector>("ReturnValue"); }
+    UpdateMarkers(now, here);
+}
+
+namespace {
 }  // namespace
 
 bool Init() {
@@ -1113,7 +1236,7 @@ bool Init() {
     if (target.empty()) return false;
     if (!net::ParseAddress(target, host, port) || !net::ValidNick(nick)) {
         dg::Log("MP: invalid launch parameters (address '%s', nick '%s')", target.c_str(), nick.c_str());
-        enabled = true; phase = Phase::Failed; failReason = L"Неверный адрес сервера или ник";
+        enabled = true; phase = Phase::Failed; failReason = lang::Pick(L"Неверный адрес сервера или ник",L"Invalid server address or nickname");
         return true;
     }
     enabled = true;
@@ -1150,7 +1273,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
     const bool f9Now = (GetAsyncKeyState(VK_F9) & 0x8000) != 0, f9Pressed = f9Now && !f9; f9 = f9Now;
     if (lostAfterJoin && gameplay && f9Pressed) {
         lostAfterJoin = false; phase = Phase::Connecting;
-        hud::SetBanner(L"Переподключение…", W(host) + L":" + std::to_wstring(port));
+        hud::SetBanner(lang::Pick(L"Переподключение…",L"Reconnecting…"), W(host) + L":" + std::to_wstring(port));
         client.Connect(host, port, nick, password);
     }
     if (client.status() != net::Client::Status::Connected || !inWorld) {
@@ -1204,6 +1327,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         BoolArg(controller, "SetIgnoreMoveInput", "bNewMoveInput", false);
     }
     UpdateCorpses(now);
+    worldedit::Update(pawn);
     // A real death anyway (some kills ignore the flag): the game's reload is skipped and a new body made.
     policy::SetBlockDeathReload(true);
     if (policy::TakeDeath()) { respawnCoverUntil = now + 25; client.SendGameEvent(net::GameEventType::Died, "", "", "", 0, 0, 0); }
@@ -1245,7 +1369,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
     static double nextStatus = 0;
     if (now >= nextStatus) {
         nextStatus = now + 0.5;
-        hud::SetStatus(W(serverName) + L"  ·  " + std::to_wstring(ghosts.size() + 1) + L" игр.  ·  " + std::to_wstring(client.pingMs()) + L" мс");
+        hud::SetStatus(W(serverName) + L"  ·  " + std::to_wstring(ghosts.size() + 1) + lang::Pick(L" игр.  ·  ",L" players  ·  ") + std::to_wstring(client.pingMs()) + lang::Pick(L" мс",L" ms"));
     }
 }
 

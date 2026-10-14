@@ -18,5 +18,7 @@ bool OwnsBike();
 // Fills `out` and returns true when the inventory differs from the last reported snapshot.
 bool TakeSnapshot(Snapshot& out, double now);
 void Reset();  // world reload: forget cached objects
-ue::UObject* FindItem(const std::string& key);  // InventoryItem definition by KeyName (case-insensitive), or null
+ue::UObject* FindItem(const std::string& key);
+// All item definitions (KeyName -> InventoryItem), empty until the game's item manager exists.
+std::vector<std::pair<std::string, ue::UObject*>> AllItems();  // InventoryItem definition by KeyName (case-insensitive), or null
 }

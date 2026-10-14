@@ -7,6 +7,7 @@ extern "C" {
 #include <enet/enet.h>
 #include <windows.h>
 #include <bcrypt.h>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -154,6 +155,7 @@ struct Api {
         auto p = ToPlayer(L, 1);
         if (std::strcmp(key, "name") == 0) { if (p) lua_pushstring(L, p->nick.c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "bot") == 0) { lua_pushboolean(L, p && p->bot); return 1; }
+        if (std::strcmp(key, "lang") == 0) { lua_pushstring(L, p ? p->lang.c_str() : "en"); return 1; }
         if (std::strcmp(key, "admin") == 0) { lua_pushboolean(L, p && p->admin); return 1; }
         if (std::strcmp(key, "look") == 0) {
             if (!p || p->look.empty()) { lua_pushnil(L); return 1; }
@@ -313,7 +315,7 @@ struct Api {
         lua_pop(L, 1);
         lua_pushinteger(L, id); return 1;
     }
-    // spawnItem{item=, count=1, x=, y=, z=, player=}: a pickup at that spot (for one player or everyone).
+    // spawnItem{item=, count=1, x=, y=, z=, yaw=0, player=}: a pickup at that spot (for one player or everyone).
     // Picking it up reports gameEvent{type="pickup", id="dgmp_item_<id>"}. Returns the id.
     static int SpawnItem(lua_State* L) {
         luaL_checktype(L, 1, LUA_TTABLE);
@@ -323,6 +325,7 @@ struct Api {
         lua_getfield(L, 1, "x"); item.x = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
         lua_getfield(L, 1, "y"); item.y = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
         lua_getfield(L, 1, "z"); item.z = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, 1, "yaw"); item.yaw = float(luaL_optnumber(L, -1, 0)); lua_pop(L, 1);
         lua_getfield(L, 1, "player"); if (!lua_isnil(L, -1)) item.only = CheckPlayer(L, -1).id; lua_pop(L, 1);
         lua_pushinteger(L, Srv(L).AddWorldItem(item)); return 1;
     }
@@ -432,6 +435,31 @@ struct Api {
         }
         }
     }
+    // ---- quests (quests/<id>.json, written by the launcher's quest editor) ----
+    static bool QuestId(const std::string& id) {
+        if (id.empty() || id.size() > 64) return false;
+        for (char c : id) if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')) return false;
+        return true;
+    }
+    static int QuestsLoad(lua_State* L) {
+        const std::string id = luaL_checkstring(L, 1);
+        if (!QuestId(id)) { lua_pushnil(L); return 1; }
+        std::ifstream in(Srv(L).root() / "quests" / (id + ".json"), std::ios::binary);
+        std::stringstream ss; ss << in.rdbuf();
+        json::Value v;
+        if (!in.good() && ss.str().empty()) { lua_pushnil(L); return 1; }
+        if (!json::Value::Parse(ss.str(), v) || !v.isObject()) { Srv(L).Log("quests/%s.json is not valid JSON", id.c_str()); lua_pushnil(L); return 1; }
+        PushJson(L, v);
+        lua_pushstring(L, id.c_str()); lua_setfield(L, -2, "id");
+        return 1;
+    }
+    static int QuestsList(lua_State* L) {
+        lua_newtable(L);
+        std::error_code ec; lua_Integer n = 0;
+        for (auto it = std::filesystem::directory_iterator(Srv(L).root() / "quests", ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+            if (it->path().extension() == ".json") { lua_pushstring(L, it->path().stem().string().c_str()); lua_rawseti(L, -2, ++n); }
+        return 1;
+    }
     static int StorageGet(lua_State* L) { PushJson(L, Self(L).storage_[luaL_checkstring(L, 1)]); return 1; }
     static int StorageSet(lua_State* L) {
         auto& s = Self(L); const std::string key = luaL_checkstring(L, 1);
@@ -527,6 +555,8 @@ bool Script::Load(const std::string& modeId) {
     lua_pushglobaltable(L_); luaL_setfuncs(L_, globals, 0); lua_pop(L_, 1);
     const luaL_Reg storage[] = {{"get", &Api::StorageGet}, {"set", &Api::StorageSet}, {"keys", &Api::StorageKeys}, {"save", &Api::StorageSave}, {nullptr, nullptr}};
     luaL_newlib(L_, storage); lua_setglobal(L_, "storage");
+    const luaL_Reg quests[] = {{"load", &Api::QuestsLoad}, {"list", &Api::QuestsList}, {nullptr, nullptr}};
+    luaL_newlib(L_, quests); lua_setglobal(L_, "quests");
 
     // Persistent storage survives reloads and restarts: data/<mode>/storage.json
     storageFile_ = server_.root() / "data" / mode_ / "storage.json";
