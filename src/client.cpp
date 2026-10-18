@@ -2,6 +2,7 @@
 #include "log.h"
 #include "profile.h"
 #include "panel.h"
+#include "skins.h"
 #include "policy.h"
 #include "environment.h"
 #include "devmenu.h"
@@ -139,6 +140,100 @@ void HideBody(bool hidden) {
         for(int i=0;i<arr.num && arr.data;++i) if(IsValid(arr.data[i])) BoolArg(arr.data[i],"SetActorHiddenInGame","bNewHidden",hidden);
     }
 }
+// ---------------------------------------------------------------- editor camera
+// Flying in the editor looks through a camera of its own: no spring arm, lag or wall collisions of
+// the game's third-person camera. The hidden player follows it so the world streams in around it.
+// In cursor mode, holding the right button looks around and lets WASD move (like editors do).
+UObject* editorCam=nullptr;
+FVector camPos{}, camVel{};
+FRotator camRot{}, lastControl{};
+bool camLook=false; POINT lookAnchor{};
+float Wrap180(float a) { a=fmodf(a+180.f,360.f); if(a<0) a+=360.f; return a-180.f; }
+UObject* GameStatics() { static UObject* s=nullptr; if(!IsValid(s)) s=FindObject("/Script/Engine.Default__GameplayStatics"); return s; }
+void ViewThrough(UObject* target) {
+    if(auto fn=IsValid(controller) && IsValid(target)?Fn(controller,"SetViewTargetWithBlend"):nullptr) {
+        Params p(fn); p.Set("NewViewTarget",target); p.Set<float>("BlendTime",0.f); Call(controller,"SetViewTargetWithBlend",&p);
+    }
+}
+void PlaceCamera() {
+    if(!IsValid(editorCam)) return;
+    if(auto fn=Fn(editorCam,"K2_SetActorLocationAndRotation")) { Params p(fn); p.Set("NewLocation",camPos); p.Set("NewRotation",camRot); p.SetBool("bTeleport",true); Call(editorCam,"K2_SetActorLocationAndRotation",&p); }
+}
+void StartEditorCamera() {
+    if(multiplayer || IsValid(editorCam) || !GameStatics()) return;
+    UObject* mgr=IsValid(controller)?Field<UObject*>(controller,off::PC_CameraManager):nullptr;
+    camPos=IsValid(mgr)?Field<FVector>(mgr,off::CamMgr_POV_Location):Position();
+    camRot=View(); camRot.Roll=0; camRot.Pitch=Wrap180(camRot.Pitch); camVel={}; lastControl=View();
+    FTransform t; t.Translation=camPos;
+    Params begin(Fn(GameStatics(),"BeginSpawningActorFromClass"));
+    begin.Set("WorldContextObject",pawn); begin.Set("ActorClass",FindClass("CameraActor")); begin.Set("SpawnTransform",t); begin.SetBool("bNoCollisionFail",true);
+    Call(GameStatics(),"BeginSpawningActorFromClass",&begin);
+    editorCam=begin.Get<UObject*>("ReturnValue");
+    if(!editorCam) { dg::Log("Editor camera: spawn failed"); return; }
+    Params finish(Fn(GameStatics(),"FinishSpawningActor")); finish.Set("Actor",editorCam); finish.Set("SpawnTransform",t);
+    Call(GameStatics(),"FinishSpawningActor",&finish);
+    // Fill the whole window (no letterbox).
+    for(auto c=editorCam->Class;c;c=SuperOf(c)) if(auto prop=FindProperty(c,"CameraComponent")) {
+        UObject* comp=Field<UObject*>(editorCam,Field<int>(prop,off::UProperty_Offset));
+        if(IsValid(comp)) if(auto fn=Fn(comp,"SetConstraintAspectRatio")) { Params a(fn); a.SetBool("bInConstrainAspectRatio",false); Call(comp,"SetConstraintAspectRatio",&a); }
+        break;
+    }
+    PlaceCamera(); ViewThrough(editorCam);
+    dg::Log("Editor camera on at %.0f %.0f %.0f",camPos.X,camPos.Y,camPos.Z);
+}
+void StopEditorCamera() {
+    if(!IsValid(editorCam)) { editorCam=nullptr; return; }
+    ViewThrough(pawn);
+    Call(editorCam,"K2_DestroyActor"); editorCam=nullptr;
+    if(camLook) { camLook=false; ShowCursor(TRUE); }
+}
+// One frame of the editor camera: look (game mouse look, or right button in cursor mode) and move.
+void EditorCamera(float dt) {
+    // Something else moved the player (F8, a teleport, a load): the camera goes along.
+    const FVector at=Position();
+    const float dx=at.X-camPos.X, dy=at.Y-camPos.Y, dz=at.Z-(camPos.Z-200.f);
+    if(dx*dx+dy*dy+dz*dz>500.f*500.f) { camPos={at.X,at.Y,at.Z+200.f}; camVel={}; }
+    const bool cursor=overlay::CursorMode();
+    const bool rmb=Down(VK_RBUTTON) && Foreground();
+    if(cursor) {
+        if(rmb && !camLook && !overlay::MouseOverUi()) { camLook=true; GetCursorPos(&lookAnchor); ShowCursor(FALSE); }
+        if(!rmb && camLook) { camLook=false; ShowCursor(TRUE); }
+        if(camLook) {
+            POINT now; GetCursorPos(&now);
+            const float lookY=float(now.y-lookAnchor.y)*0.15f;
+            camRot.Yaw+=float(now.x-lookAnchor.x)*0.15f;
+            camRot.Pitch=std::clamp(camRot.Pitch+(editorui::InvertLook()?-lookY:lookY),-89.f,89.f);
+            SetCursorPos(lookAnchor.x,lookAnchor.y);
+            if(auto fn=Fn(controller,"SetControlRotation")) { Params p(fn); p.Set("NewRotation",camRot); Call(controller,"SetControlRotation",&p); }
+            lastControl=camRot;
+        }
+    } else {
+        if(camLook) { camLook=false; ShowCursor(TRUE); }
+        // The game's mouse look turns the control rotation; the camera follows its changes.
+        const FRotator c=View();
+        const float dYaw=Wrap180(c.Yaw-lastControl.Yaw), dPitch=Wrap180(c.Pitch-lastControl.Pitch);
+        lastControl=c;
+        camRot.Yaw=Wrap180(camRot.Yaw+dYaw);
+        camRot.Pitch=std::clamp(camRot.Pitch+(editorui::InvertLook()?-dPitch:dPitch),-89.f,89.f);
+    }
+    const bool canMove=Foreground() && !Paused() && !policy::GetState().menuActive && !devmenu::IsOpen() && !overlay::Typing() && (!cursor || camLook);
+    FVector want{};
+    if(canMove) {
+        const float rad=0.01745329252f, cy=cosf(camRot.Yaw*rad), sy=sinf(camRot.Yaw*rad), cp=cosf(camRot.Pitch*rad), sp=sinf(camRot.Pitch*rad);
+        const float forward=float(Down('W'))-float(Down('S')), right=float(Down('D'))-float(Down('A'));
+        const float up=float(Down(VK_SPACE)||Down('E'))-float(Down(VK_CONTROL)||Down('Q'));
+        want={forward*cp*cy-right*sy, forward*cp*sy+right*cy, forward*sp+up};
+        const float len=sqrtf(want.X*want.X+want.Y*want.Y+want.Z*want.Z);
+        if(len>0.001f) { const float v=speed*(Down(VK_SHIFT)?4.f:1.f)/len; want={want.X*v,want.Y*v,want.Z*v}; }
+    }
+    // Smooth start and stop.
+    const float k=1.f-expf(-std::clamp(dt,0.f,0.1f)*10.f);
+    camVel={camVel.X+(want.X-camVel.X)*k, camVel.Y+(want.Y-camVel.Y)*k, camVel.Z+(want.Z-camVel.Z)*k};
+    const float step=std::clamp(dt,0.f,0.1f);
+    camPos={camPos.X+camVel.X*step, camPos.Y+camVel.Y*step, camPos.Z+camVel.Z*step};
+    PlaceCamera();
+    SetPosition({camPos.X,camPos.Y,camPos.Z-200.f});  // the hidden player keeps the world streamed in
+}
 void SetFlying(bool on) {
     if(!IsValid(pawn) || !IsValid(controller) || !IsValid(movement) || flying==on) return;
     if(on) {
@@ -160,6 +255,7 @@ void SetFlying(bool on) {
     if(auto fn=Fn(movement,"SetMovementMode")) { Params p(fn); p.Set<uint8_t>("NewMovementMode",on?0:previousMovement); p.Set<uint8_t>("NewCustomMode",0); Call(movement,"SetMovementMode",&p); }
     flying=on; wantedFly=on;
     if(!multiplayer) HideBody(on);
+    if(!multiplayer) { if(on) StartEditorCamera(); else { StopEditorCamera(); SetPosition(camPos); } }
     dg::Log("Fly %s; prior movement=%u collision=%d ignored=%d",on?"ON":"OFF",previousMovement,previousCollision,previousIgnoreMove);
 }
 void Refresh(double now) {
@@ -410,6 +506,10 @@ void Sweep(double now) {
 void Fly(float dt) {
     if(!flying) return;
     if(Field<uint8_t>(movement,0x198)!=0) { auto fn=Fn(movement,"SetMovementMode"); if(fn) { Params p(fn); p.Set<uint8_t>("NewMovementMode",0); Call(movement,"SetMovementMode",&p); } }
+    if(!multiplayer) {
+        if(!IsValid(editorCam)) StartEditorCamera();
+        if(IsValid(editorCam)) { if(!panel::IsLoading() && !skins::CreatorOpen()) EditorCamera(dt); return; }
+    }
     if(!Foreground() || Paused() || policy::GetState().menuActive || panel::IsLoading() || devmenu::IsOpen() || overlay::CursorMode()) return;
     const auto r=View(); const float rad=0.01745329252f;
     const float cy=cosf(r.Yaw*rad),sy=sinf(r.Yaw*rad),cp=cosf(r.Pitch*rad),sp=sinf(r.Pitch*rad);
@@ -759,6 +859,7 @@ void DGMPInitThread() {
     UObject* engine=nullptr;
     for(int i=0;i<240 && !engine;++i) { Sleep(250); if(NumObjects()>1000) engine=FindEngine(); }
     if(!engine) { dg::Log("GameEngine not found"); panel::Text(L"DGMP: GameEngine not found"); return; }
+    policy::DisableFocusPause(engine);
     auto vt=engine->VTable;
     if(reinterpret_cast<uintptr_t>(vt[60])-Base()!=0x1AC2A20 || reinterpret_cast<uintptr_t>(vt[73])-Base()!=0x288F730) { dg::Log("Engine vtable mismatch; no hook installed"); return; }
     memcpy(copiedVtable,vt,sizeof(copiedVtable)); originalTick=reinterpret_cast<TickFn>(vt[73]); copiedVtable[73]=reinterpret_cast<void*>(&Tick); engine->VTable=copiedVtable;

@@ -23,6 +23,8 @@ using DrawFn = void (*)();
 void SetDraw(DrawFn draw);
 // Drawn in every frame before the windows, whether the UI is shown or not (the loading cover).
 void SetCover(DrawFn draw);
+// Drawn in every frame under the cover and the windows, whether the UI is shown or not (multiplayer health bars).
+void SetHud(DrawFn draw);
 // The game presented a frame lately (false while it is minimized or before its first frame).
 bool Presenting();
 
@@ -30,6 +32,9 @@ bool Presenting();
 // (an ImFont*, null until the UI is set up).
 void* CreateTexture(const void* bgra, int width, int height);
 void* LargeFont();
+
+// A key the game does not get (key down) while set: 0 none. For a key the UI acts on (interactions).
+void SetBlockedKey(int vk);
 
 // The game never hears that its window lost focus (no pause on alt-tab): for the editor.
 void SetKeepFocus(bool keep);

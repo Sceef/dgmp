@@ -1,7 +1,7 @@
 # DGMP — мультиплеер для Days Gone
 
 - **`DGMP.exe`** — лаунчер: ник, серверы (избранное, недавние, локальная сеть, подключение по IP), создание сервера с выбором режима и живой консолью, вход в редактор.
-- **`dgmp-server.exe`** — выделенный сервер (UDP, порт 7777). Работает без игры, в том числе на VPS. Настройки — `server.ini`.
+- **`dgmp-server.exe`** — выделенный сервер (UDP, порт 7777). Работает без игры, в том числе на VPS. Настройки — `server.ini`. Есть сборка для Linux (`dgmp-server`, CMake): [`docs/server-linux.md`](docs/server-linux.md) — сборка, запуск, systemd, файрвол.
 - **Режимы** — Lua-скрипты в `modes/<id>/`. Документация для разработчиков: [`docs/API.md`](docs/API.md), ключи предметов: [`docs/items.md`](docs/items.md). Пример: `modes/freeroam`.
 - **Клиент** — `version.dll` в изолированной копии игры. Показывает других игроков (тело с позой костей, мотоцикл, ник над головой в мире, метка на карте), чат на T, подсказки сервера родными окнами игры.
 - **Сборка** — `build.bat` (MSVC 2022): DLL, сервер, лаунчер, тестовый клиент `build/dgmp-probe.exe`.
@@ -84,6 +84,7 @@ API в `api/dgmp.h`: `DGMP_SetTimeOfDay(hours)`, `DGMP_SetTimePaused(0/1)`, `DGM
 - `logs/launcher.log` — запуск.
 - `telemetry.json` — состояние мира и координаты, обновляемые раз в секунду.
 - `build.bat` — сборка MSVC 2022 x64.
+- `CMakeLists.txt` — сборка только сервера под Linux: `cmake -S . -B build-linux && cmake --build build-linux -j` (подробно в [`docs/server-linux.md`](docs/server-linux.md)).
 - `prepare.ps1` — подготовка без запуска, восстановление общего шаблона. Выполнять при закрытой игре; `-RefreshSeed` сохранён для совместимости и также восстанавливает общий шаблон.
 - `DGMP.exe --prepare-only` — только подготовка.
 - `DGMP.exe --editor --refresh-seed` — восстановить общий шаблон и запустить редактор; личные сейвы не импортируются.

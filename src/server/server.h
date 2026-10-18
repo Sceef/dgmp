@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
 
+namespace json { class Value; }
 struct _ENetHost;
 struct _ENetPeer;
 
@@ -24,6 +26,8 @@ struct Config {
     int maxPlayers = 16;
     float spawnX = -85462.8f, spawnY = -301759.8f, spawnZ = -5179.7f, spawnYaw = 0;
     net::NametagMode nametags = net::NametagMode::Visible;
+    uint8_t collisions = 0;    // net::CollisionMask
+    bool saveWeapons = false;  // keep the weapons of the world save on join (StartWeapons=save)
     std::vector<std::string> admins;  // nicknames (case-insensitive)
 };
 
@@ -38,6 +42,81 @@ struct Marker {
     std::string title, description;   // map tooltip
     uint16_t only = 0xFFFF;           // player id it is shown to; 0xFFFF = everyone
     double onlyJoinedAt = 0;          // identity of that player
+};
+
+// A spot where players press a key to do something (enter a house, talk to a shopkeeper).
+struct Interaction {
+    uint16_t id = 0;
+    float x = 0, y = 0, z = 0, radius = 200;  // z on the ground; radius in units
+    uint8_t key = 'F';                        // virtual key
+    std::string text;                         // the prompt
+    int32_t world = -1;                       // virtual world it is in (-1: every)
+};
+
+// A vehicle (bike) of the mode: anyone may ride it unless locked; the owner may also when locked.
+struct Vehicle {
+    uint16_t id = 0;
+    net::VehicleState state;           // where it stands (or is driven), fuel, health
+    int32_t world = 0;
+    std::string owner;                 // lower-case nick ("": nobody's)
+    bool locked = false;
+    uint16_t driver = 0xFFFF;          // player id on it
+    uint16_t passenger = 0xFFFF;       // player id behind (next to) the driver: a player's or the NPC's
+    uint8_t blip = 1;                  // on the map and radar of: 0 nobody, 1 its owner, 2 everyone
+    std::set<std::string> blipFor;     // and of these players (lower-case nicks): a gang's or a job's vehicles
+    uint32_t blipColor = 0;            // RGBA of its radar marker for others (0: light blue)
+    std::string blipIcon;              // its texture: a MAP_* name of the game's map icons ("": the bike)
+    std::string model;                 // "" the bike, "golfcart", "dumptruck", "militarytruck"
+    bool npc = false;                  // an NPC of the mode drives it (players do not get on it)
+    std::string npcLook, npcName;      // its look ("": the default one) and the name above it
+    std::vector<float> route;          // x,y,z of the points its NPC drives through (driveVehicle; the first: where it set off)
+    float routeSpeed = 0;              // units a second
+    bool routeLoop = false;            // round and round (back to the first point)
+    double routeStart = 0;             // Now() when it set off
+    std::vector<uint16_t> riders;      // a helicopter's passengers (player ids, seat order; 0xFFFF: free)
+    bool Helicopter() const { return model == "helicopter"; }
+};
+constexpr size_t kHelicopterSeats = 4;
+
+// An image of the mode (modes/<mode>/images): PNG, JPG or GIF, sent to the clients that lack it.
+struct ImageFile { std::string name, hash, data; };
+
+// A picture standing at a point of the world (drawn over the game, facing the screen).
+struct Icon {
+    uint16_t id = 0;
+    float x = 0, y = 0, z = 0;
+    float size = 48, distance = 5000;   // pixels on screen up close; seen within (units)
+    int32_t world = -1;
+    uint32_t color = 0xFFFFFFFF;        // RGBA tint
+    std::string image, text;            // an image of the mode; a caption under it
+    bool throughWalls = false;          // also when something stands between it and the camera
+};
+
+// A character standing in the world for the mode (shopkeeper, guard): a look, an animation, a name.
+struct Actor {
+    uint16_t id = 0;
+    float x = 0, y = 0, z = 0, yaw = 0;       // z on the ground
+    int32_t world = -1;
+    std::string look, anim, name;             // look: asset path or "skin:"; anim: asset path
+    bool solid = true;                        // players bump into it
+    std::string key, group;                   // placed in the editor (world.json "actors"): its id and group
+};
+
+// A region with its own rule for damage between players (world.json "zones" from the editor, or
+// createZone): "pve" - players cannot hurt each other in it (a safe town); "pvp" - they can, even
+// when the mode turned PvP off (an arena). Zombies and NPCs hurt players everywhere as before.
+struct Zone {
+    std::string name;
+    bool pvp = false;                         // type: false "pve", true "pvp"
+    bool box = false;                         // shape: a circle (radius) or a box (half sizes, turned by yaw)
+    float x = 0, y = 0, z = 0, yaw = 0;       // the centre (z: on the ground)
+    float radius = 2000, halfX = 2000, halfY = 2000;
+    float height = 5000;                      // units above and below z
+    int32_t world = -1;                       // virtual world (-1: every)
+    bool enabled = true;
+    bool notify = true;                       // a line on the screen of the players in it
+    std::string text;                         // that line ("": the default one)
+    bool Contains(float px, float py, float pz) const;
 };
 
 // Something a player did in the world, as reported by its client (Msg::GameEvent).
@@ -66,6 +145,20 @@ struct Player {
     bool ready = false;         // received Hello and was welcomed
     double joinedAt = 0;
     float botPhase = 0;
+    double botDeadUntil = 0;                       // a shot bot lies dead until then
+    bool spectating = false;
+    std::string skin;                              // the look the player made itself (character creator), kept by nick
+    std::string uniform;                           // worn over the skin (a job's clothes); empty: the skin shows
+    std::vector<std::string> offered;              // looks the open skin picker shows (empty: the full creator)
+    bool offeredUniform = false;                   // the picker chooses a uniform, not the skin
+    int32_t world = 0;                             // virtual world (setWorld): only players of the same world see each other
+    uint16_t vehicle = 0;                          // server vehicle it drives (0: none)
+    uint16_t passengerOf = 0;                      // server vehicle it rides as a passenger (0: none)
+    uint16_t dialogId = 0;                         // the dialog open on its screen (0: none)
+    net::DialogStyle dialogStyle = net::DialogStyle::MsgBox;
+    std::vector<std::string> dialogItems;          // a list dialog's lines (its answer names one)
+    bool inWardrobe = false, wardrobeReturn = true; // moved to the mode's skin choosing place; goes back after
+    float backX = 0, backY = 0, backZ = 0, backYaw = 0;
     double poseWindow = 0; int posesInWindow = 0;  // relay rate limit
     std::map<std::string, int> inventory;          // last snapshot reported by the client
     std::string look;                              // look asset path the player wears
@@ -74,6 +167,12 @@ struct Player {
     bool admin = false;
     double eventWindow = 0; int eventCount = 0;    // game event rate limit
     std::map<std::string, int> inventoryAtDeath;   // snapshot when the player died
+    std::string gear;                              // last GearList payload (for players joining later)
+    uint16_t lastAttacker = 0xFFFF; double lastHitAt = 0;  // who hurt this player last (the killer)
+    double hitWindow = 0; int hitCount = 0;        // hit report rate limit
+    int8_t pvp = -1;                               // player:setPvp: -1 the rules decide, 0 never hurts / is hurt by players, 1 always (both need it)
+    std::vector<std::string> zones;                // names of the enabled zones it stands in
+    std::string zoneHud;                           // the zone line on its screen now ("": none)
 };
 
 class Script;
@@ -103,14 +202,90 @@ public:
     void Teleport(Player* p, float x, float y, float z, float yaw);
     void Hint(Player* to, const std::string& title, const std::string& text, const std::string& image, bool pause, float seconds = 0);
     void Kick(Player* p, const std::string& reason);
+    // Hurts the player through its game's own damage (hit reaction, death); `attacker` becomes the killer.
+    void Damage(Player* p, float amount, Player* attacker);
+    void Freeze(Player* p, bool on);
+    // Skins (docs/API.md "Skins"): the player's own look, kept by nick in data/skins.json, and a uniform
+    // over it. WearEffective puts on the uniform, else the skin.
+    void SetSkin(Player* p, const std::string& skin);
+    void SetUniform(Player* p, const std::string& look);
+    void WearEffective(Player* p);
+    // The mode's skins made in the editor (modes/<mode>/skins.json): "skins" to start with, "uniforms".
+    struct SkinChoice { std::string id, en, ru, look; };
+    // A point of the world (logic points: z on the ground).
+    struct Spot { bool set = false; float x = 0, y = 0, z = 0, yaw = 0; };
+    const Spot& Wardrobe() const { return wardrobe_; }
+    const std::vector<SkinChoice>& SkinList(const std::string& kind) const;
+    const SkinChoice* FindSkin(const std::string& kind, const std::string& id) const;
+    // The full character creator (choices empty), or a picker of the given skins seen on the player.
+    void Customize(Player* p, bool cancel, const std::string& title, const std::string& families,
+                   const std::vector<const SkinChoice*>& choices = {}, bool uniform = false,
+                   const Spot& place = {}, bool back = true);
+    // Spectator: the player is hidden and watches others (`only`: these players; empty: anyone).
+    void Spectate(Player* p, bool on, const std::vector<uint16_t>& only);
+    void HurtBot(Player* bot, float amount, Player* attacker);  // bots have no game: the server keeps their health
     void Item(Player* p, net::ItemAction action, const std::string& key, int amount);
     void Bike(Player* p, net::BikeAction action, float x = 0, float y = 0, float z = 0, float yaw = 0);
     void SetNametags(net::NametagMode mode);
+    void SetCollisions(uint8_t mask);  // net::CollisionMask
+    uint8_t Collisions() const { return cfg_.collisions; }
     void Objective(Player* p, uint8_t state, uint8_t category, uint8_t style, const std::string& title, const std::string& text, int xp = 0);
     void ObjectiveMeter(Player* p, bool show, const std::string& title, float percent);
     uint16_t AddMarker(Marker m);
     bool RemoveMarker(uint16_t id);
     const Marker* FindMarker(uint16_t id) const;
+    // Dialogs, HUD elements, interactions and watched keys (docs/API.md "Dialogs", "HUD", "Interactions").
+    uint16_t ShowDialog(Player* p, net::DialogStyle style, const std::string& title, const std::string& text, const std::string& button1,
+                        const std::string& button2, const std::string& defaultText, const std::string& headers, const std::vector<std::string>& items);
+    void CloseDialog(Player* p);
+    void SetHud(Player* p, const std::string& id, const std::string& json);  // json "": remove; id and json "": all
+    uint16_t AddInteraction(Interaction i);
+    bool RemoveInteraction(uint16_t id);
+    void WatchKey(uint8_t key, bool on);
+    void SetWorld(Player* p, int32_t world);
+    // Players that do not see, touch or hurt each other: other virtual worlds, or one of them is at the
+    // skin choosing place (two choosing there would stand inside each other).
+    static bool Apart(const Player& a, const Player& b) { return a.world != b.world || a.inWardrobe || b.inWardrobe; }
+    // Vehicles (docs/API.md "Vehicles").
+    uint16_t AddVehicle(Vehicle v);
+    bool UpdateVehicle(const Vehicle& v);  // position, owner, lock, fuel... (a driven one keeps its driver)
+    bool RemoveVehicle(uint16_t id);
+    Vehicle* FindVehicle(uint16_t id) { auto it = vehicles_.find(id); return it == vehicles_.end() ? nullptr : &it->second; }
+    const std::map<uint16_t, Vehicle>& Vehicles() const { return vehicles_; }
+    bool PutInVehicle(Player* p, uint16_t id, bool passenger = false);  // the mode puts the player on it (it gets there itself)
+    void EjectFromVehicle(Player* p);            // off the vehicle it drives
+    void MarkVehicle(Player* p, uint16_t id, bool on);  // on that player's map (Vehicle::blipFor)
+    // Its NPC drives it from where it is through these points (x,y,z each) at that speed (units/s);
+    // the end: vehicleArrive. False: no such vehicle, or nobody drives it (npc).
+    // A helicopter flies `altitude` units above the points: up from where it stands, down onto the last.
+    bool DriveVehicle(uint16_t id, const std::vector<float>& points, float speed, bool loop, float altitude = 0);
+    bool StopVehicle(uint16_t id);               // stops where it is now
+    static std::string NickKey(const std::string& nick);
+    uint16_t AddActor(Actor a);
+    bool UpdateActor(const Actor& a);
+    bool RemoveActor(uint16_t id);
+    const Actor* FindActor(uint16_t id) const { auto it = actors_.find(id); return it == actors_.end() ? nullptr : &it->second; }
+    const std::map<uint16_t, Actor>& Actors() const { return actors_; }
+    std::string ResolveSkinOrLook(const std::string& want) const;  // skins.json id, "skin:", look name or path; "" if unknown
+    std::string ResolveAnim(const std::string& nameOrPath) const;  // short name from data/anims.txt or full path; "" if unknown
+    bool HasImage(const std::string& name) const { for (auto& i : images_) if (i.name == name) return true; return false; }
+    uint16_t AddIcon(Icon i);
+    bool UpdateIcon(const Icon& i);
+    bool RemoveIcon(uint16_t id);
+    Icon* FindIcon(uint16_t id) { auto it = icons_.find(id); return it == icons_.end() ? nullptr : &it->second; }
+    // Damage between players (docs/API.md "PvP и зоны"): the mode's switch, PvE/PvP zones and the
+    // players' own overrides. CanHurt is the built-in decision; the mode's setPvpRule may change it.
+    bool Pvp() const { return pvp_; }
+    void SetPvp(bool on);
+    bool CanHurt(const Player& victim, const Player& attacker) const;
+    const Zone* RuleZone(const Player& p) const;   // the zone that decides for this player (a PvE one first), or null
+    void SetZone(Zone z);                          // adds, or replaces the one of that name
+    bool RemoveZone(const std::string& name);
+    Zone* FindZone(const std::string& name);
+    const std::vector<Zone>& Zones() const { return zones_; }
+    // A zone as JSON (world.json and Lua: sizes in metres) and back; FromJson changes only the fields given.
+    static json::Value ZoneJson(const Zone& z);
+    static bool ZoneFromJson(const json::Value& v, Zone& z, std::string& error);
     uint16_t AddWorldItem(WorldItem item);
     bool RemoveWorldItem(uint16_t id);
     // Clears the backpack and gives `inv` back, skipping keys that start with one of `drop`.
@@ -138,12 +313,50 @@ private:
     void TickBots(float dt);
     void SendMarker(_ENetPeer* peer, const Marker& m);
     void TickMarkers();
+    std::vector<Zone> zones_;
+    bool pvp_ = true;               // world.json "rules" "pvp", then setPvp
+    double nextZoneTick_ = 0;
+    void LoadZones(const std::string& mode);       // world.json "zones" and "rules", before the mode's code runs
+    void TickZones();                              // who is in which zone: events and the screen line
+    void UpdateZoneHud(Player* p);
     std::map<uint16_t, Marker> markers_;
     std::map<uint16_t, WorldItem> items_;
+    std::map<uint16_t, Interaction> interactions_;
+    uint16_t nextInteraction_ = 1, nextDialog_ = 1;
+    std::set<uint8_t> watchedKeys_;
+    void SendInteraction(_ENetPeer* peer, const Interaction& i);
+    void SendWatchedKeys(Player* to);  // null: everyone
+    std::map<uint16_t, Actor> actors_;
+    std::map<uint16_t, Vehicle> vehicles_;
+    std::vector<ImageFile> images_;
+    void LoadImages(const std::string& mode);
+    void SendImageList(Player* to);    // null: everyone
+    std::map<uint16_t, Icon> icons_;
+    uint16_t nextIcon_ = 1;
+    void SendIcon(_ENetPeer* peer, const Icon& i);
+    uint16_t nextVehicle_ = 1;
+    void SendVehicle(Player* to, const Vehicle& v);   // to null: everyone (each gets its own "yours")
+    void SendRoute(Player* to, const Vehicle& v);     // its NPC's way (none: stopped)
+    void TickVehicles();                              // where the driven ones are; the ones that arrived
+    void LeaveVehicle(Player* p, const net::VehicleState* where);  // p no longer drives (or rides on) its vehicle
+    uint16_t nextActor_ = 1;
+    void SendActor(_ENetPeer* peer, const Actor& a);
+    std::map<std::string, std::string> anims_;  // lower-case name -> asset path (data/anims.txt)
+    void LoadAnims();
     uint16_t nextItem_ = 1;
     void SendWorldItem(_ENetPeer* peer, const WorldItem& item);
     std::string worldEdits_;      // modes/<mode>/world.json (validated), sent on join
     void LoadWorldEdits();
+    void LoadSkins();
+    void SaveSkins();
+    std::map<std::string, std::string> skins_;   // lower-case nick -> skin
+    std::map<std::string, std::vector<SkinChoice>> modeSkins_;  // "skins", "uniforms" -> list
+    void LoadModeSkins(const std::string& mode);
+    void LoadWorldActors(const std::string& mode);  // world.json "actors": the mode's NPCs placed in the editor
+    Spot wardrobe_;  // world.json logic "wardrobe": where players choose skins
+    // Time of day and weather saved with the mode in the editor (world.json "environment"); applied
+    // before the mode's code runs, which may still change them.
+    void LoadEnvironment(const std::string& mode);
     void SendWorldEdits(_ENetPeer* peer);
     uint16_t nextMarker_ = 1;
     void RemovePlayer(Player* p, uint8_t reason);

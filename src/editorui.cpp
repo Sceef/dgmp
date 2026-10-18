@@ -5,6 +5,9 @@
 #include "log.h"
 #include "shared/json.h"
 #include "worldedit.h"
+#include "environment.h"
+#include "skins.h"
+#include "../api/dgmp.h"
 #include "imgui.h"
 #include "ImGuizmo.h"
 #include <windows.h>
@@ -13,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <regex>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -25,6 +29,7 @@ namespace editorui {
 namespace {
 // ---------------------------------------------------------------- language (editor.ini: English by default)
 bool english = true;
+std::atomic<bool> invertLook{true};  // editor camera: vertical look inverted (editor.ini InvertY)
 const char* T(const char* ru) {
     static const std::map<std::string, const char*> en = {
     {"Дойти до точки", "Go to a point"},
@@ -186,6 +191,14 @@ const char* T(const char* ru) {
     {"Tab — курсор", "Tab — cursor"},
     {"Новый квест", "New quest"},
     {"Квест удалён", "Quest deleted"},
+    {"Время и погода", "Time & weather"}, {"Сохранять с режимом", "Save with the mode"},
+    {"Режим стартует с этим временем и погодой (сервер применяет их до кода режима)", "The mode starts with this time and weather (the server applies them before the mode's code)"},
+    {"Время", "Time"}, {"Остановить часы", "Stop clock"}, {"Погода", "Weather"}, {"авто", "auto"},
+    {"Логика режима", "Mode logic"}, {"Обновить из кода", "Rescan code"}, {"Повторять##logic", "Repeat##logic"},
+    {"отмена", "cancel"}, {"переставить", "move"}, {"поставить", "place"}, {"добавить", "add"},
+    {"не используется в коде", "not used by the code"}, {"триггеры", "triggers"}, {"триггер", "trigger"},
+    {"точки", "points"}, {"точка", "point"}, {", не поставлен", ", not placed"},
+    {"Код режима не просит объектов: logic.trigger(\"имя\"), logic.points(\"имя\")…", "The mode's code asks for no objects: logic.trigger(\"name\"), logic.points(\"name\")…"},
     {"Дороги и бордюры (сплайны) пока не редактируются", "Roads and curbs (splines) are not editable yet"},
     {"Язык текстов:", "Text language:"},
     {"Военные, NERO, ополчение", "Military, NERO, militia"},
@@ -230,7 +243,94 @@ const char* T(const char* ru) {
     {"Сохранено: modes/", "Saved: modes/"},
     {"Запуск проверки: редактор закроется", "Starting the test: the editor will close"},
     {".json повреждён", ".json is damaged"},
-    {"Выберите режим: правки мира хранятся у каждого режима свои (modes/<режим>/world.json).", "Pick a mode: every mode keeps its own world edits (modes/<mode>/world.json)."}
+    {"Выберите режим: правки мира хранятся у каждого режима свои (modes/<режим>/world.json).", "Pick a mode: every mode keeps its own world edits (modes/<mode>/world.json)."},
+    {"Персонажи", "Characters"},
+    {"Свет", "Lights"},
+    {"отмена##npc", "cancel##npc"},
+    {"ЛКМ в мире ставит NPC", "LMB in the world places an NPC"},
+    {"ЛКМ в мире ставит NPC: ", "LMB in the world places the NPC: "},
+    {"Статисты режима: облик, анимация, имя. Сервер создаёт их сам при запуске режима; код режима находит их по id: logic.actor(\"id\"), logic.actors(\"группа\"). Клик по NPC в мире выделяет его.",
+     "The mode's extras: a look, an animation, a name. The server makes them when the mode starts; the mode's code finds them by id: logic.actor(\"id\"), logic.actors(\"group\"). A click on an NPC in the world selects it."},
+    {"Поставленные NPC", "Placed NPCs"},
+    {"NPC, созданные кодом режима (createActor), здесь не видны. Ставьте их здесь, а в коде берите через logic.actor(\"id\") / logic.actors(\"группа\").",
+     "NPCs created by the mode's code (createActor) are not shown here. Place them here and get them in the code with logic.actor(\"id\") / logic.actors(\"group\")."},
+    {"Поставлен NPC ", "NPC placed: "},
+    {"id: латиница, цифры, _ и -", "id: latin letters, digits, _ and -"},
+    {"Такой id уже есть", "This id is taken"},
+    {"Группа", "Group"},
+    {"logic.actors(\"группа\") в коде режима вернёт всех NPC этой группы", "logic.actors(\"group\") in the mode's code returns every NPC of the group"},
+    {"Имя над головой", "Name above the head"},
+    {"облик (пусто — Дикон)", "look (empty: Deacon)"},
+    {"Облик", "Look"},
+    {"Анимация", "Animation"},
+    {"нет такой анимации", "no such animation"},
+    {"Твёрдый (в него упираются)", "Solid (players bump into it)"},
+    {"Мир (-1 — во всех)", "World (-1: every)"},
+    {"NPC, группа", "NPC group"},
+    {"Поиск", "Search"},
+    {"место выбора скина", "skin choosing place"},
+    {"Место выбора скина", "Skin choosing place"},
+    {"Поставлено: %.0f %.0f %.0f", "Placed: %.0f %.0f %.0f"},
+    {"Не задано: игрок выбирает там, где стоит", "Not set: players choose where they stand"},
+    {"Переставить", "Move"},
+    {"Поставить в мире", "Place in the world"},
+    {"Показать", "Show"},
+    {"Убрать##place", "Remove##place"},
+    {"ЛКМ в мире ставит место выбора; стрелка — куда смотрит персонаж", "LMB in the world places it; the arrow is where the character faces"},
+    {"Например комната под землёй из пропсов со светом. player:customize() переносит игрока туда, после выбора возвращает назад (на спавн при первом входе). Хранится в world.json — «Сохранить» здесь пишет и его.",
+     "E.g. a room of props and lights under the ground. player:customize() takes the player there and back after choosing (to the spawn on the first visit). Kept in world.json: Save here writes it too."},
+    {"Точечный свет", "Point light"},
+    {"Прожектор", "Spot light"},
+    {"Цвет", "Colour"},
+    {"Яркость", "Intensity"},
+    {"Дальность, м", "Reach, m"},
+    {"Угол конуса", "Cone angle"},
+    {"Тени", "Shadows"},
+    {"Свет для интерьеров. Прожектор светит из основания конуса (по умолчанию вниз), поворачивается гизмо. Тени дорогие: включайте немногим.",
+     "Lights for interiors. A spot light shines out of the cone's base (down by default); turn it with the gizmo. Shadows are expensive: only a few."},
+    {"Формы", "Uniforms"},
+    {"Скины на старте", "Start skins"},
+    {": id — латиница, цифры, _ и -", ": id - latin letters, digits, _ and -"},
+    {"латиница, цифры, _ и -", "latin letters, digits, _ and -"},
+    {": облик не собран", ": no look made yet"},
+    {": такой id уже есть", ": this id is used twice"},
+    {"Облик: ", "Look: "},
+    {"Выберите режим: у каждого режима свои скины (modes/<режим>/skins.json).", "Pick a mode: every mode has its own skins (modes/<mode>/skins.json)."},
+    {"не сохранено", "not saved"},
+    {"Игроки выбирают только из этих скинов (player:customize()); формы режим надевает поверх скина (player:setUniform(\"id\")). Облик собирается на манекене перед камерой: пресет игры или своя сборка из частей.",
+     "Players choose only from these skins (player:customize()); the mode puts uniforms over the skin (player:setUniform(\"id\")). A look is made on a mannequin in front of the camera: a preset of the game or your own build from parts."},
+    {"Идёт сборка облика: окно слева. «Готово» запишет облик в запись, «Отмена» оставит как было.", "Making the look: the window on the left. Done keeps it in the entry, Cancel leaves the entry as it was."},
+    {"Пусто: «Добавить» соберёт форму", "Empty: Add makes a uniform"},
+    {"Пусто: игроки получат полный редактор персонажа. «Добавить» соберёт скин", "Empty: players get the full character creator. Add makes a skin"},
+    {"  — без облика", "  - no look"},
+    {"Добавить", "Add"},
+    {"Запись", "Entry"},
+    {"Название (EN)", "Name (EN)"},
+    {"Название (RU)", "Name (RU)"},
+    {"Собрать облик", "Make the look"},
+    {"Изменить облик", "Change the look"},
+    {"(двойной клик по записи)", "(double click an entry)"},
+    {"Не удалось поставить манекен", "Could not place the mannequin"},
+    {"PvP и зоны", "PvP and zones"},
+    {"Урон между игроками (PvP)", "Damage between players (PvP)"},
+    {"Выключено: игроки ранят друг друга только в PvP-зонах. Код режима может менять это: setPvp(), player:setPvp(), setPvpRule().",
+     "Off: players hurt each other only in PvP zones. The mode's code can change it: setPvp(), player:setPvp(), setPvpRule()."},
+    {"+ PvE зона", "+ PvE zone"}, {"+ PvP зона", "+ PvP zone"},
+    {"ЛКМ в мире ставит центр зоны", "LMB in the world places the zone's centre"},
+    {"PvE (зелёная) — безопасная зона: игроки не ранят друг друга, стрелять из неё тоже нельзя. PvP (красная) — урон между игроками есть, даже если PvP режима выключен (нужно, чтобы оба были в PvP-зонах). Зомби и NPC опасны везде.",
+     "PvE (green) is a safe zone: players cannot hurt each other there, nor shoot out of it. PvP (red): players hurt each other even when the mode's PvP is off (both must stand in PvP zones). Zombies and NPCs are dangerous everywhere."},
+    {"Зон нет", "No zones"}, {"м", "m"}, {", выключена", ", off"},
+    {"Поставлена зона ", "Zone placed: "},
+    {"Имя зоны", "Zone name"},
+    {"Имя для кода режима: getZone(\"имя\"), setZone(\"имя\", {...}), player:inZone(\"имя\"). Латиница, цифры, _ и -",
+     "The name for the mode's code: getZone(\"name\"), setZone(\"name\", {...}), player:inZone(\"name\"). Latin letters, digits, _ and -"},
+    {"PvE (безопасная)", "PvE (safe)"}, {"Круг", "Circle"}, {"Прямоугольник", "Box"}, {"Центр", "Centre"},
+    {"Длина, м", "Length, m"}, {"Ширина, м", "Width, m"}, {"Высота вверх и вниз, м", "Height up and down, m"},
+    {"Включена при старте", "On at the start"},
+    {"Выключенную зону код режима включает сам: setZone(\"имя\", {enabled = true})", "The mode's code turns an off zone on: setZone(\"name\", {enabled = true})"},
+    {"Надпись на экране в зоне", "A line on the screen in the zone"},
+    {"Своя надпись", "Own text"},
+    {"Пусто — стандартная («Безопасная зона» / «PvP-зона»). Можно цвета {RRGGBB}", "Empty: the default one (Safe zone / PvP zone). Colours {RRGGBB} work"}
     };
     if (!english) return ru;
     auto it = en.find(ru);
@@ -315,7 +415,7 @@ int gizmoOp = 0;               // 0 move, 1 rotate
 struct Cam { bool valid = false; FVector loc{}; FRotator rot{}; float fov = 90; };
 Cam cam;
 std::string toast; double toastUntil = 0;
-int mode = 1;                  // 0 world, 1 quest
+int mode = 1;                  // 0 world, 1 quest, 2 characters (the mode's skins)
 std::string status;            // SetStatus (UTF-8)
 bool statusOpen = false;
 
@@ -330,22 +430,47 @@ const struct { int type; const char* name; } kItemTypes[] = {
     {5, "Расходники"}, {4, "Оружие"}, {3, "Патроны"}, {2, "Материалы"}, {6, "Полезное"}, {12, "Коллекционное"}, {8, "Детали мотоцикла"}, {9, "Детали оружия"}, {0, "Прочее"}};
 
 // ---------------------------------------------------------------- UI → game thread
-enum class Action { Save, New, Load, Delete, Test, WorldClick, WorldLoad, WorldSave };
+enum class Action { Save, New, Load, Delete, Test, WorldClick, WorldLoad, WorldSave, SkinsSave };
 
 // ---------------------------------------------------------------- world model (modes/<mode>/world.json)
 struct WT { float x = 0, y = 0, z = 0, pitch = 0, yaw = 0, roll = 0, scale = 1; };
-struct WAdd { std::string uid, asset, name; WT t; };
+// An added prop, or a light (asset "light:point" / "light:spot"; colour sRGB 0..1, reach in metres).
+struct WLight { float color[3] = {1.f, 0.85f, 0.7f}; float intensity = 5000.f, radius = 10.f, cone = 40.f; bool shadows = false; };
+struct WAdd { std::string uid, asset, name; WT t; bool light = false; WLight l; };
+// Logic objects of the mode (modes/_lib/logic.lua): triggers and points its code asks for by name,
+// placed here. A name holds one object or an ordered list (checkpoints, start grid).
+struct LItem { WT t; float radius = 5; };     // radius in metres (triggers)
+// A character of the mode (world.json "actors", docs/API.md "NPC"): placed here, made by the server.
+struct WActor { char id[48] = "", group[48] = "", look[192] = "", anim[128] = "idle", name[96] = ""; WT t; bool solid = true; int world = -1; };
+// A PvE / PvP zone (world.json "zones", docs/API.md "PvP и зоны"): sizes in metres, t = the centre on the ground.
+struct WZone { char name[48] = ""; bool pvp = false, box = false; WT t; float radius = 20, length = 40, width = 40, height = 50;
+               bool enabled = true, notify = true; char text[160] = ""; int world = -1; };
 struct World {
     std::vector<std::string> remove;          // world objects ("<level>/<actor>")
     std::map<std::string, WT> move;           // world objects moved/turned
     std::vector<WAdd> add;                    // props placed by the mode
+    std::map<std::string, std::vector<LItem>> logic;
+    std::vector<WActor> actors;
+    std::vector<WZone> zones;
+    bool pvp = true;                          // world.json "rules" "pvp": players hurt each other outside PvE zones
+    // Time of day and weather the mode starts with (world.json "environment"); weather -1 = automatic.
+    struct Env { bool set = false; float time = 12; bool paused = false; int weather = -1; } env;
 };
+// What the mode's code asks for: logic.trigger("x"), logic.triggers("x"), logic.point("x"), logic.points("x").
+struct LDecl { std::string name; bool list = false, trigger = false, actor = false; float radius = 5; };
+std::vector<LDecl> logicDecls;
+std::string placeLogic;                       // name a click places an object of (world mode)
+int placeZone = 0;                            // a click places a zone: 1 PvE, 2 PvP
+const LDecl* FindDecl(const std::string& name) { for (auto& d : logicDecls) if (d.name == name) return &d; return nullptr; }
+void SelectLogic(const std::string& name, int index);
+void LoadSkinLists(const std::string& m);
 World world;
 std::string worldMode;                        // mode whose world is edited
 std::vector<std::string> modes;               // modes/* folders
 bool worldDirty = false;                      // the game should apply the edits again
 bool worldClickPending = false;
-// Selection in the world: kind 1 world object (id = key, t = its transform), 2 added prop (id = uid).
+// Selection in the world: kind 1 world object (id = key, t = its transform), 2 added prop (id = uid),
+// 3 logic object (id = "name#index"), 4 NPC (id = its id), 5 zone (id = its index).
 struct WSel { int kind = 0; std::string id, cls; WT t; UObject* actor = nullptr; };  // actor: the clicked world object
 WSel wsel;
 std::vector<World> worldUndo, worldRedo;
@@ -358,6 +483,7 @@ std::vector<Prop> props;
 std::vector<std::string> propCats;
 int propCat = 0;
 char propSearch[64] = "";
+std::string placeActor;                       // an NPC a click places: "*" a free one, else a name of the code's logic.actor(s)
 std::string placeProp;                        // path a click places (world mode)
 int libraryTab = 0;                           // 0 props, 1 items
 std::vector<std::pair<Action, std::string>> actions;
@@ -489,15 +615,194 @@ json::Value WorldJson(const World& w) {
     json::Value r = json::Value::Array(); for (auto& k : w.remove) r.push(k); v.set("remove", r);
     json::Value m = json::Value::Object(); for (auto& [k, t] : w.move) m.set(k, TJson(t)); v.set("move", m);
     json::Value a = json::Value::Array();
-    for (auto& e : w.add) { json::Value j = json::Value::Object(); j.set("uid", e.uid); j.set("asset", e.asset); if (!e.name.empty()) j.set("name", e.name); a.push(TJson(e.t, j)); }
+    for (auto& e : w.add) {
+        json::Value j = json::Value::Object(); j.set("uid", e.uid); j.set("asset", e.asset); if (!e.name.empty()) j.set("name", e.name);
+        if (e.light) {
+            json::Value l = json::Value::Object();
+            json::Value c = json::Value::Array(); for (float k : e.l.color) c.push(double(std::round(k * 1000) / 1000)); l.set("color", c);
+            l.set("intensity", double(std::round(e.l.intensity))); l.set("radius", double(e.l.radius));
+            if (e.asset == "light:spot") l.set("cone", double(e.l.cone));
+            if (e.l.shadows) l.set("shadows", true);
+            j.set("light", l);
+        }
+        a.push(TJson(e.t, j));
+    }
     v.set("add", a);
+    json::Value l = json::Value::Object();
+    for (auto& [name, items] : w.logic) {
+        const LDecl* d = FindDecl(name);
+        auto one = [&](const LItem& it) {
+            json::Value j = json::Value::Object();
+            j.set("x", double(it.t.x)); j.set("y", double(it.t.y)); j.set("z", double(it.t.z)); j.set("yaw", double(it.t.yaw));
+            if (!d || d->trigger) j.set("radius", double(it.radius));
+            return j;
+        };
+        if (d && !d->list && items.size() == 1) { l.set(name, one(items[0])); continue; }
+        json::Value list = json::Value::Array(); for (auto& it : items) list.push(one(it));
+        l.set(name, list);
+    }
+    if (!w.logic.empty()) v.set("logic", l);
+    if (!w.actors.empty()) {
+        json::Value list = json::Value::Array();
+        for (auto& npc : w.actors) {
+            json::Value j = json::Value::Object();
+            j.set("id", std::string(npc.id)); if (npc.group[0]) j.set("group", std::string(npc.group));
+            j.set("x", double(std::round(npc.t.x))); j.set("y", double(std::round(npc.t.y))); j.set("z", double(std::round(npc.t.z))); j.set("yaw", double(std::round(npc.t.yaw)));
+            j.set("look", std::string(npc.look)); j.set("anim", std::string(npc.anim));
+            if (npc.name[0]) j.set("name", std::string(npc.name));
+            if (!npc.solid) j.set("solid", false);
+            if (npc.world >= 0) j.set("world", double(npc.world));
+            list.push(j);
+        }
+        v.set("actors", list);
+    }
+    if (!w.zones.empty()) {
+        json::Value list = json::Value::Array();
+        for (auto& z : w.zones) {
+            json::Value j = json::Value::Object();
+            j.set("name", std::string(z.name)); j.set("type", std::string(z.pvp ? "pvp" : "pve")); j.set("shape", std::string(z.box ? "box" : "circle"));
+            j.set("x", double(std::round(z.t.x))); j.set("y", double(std::round(z.t.y))); j.set("z", double(std::round(z.t.z)));
+            if (z.box) { j.set("yaw", double(std::round(z.t.yaw * 10) / 10)); j.set("length", double(z.length)); j.set("width", double(z.width)); }
+            else j.set("radius", double(z.radius));
+            j.set("height", double(z.height));
+            if (z.world >= 0) j.set("world", double(z.world));
+            if (!z.enabled) j.set("enabled", false);
+            if (!z.notify) j.set("notify", false);
+            if (z.text[0]) j.set("text", std::string(z.text));
+            list.push(j);
+        }
+        v.set("zones", list);
+    }
+    if (!w.pvp) { json::Value rules = json::Value::Object(); rules.set("pvp", false); v.set("rules", rules); }
+    if (w.env.set) {
+        json::Value e = json::Value::Object();
+        e.set("time", double(w.env.time)); e.set("paused", w.env.paused);
+        if (w.env.weather < 0) e.set("weather", std::string("auto")); else e.set("weather", double(w.env.weather));
+        v.set("environment", e);
+    }
     return v;
 }
 void WorldFrom(const json::Value& v, World& w) {
     w = World{};
     for (auto& k : v["remove"].elements()) w.remove.push_back(k.asString());
     for (auto& [k, t] : v["move"].items()) w.move[k] = TFrom(t);
-    for (auto& e : v["add"].elements()) { WAdd a; a.uid = e["uid"].asString(); a.asset = e["asset"].asString(); a.name = e["name"].asString(); a.t = TFrom(e); w.add.push_back(a); }
+    for (auto& e : v["add"].elements()) {
+        WAdd a; a.uid = e["uid"].asString(); a.asset = e["asset"].asString(); a.name = e["name"].asString(); a.t = TFrom(e);
+        a.light = a.asset.rfind("light:", 0) == 0;
+        if (const json::Value& l = e["light"]; a.light && l.isObject()) {
+            if (l["color"].isArray() && l["color"].size() >= 3) for (int k = 0; k < 3; ++k) a.l.color[k] = float(l["color"][size_t(k)].asNumber());
+            a.l.intensity = float(l["intensity"].asNumber(a.l.intensity)); a.l.radius = float(l["radius"].asNumber(a.l.radius));
+            a.l.cone = float(l["cone"].asNumber(a.l.cone)); a.l.shadows = l["shadows"].asBool(false);
+        }
+        w.add.push_back(a);
+    }
+    if (const json::Value& e = v["environment"]; e.isObject()) {
+        w.env.set = true; w.env.time = float(e["time"].asNumber(12)); w.env.paused = e["paused"].asBool(false);
+        w.env.weather = e["weather"].isNumber() ? int(e["weather"].asNumber()) : -1;
+    }
+    for (auto& [name, e] : v["logic"].items()) {
+        auto one = [](const json::Value& j) { LItem it; it.t.x = float(j["x"].asNumber()); it.t.y = float(j["y"].asNumber()); it.t.z = float(j["z"].asNumber()); it.t.yaw = float(j["yaw"].asNumber()); it.radius = float(j["radius"].asNumber(5)); return it; };
+        auto& items = w.logic[name];
+        if (e.isArray()) for (auto& j : e.elements()) items.push_back(one(j)); else if (e.isObject()) items.push_back(one(e));
+    }
+    for (auto& j : v["actors"].elements()) {
+        WActor a;
+        Copy(a.id, sizeof a.id, j["id"].asString()); Copy(a.group, sizeof a.group, j["group"].asString());
+        a.t.x = float(j["x"].asNumber()); a.t.y = float(j["y"].asNumber()); a.t.z = float(j["z"].asNumber()); a.t.yaw = float(j["yaw"].asNumber());
+        Copy(a.look, sizeof a.look, j["look"].asString()); Copy(a.anim, sizeof a.anim, j["anim"].isString() ? j["anim"].asString() : std::string("idle"));
+        Copy(a.name, sizeof a.name, j["name"].asString());
+        a.solid = j["solid"].asBool(true); a.world = j["world"].isNumber() ? int(j["world"].asNumber()) : -1;
+        if (a.id[0]) w.actors.push_back(a);
+    }
+    for (auto& j : v["zones"].elements()) {
+        WZone z;
+        Copy(z.name, sizeof z.name, j["name"].asString());
+        z.pvp = j["type"].asString() == "pvp";
+        z.box = j["shape"].asString() == "box" || (!j["shape"].isString() && (j["width"].isNumber() || j["length"].isNumber()));
+        z.t.x = float(j["x"].asNumber()); z.t.y = float(j["y"].asNumber()); z.t.z = float(j["z"].asNumber()); z.t.yaw = float(j["yaw"].asNumber());
+        z.radius = float(j["radius"].asNumber(20)); z.length = float(j["length"].asNumber(40)); z.width = float(j["width"].asNumber(40));
+        z.height = float(j["height"].asNumber(50)); z.world = j["world"].isNumber() ? int(j["world"].asNumber()) : -1;
+        z.enabled = j["enabled"].asBool(true); z.notify = j["notify"].asBool(true); Copy(z.text, sizeof z.text, j["text"].asString());
+        if (z.name[0]) w.zones.push_back(z);
+    }
+    w.pvp = v["rules"]["pvp"].asBool(true);
+}
+WZone* ZoneOf(const std::string& id) {
+    const int i = id.empty() ? -1 : std::atoi(id.c_str());
+    return i >= 0 && i < int(world.zones.size()) ? &world.zones[size_t(i)] : nullptr;
+}
+void SelectZone(int index) {
+    if (index < 0 || index >= int(world.zones.size())) { wsel = {}; return; }
+    wsel = {5, std::to_string(index), "", world.zones[size_t(index)].t};
+}
+std::string FreeZoneName(const std::string& base) {
+    for (int n = 1;; ++n) {
+        const std::string name = base + std::to_string(n);
+        bool used = false; for (auto& z : world.zones) used |= name == z.name;
+        if (!used) return name;
+    }
+}
+// ---------------------------------------------------------------- the mode's NPCs (world.json "actors")
+std::wstring Wide(const std::string& s) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), nullptr, 0);
+    std::wstring out(size_t(std::max(n, 0)), wchar_t(0));
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), out.data(), n);
+    return out;
+}
+WActor* ActorById(const std::string& id) { for (auto& a : world.actors) if (id == a.id) return &a; return nullptr; }
+std::string FreeActorId(const std::string& base) {
+    for (int n = 1;; ++n) { const std::string id = base + std::to_string(n); if (!ActorById(id)) return id; }
+}
+void SelectActor(const std::string& id) { if (WActor* a = ActorById(id)) wsel = {4, id, "", a->t}; else wsel = {}; }
+std::string ModeSkinLook(const std::string& id);  // a skin id of the mode's skins.json (below)
+std::vector<std::pair<std::string, std::string>> ModeSkinChoices();  // (id, label) of the mode's skins and uniforms
+// The look an NPC wears: a skins.json id, a look name, a path or a "skin:" string ("": Deacon).
+std::string ActorLook(const std::string& look) {
+    if (look.empty()) return "/Game/Characters/Deacon/looks/deacon_standard.deacon_standard";
+    const std::string skin = ModeSkinLook(look);
+    return skin.empty() ? skins::LookPath(look) : skin;
+}
+// data/anims.txt: animation names (short names first) and their assets.
+const std::vector<std::pair<std::string, std::string>>& Anims() {
+    static std::vector<std::pair<std::string, std::string>> list;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::ifstream in(fs::path(profile::Root()) / L"data" / L"anims.txt");
+        for (std::string line; std::getline(in, line);) {
+            if (line.empty() || line[0] == '#') continue;
+            const size_t t1 = line.find('\t'); if (t1 == std::string::npos) continue;
+            const size_t t2 = line.find('\t', t1 + 1);
+            list.emplace_back(line.substr(0, t1), line.substr(t1 + 1, t2 == std::string::npos ? std::string::npos : t2 - t1 - 1));
+        }
+    });
+    return list;
+}
+std::string AnimPath(const std::string& name) {
+    if (!name.empty() && name[0] == '/') return name;
+    for (auto& [n, path] : Anims()) if (_stricmp(n.c_str(), name.c_str()) == 0) return path;
+    return {};
+}
+
+// The logic objects a mode's scripts ask for (names written as plain strings).
+void ScanLogic(const std::string& m) {
+    logicDecls.clear();
+    static const std::regex call(R"(logic\s*\.\s*(triggers|trigger|points|point|actors|actor)\s*\(\s*["']([^"']+)["']([^)]*))");
+    static const std::regex radius(R"(radius\s*=\s*([0-9.]+))");
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(fs::path(profile::Root()) / L"modes" / m, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (it->path().extension() != L".lua") continue;
+        std::ifstream in(it->path(), std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+        const std::string text = ss.str();
+        for (auto c = std::sregex_iterator(text.begin(), text.end(), call); c != std::sregex_iterator(); ++c) {
+            const std::string kind = (*c)[1], name = (*c)[2], rest = (*c)[3];
+            if (FindDecl(name)) continue;
+            LDecl d; d.name = name; d.list = kind.back() == 's'; d.trigger = kind.rfind("trigger", 0) == 0; d.actor = kind.rfind("actor", 0) == 0;
+            std::smatch r; if (std::regex_search(rest, r, radius)) d.radius = std::stof(r[1]);
+            logicDecls.push_back(d);
+        }
+    }
+    // Every mode has it: where players choose their skin (player:customize() takes them there).
+    if (!FindDecl("wardrobe")) logicDecls.push_back({"wardrobe", false, false, false, 5});
 }
 fs::path WorldFile(const std::string& m) { return fs::path(profile::Root()) / L"modes" / m / L"world.json"; }
 
@@ -572,9 +877,233 @@ void BuildCatalog() {
 }
 
 FRotator ActorRotation(UObject* a) { auto f = Fn(a, "K2_GetActorRotation"); if (!f) return {}; Params p(f); Call(a, "K2_GetActorRotation", &p); return p.Get<FRotator>("ReturnValue"); }
+// Logic objects shown in the world: real objects, so they sit still and the ground hides what is
+// below it. A trigger: a beam in its centre and a ring of posts on its radius; a point: a post and a
+// cone pointing its way. Editor only, no collision.
+struct LVis { UObject* actor = nullptr; UObject* label = nullptr; UObject* material = nullptr; std::string geo; int color = -1; std::string text; };
+std::map<std::string, LVis> logicVis;  // "name#index"
+UObject* EngineAsset(const char* path) { UObject* o = FindObject(path); return o ? o : LoadAsset(path); }
+// An asset kept for good (rooted): a loaded asset nothing else holds is collected after a level change,
+// and a cached pointer to it would crash the next call.
+UObject* KeptAsset(UObject*& cache, const char* path) { if (!IsValid(cache)) { cache = EngineAsset(path); if (cache) AddToRoot(cache); } return cache; }
+UObject* EditorStatics() { static UObject* s = nullptr; if (!IsValid(s)) s = FindObject("/Script/Engine.Default__GameplayStatics"); return s; }
+UObject* SpawnBare(UObject* cls, const FVector& at, UObject* context) {
+    if (!cls || !EditorStatics()) return nullptr;
+    FTransform t; t.Translation = at;
+    Params begin(Fn(EditorStatics(), "BeginSpawningActorFromClass"));
+    begin.Set("WorldContextObject", context); begin.Set("ActorClass", cls); begin.Set("SpawnTransform", t); begin.SetBool("bNoCollisionFail", true);
+    Call(EditorStatics(), "BeginSpawningActorFromClass", &begin);
+    UObject* a = begin.Get<UObject*>("ReturnValue");
+    if (!a) return nullptr;
+    if (UObject* root = Field<UObject*>(a, off::Actor_RootComponent)) {  // movable before it registers
+        for (auto c = root->Class; c; c = SuperOf(c)) if (auto prop = FindProperty(c, "Mobility")) { *(reinterpret_cast<uint8_t*>(root) + Field<int>(prop, off::UProperty_Offset)) = 2; break; }
+    }
+    Params finish(Fn(EditorStatics(), "FinishSpawningActor")); finish.Set("Actor", a); finish.Set("SpawnTransform", t);
+    Call(EditorStatics(), "FinishSpawningActor", &finish);
+    if (auto f = Fn(a, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(a, "SetActorEnableCollision", &p); }
+    return a;
+}
+UObject* AddShape(UObject* actor, UObject* mesh, UObject* material, const FVector& loc, const FRotator& rot, const FVector& scale) {
+    static UObject* cls = FindClass("StaticMeshComponent");
+    UObject* c = cls && mesh ? NewObject(cls, actor) : nullptr;
+    if (!c) return nullptr;
+    for (auto k = c->Class; k; k = SuperOf(k)) if (auto prop = FindProperty(k, "Mobility")) { *(reinterpret_cast<uint8_t*>(c) + Field<int>(prop, off::UProperty_Offset)) = 2; break; }
+    if (auto f = Fn(c, "SetStaticMesh")) { Params p(f); p.Set("NewMesh", mesh); Call(c, "SetStaticMesh", &p); }
+    RegisterComponent(c);
+    if (auto f = Fn(c, "SetCollisionEnabled")) { Params p(f); p.Set<uint8_t>("NewType", 0); Call(c, "SetCollisionEnabled", &p); }
+    if (auto f = Fn(c, "K2_AttachTo")) { Params p(f); p.Set("InParent", Field<UObject*>(actor, off::Actor_RootComponent)); p.Set<uint8_t>("AttachType", 0); Call(c, "K2_AttachTo", &p); }
+    if (auto f = Fn(c, "K2_SetRelativeLocationAndRotation")) { Params p(f); p.Set("NewLocation", loc); p.Set("NewRotation", rot); Call(c, "K2_SetRelativeLocationAndRotation", &p); }
+    if (auto f = Fn(c, "SetRelativeScale3D")) { Params p(f); p.Set("NewScale3D", scale); Call(c, "SetRelativeScale3D", &p); }
+    if (material) if (auto f = Fn(c, "SetMaterial")) { Params p(f); p.Set<int>("ElementIndex", 0); p.Set("Material", material); Call(c, "SetMaterial", &p); }
+    return c;
+}
+void DestroyVis(LVis& v) {
+    for (UObject* a : {v.actor, v.label}) if (IsValid(a)) Call(a, "K2_DestroyActor");
+    v = LVis{};
+}
+void UpdateLogicVisuals(UObject* pawn) {
+    // shape: 0 a point, 1 a ring of `radius` m, 2 a box of halfX x halfY m (zones); zone: taller posts.
+    struct Want { std::string key, text; LItem item; bool trigger; int color; int shape = 0; float halfX = 0, halfY = 0; bool zone = false; };
+    std::vector<Want> wants;
+    FVector camAt{};
+    {
+        std::lock_guard g(lock);
+        camAt = cam.loc;
+        if (mode == 0 && !worldMode.empty())
+            for (auto& [name, items] : world.logic) {
+                const LDecl* d = FindDecl(name);
+                for (int i = 0; i < int(items.size()); ++i) {
+                    const std::string key = name + "#" + std::to_string(i);
+                    const bool trig = !d || d->trigger;
+                    wants.push_back({key, items.size() > 1 || (d && d->list) ? name + " " + std::to_string(i + 1) : name, items[i], trig,
+                                     wsel.kind == 3 && wsel.id == key ? 2 : trig ? 0 : 1, trig ? 1 : 0});
+                }
+            }
+        if (mode == 0 && !worldMode.empty())
+            for (int i = 0; i < int(world.zones.size()); ++i) {
+                const WZone& z = world.zones[size_t(i)];
+                Want w{"zone#" + std::to_string(i), std::string(z.name) + (z.pvp ? "  (PvP)" : "  (PvE)") + (z.enabled ? "" : " -"), {}, true,
+                       wsel.kind == 5 && wsel.id == std::to_string(i) ? 2 : z.pvp ? 4 : 3, z.box ? 2 : 1, z.length / 2, z.width / 2, true};
+                w.item.t = z.t; w.item.t.pitch = w.item.t.roll = 0; w.item.radius = z.radius;
+                if (!z.box) w.item.t.yaw = 0;
+                wants.push_back(w);
+            }
+    }
+    // Gone ones first.
+    for (auto it = logicVis.begin(); it != logicVis.end();) {
+        bool keep = false; for (auto& w : wants) if (w.key == it->first) { keep = true; break; }
+        if (!keep) { DestroyVis(it->second); it = logicVis.erase(it); } else ++it;
+    }
+    if (wants.empty()) return;
+    static UObject *cylinderAsset = nullptr, *coneAsset = nullptr, *baseMatAsset = nullptr;
+    UObject* cylinder = KeptAsset(cylinderAsset, "/Engine/BasicShapes/Cylinder.Cylinder");
+    UObject* cone = KeptAsset(coneAsset, "/Engine/BasicShapes/Cone.Cone");
+    UObject* baseMat = KeptAsset(baseMatAsset, "/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial");
+    static UObject* smaCls = FindClass("StaticMeshActor");
+    static UObject* textCls = FindClass("TextRenderActor");
+    static const FName colorName = FindName("Color");
+    for (auto& w : wants) {
+        LVis& v = logicVis[w.key];
+        if (v.actor && !IsValid(v.actor)) v = LVis{};
+        char geo[64];
+        snprintf(geo, sizeof geo, "%d %.2f %.2f %.2f", w.shape, w.shape == 1 ? w.item.radius : w.halfX, w.halfY, w.zone ? 1.f : 0.f);
+        if (!v.actor || v.geo != geo) {
+            DestroyVis(v);
+            v.actor = SpawnBare(smaCls, {w.item.t.x, w.item.t.y, w.item.t.z}, pawn);
+            if (!v.actor) continue;
+            v.geo = geo;
+            // One coloured material for all its shapes.
+            UObject* root = Field<UObject*>(v.actor, off::Actor_RootComponent);
+            UObject* first = AddShape(v.actor, cylinder, nullptr, {0, 0, 200}, {0, 0, 0}, {0.08f, 0.08f, 4.f});  // the beam, 4 m
+            if (first) if (auto f = Fn(first, "CreateDynamicMaterialInstance")) {
+                Params p(f); p.Set<int>("ElementIndex", 0); p.Set("SourceMaterial", baseMat); Call(first, "CreateDynamicMaterialInstance", &p);
+                v.material = p.Get<UObject*>("ReturnValue");
+            }
+            const float postH = w.zone ? 3.f : 1.5f, postW = w.zone ? 0.1f : 0.06f;  // zones: taller posts, 3 m
+            if (w.shape == 1) {
+                const float r = w.item.radius * 100;
+                const int posts = std::clamp(int(r * 6.2831853f / 150.f), 12, w.zone ? 128 : 64);  // about every 1.5 m
+                for (int k = 0; k < posts; ++k) {
+                    const float a = k * 6.2831853f / posts;
+                    AddShape(v.actor, cylinder, v.material, {cosf(a) * r, sinf(a) * r, postH * 50}, {0, 0, 0}, {postW, postW, postH});
+                }
+            } else if (w.shape == 2) {  // posts along the box's edges, the corners included
+                const float hx = w.halfX * 100, hy = w.halfY * 100;
+                const FVector corners[4] = {{hx, hy, 0}, {-hx, hy, 0}, {-hx, -hy, 0}, {hx, -hy, 0}};
+                const float step = std::max(150.f, 4 * (hx + hy) / 128.f);
+                for (int e = 0; e < 4; ++e) {
+                    const FVector a = corners[e], b = corners[(e + 1) % 4];
+                    const float len = std::sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+                    const int n = std::max(1, int(len / step));
+                    for (int k = 0; k < n; ++k) {
+                        const float f = float(k) / n;
+                        AddShape(v.actor, cylinder, v.material, {a.X + (b.X - a.X) * f, a.Y + (b.Y - a.Y) * f, postH * 50}, {0, 0, 0}, {postW, postW, postH});
+                    }
+                }
+            } else {
+                AddShape(v.actor, cone, v.material, {80, 0, 120}, {-90, 0, 0}, {0.4f, 0.4f, 0.8f});  // points along the actor's yaw
+            }
+            (void)root;
+            v.label = SpawnBare(textCls, {w.item.t.x, w.item.t.y, w.item.t.z + 430}, pawn);
+            v.color = -1; v.text.clear();
+        }
+        if (auto f = Fn(v.actor, "K2_SetActorLocationAndRotation")) {
+            Params p(f); p.Set("NewLocation", FVector{w.item.t.x, w.item.t.y, w.item.t.z}); p.Set("NewRotation", FRotator{0, w.item.t.yaw, 0}); p.SetBool("bTeleport", true);
+            Call(v.actor, "K2_SetActorLocationAndRotation", &p);
+        }
+        static const float colors[5][4] = {{0.15f, 0.75f, 0.9f, 1}, {1.f, 0.5f, 0.15f, 1}, {1.f, 0.85f, 0.2f, 1}, {0.2f, 0.85f, 0.35f, 1}, {0.95f, 0.25f, 0.2f, 1}};
+        if (v.color != w.color && IsValid(v.material)) if (auto f = Fn(v.material, "SetVectorParameterValue")) {
+            Params p(f); p.Set("ParameterName", colorName);
+            struct { float r, g, b, a; } c{colors[w.color][0], colors[w.color][1], colors[w.color][2], colors[w.color][3]};
+            p.Set("Value", c); Call(v.material, "SetVectorParameterValue", &p);
+        }
+        UObject* tc = IsValid(v.label) ? Field<UObject*>(v.label, off::TextRenderActor_Component) : nullptr;
+        if (IsValid(tc)) {
+            if (v.text != w.text || v.color != w.color) {
+                const std::wstring wt(w.text.begin(), w.text.end());
+                Params t(Fn(tc, "SetText")); t.Set("Value", FString{wt.c_str(), int32_t(wt.size() + 1), int32_t(wt.size() + 1)}); Call(tc, "SetText", &t);
+                if (auto f = Fn(tc, "SetHorizontalAlignment")) { Params a(f); a.Set<uint8_t>("Value", 1); Call(tc, "SetHorizontalAlignment", &a); }
+                if (auto f = Fn(tc, "SetWorldSize")) { Params a(f); a.Set<float>("Value", 45.f); Call(tc, "SetWorldSize", &a); }
+                static const uint32_t argbs[5] = {0xFF5AD2E6, 0xFFF09646, 0xFFFFD84A, 0xFF5AE678, 0xFFF05A50};
+                const uint32_t argb = argbs[w.color];
+                if (auto f = Fn(tc, "SetTextRenderColor")) { Params a(f); a.Set<uint32_t>("Value", argb); Call(tc, "SetTextRenderColor", &a); }
+                v.text = w.text;
+            }
+            const FVector at{w.item.t.x, w.item.t.y, w.item.t.z + 430};
+            const float yaw = std::atan2(camAt.Y - at.Y, camAt.X - at.X) * 57.2957795f;
+            if (auto f = Fn(v.label, "K2_SetActorLocationAndRotation")) { Params p(f); p.Set("NewLocation", at); p.Set("NewRotation", FRotator{0, yaw, 0}); p.SetBool("bTeleport", true); Call(v.label, "K2_SetActorLocationAndRotation", &p); }
+        }
+        v.color = w.color;
+    }
+}
 // Outline of the selection: the game's own survival-vision outline. Selected meshes render custom
 // depth with stencil 2, and the controller's FocusPostHighlightOnly post process draws it.
 std::vector<UObject*> outlined;  // primitive components currently outlined
+// NPCs of the mode as they will stand: the look, the animation, the id and name above them.
+struct APreview { UObject* body = nullptr; UObject* label = nullptr; std::string look, anim, text; };
+std::map<std::string, APreview> actorPreviews;
+void UpdateActorPreviews(UObject* pawn) {
+    struct Want { std::string id, look, anim, text; WT t; };
+    std::vector<Want> wants;
+    FVector camAt{};
+    {
+        std::lock_guard g(lock);
+        camAt = cam.loc;
+        if (!worldMode.empty())
+            for (auto& a : world.actors) wants.push_back({a.id, ActorLook(a.look), AnimPath(a.anim[0] ? a.anim : "idle"), std::string(a.id) + (a.name[0] ? std::string("  ") + a.name : std::string()), a.t});
+    }
+    for (auto it = actorPreviews.begin(); it != actorPreviews.end();) {
+        bool keep = false; for (auto& w : wants) if (w.id == it->first) { keep = true; break; }
+        if (!keep) { for (UObject* o : {it->second.body, it->second.label}) if (IsValid(o)) Call(o, "K2_DestroyActor"); it = actorPreviews.erase(it); } else ++it;
+    }
+    static UObject* skelCls = FindClass("SkeletalMeshActor");
+    static UObject* textCls = FindClass("TextRenderActor");
+    for (auto& w : wants) {
+        APreview& p = actorPreviews[w.id];
+        // A label lives and goes with its body: never one left over from an earlier body.
+        if (p.body && !IsValid(p.body)) { if (IsValid(p.label)) Call(p.label, "K2_DestroyActor"); p = APreview{}; }
+        if (p.label && !IsValid(p.label)) { p.label = nullptr; p.text.clear(); }
+        const FVector at{w.t.x, w.t.y, w.t.z};
+        if (!p.body) {
+            if (IsValid(p.label)) Call(p.label, "K2_DestroyActor");
+            p = APreview{};
+            p.body = SpawnBare(skelCls, at, pawn);
+            if (!p.body) continue;
+        }
+        // The label first: it turns to the camera every frame, whatever happens to the body below.
+        if (!p.label) { p.label = SpawnBare(textCls, {at.X, at.Y, at.Z + 215}, pawn); p.text.clear(); }
+        UObject* tc = IsValid(p.label) ? Field<UObject*>(p.label, off::TextRenderActor_Component) : nullptr;
+        if (IsValid(tc)) {
+            if (p.text != w.text) {
+                const std::wstring wt = Wide(w.text);
+                Params t(Fn(tc, "SetText")); t.Set("Value", FString{wt.c_str(), int32_t(wt.size() + 1), int32_t(wt.size() + 1)}); Call(tc, "SetText", &t);
+                if (auto f = Fn(tc, "SetHorizontalAlignment")) { Params a(f); a.Set<uint8_t>("Value", 1); Call(tc, "SetHorizontalAlignment", &a); }
+                if (auto f = Fn(tc, "SetWorldSize")) { Params a(f); a.Set<float>("Value", 26.f); Call(tc, "SetWorldSize", &a); }
+                if (auto f = Fn(tc, "SetTextRenderColor")) { Params a(f); a.Set<uint32_t>("Value", 0xFFF2D16B); Call(tc, "SetTextRenderColor", &a); }
+                p.text = w.text;
+            }
+            const FVector top{at.X, at.Y, at.Z + 215};
+            const float yaw = std::atan2(camAt.Y - top.Y, camAt.X - top.X) * 57.2957795f;
+            if (auto f = Fn(p.label, "K2_SetActorLocationAndRotation")) { Params q(f); q.Set("NewLocation", top); q.Set("NewRotation", FRotator{0, yaw, 0}); q.SetBool("bTeleport", true); Call(p.label, "K2_SetActorLocationAndRotation", &q); }
+        }
+        UObject* mesh = Field<UObject*>(p.body, off::SkelMeshActor_Component);
+        if (!IsValid(mesh)) continue;
+        if (p.look != w.look) { if (!w.look.empty()) skins::Wear(mesh, w.look); p.look = w.look; p.anim.clear(); }
+        if (!w.anim.empty()) {
+            bool playing = p.anim == w.anim;
+            if (playing) if (auto f = Fn(mesh, "IsPlaying")) { Params q(f); Call(mesh, "IsPlaying", &q); playing = q.GetBool("ReturnValue"); }
+            if (!playing) {
+                UObject* anim = EngineAsset(w.anim.c_str());
+                if (anim) {
+                    if (auto f = Fn(mesh, "SetAnimationMode")) { Params q(f); q.Set<uint8_t>("InAnimationMode", 1); Call(mesh, "SetAnimationMode", &q); }
+                    if (auto f = Fn(mesh, "PlayAnimation")) { Params q(f); q.Set("NewAnimToPlay", anim); q.SetBool("bLooping", true); Call(mesh, "PlayAnimation", &q); }
+                }
+                p.anim = w.anim;
+            }
+        }
+        if (auto f = Fn(p.body, "K2_SetActorLocationAndRotation")) { Params q(f); q.Set("NewLocation", at); q.Set("NewRotation", FRotator{0, w.t.yaw - 90.f, 0}); q.SetBool("bTeleport", true); Call(p.body, "K2_SetActorLocationAndRotation", &q); }
+    }
+}
 void Outline(UObject* comp, bool on) {
     if (!IsValid(comp)) return;
     if (auto f = Fn(comp, "SetRenderCustomDepth")) { Params p(f); p.SetBool("bValue", on); Call(comp, "SetRenderCustomDepth", &p); }
@@ -620,6 +1149,13 @@ void LoadWorld(const std::string& m) {
     std::ifstream in(WorldFile(m), std::ios::binary); std::stringstream ss; ss << in.rdbuf();
     json::Value v;
     if (!ss.str().empty() && json::Value::Parse(ss.str(), v) && v.isObject()) WorldFrom(v, world);
+    ScanLogic(m);
+    LoadSkinLists(m);
+    placeLogic.clear(); placeZone = 0;
+    if (world.env.set) {  // the mode's own time and weather
+        DGMP_SetTimeOfDay(world.env.time); DGMP_SetTimePaused(world.env.paused);
+        if (world.env.weather < 0) DGMP_SetWeatherAutomatic(1); else DGMP_SetWeather(uint32_t(world.env.weather));
+    }
     worldUndo.clear(); worldRedo.clear(); worldCommittedValid = false; worldDirty = true;
     Toast(T("Мир режима ") + m + ": " + std::to_string(world.remove.size()) + T(" убрано, ") + std::to_string(world.move.size()) + T(" сдвинуто, ") + std::to_string(world.add.size()) + T(" добавлено"));
 }
@@ -684,10 +1220,53 @@ void WorldClick(UObject* pawn, UObject* controller) {
     const Pick pick = PickUnderMouse(pawn, controller, true);
     std::lock_guard g(lock);
     if (!pick.valid) { wsel = {}; return; }
+    if (placeZone) {
+        WZone z; z.pvp = placeZone == 2;
+        Copy(z.name, sizeof z.name, FreeZoneName(z.pvp ? "arena" : "safe"));
+        z.t.x = pick.at.X; z.t.y = pick.at.Y; z.t.z = pick.at.Z; z.t.yaw = std::round(cam.rot.Yaw);
+        world.zones.push_back(z);
+        SelectZone(int(world.zones.size()) - 1);
+        Toast(T("Поставлена зона ") + std::string(z.name));
+        if (!repeatPlace) placeZone = 0;
+        return;
+    }
+    if (!placeLogic.empty()) {
+        const LDecl* d = FindDecl(placeLogic);
+        LItem it; it.t.x = pick.at.X; it.t.y = pick.at.Y; it.t.z = pick.at.Z; it.t.yaw = cam.rot.Yaw; it.radius = d ? d->radius : 5;
+        auto& items = world.logic[placeLogic];
+        if (d && !d->list) items.assign(1, it); else items.push_back(it);
+        SelectLogic(placeLogic, int(items.size()) - 1);
+        Toast(T("Поставлено: ") + placeLogic + (items.size() > 1 || (d && d->list) ? " " + std::to_string(items.size()) : std::string()));
+        if (!repeatPlace || (d && !d->list)) placeLogic.clear();
+        return;
+    }
+    if (!placeActor.empty()) {
+        const LDecl* d = placeActor == "*" ? nullptr : FindDecl(placeActor);
+        WActor a;
+        if (d && !d->list) {  // one NPC of this id: it moves here
+            world.actors.erase(std::remove_if(world.actors.begin(), world.actors.end(), [&](const WActor& o) { return placeActor == o.id; }), world.actors.end());
+            Copy(a.id, sizeof a.id, placeActor);
+        } else if (d) { Copy(a.group, sizeof a.group, placeActor); Copy(a.id, sizeof a.id, FreeActorId(placeActor + "_")); }
+        else Copy(a.id, sizeof a.id, FreeActorId("npc"));
+        float yaw = cam.rot.Yaw + 180.f; while (yaw > 180) yaw -= 360; while (yaw < -180) yaw += 360;
+        a.t.x = pick.at.X; a.t.y = pick.at.Y; a.t.z = pick.at.Z; a.t.yaw = std::round(yaw);  // facing the camera
+        world.actors.push_back(a);
+        SelectActor(a.id);
+        Toast(T("Поставлен NPC ") + std::string(a.id));
+        if (!repeatPlace || (d && !d->list)) placeActor.clear();
+        return;
+    }
     if (!placeProp.empty()) {
         WAdd a; a.uid = "p" + std::to_string(GetTickCount64() % 100000000);
         a.asset = placeProp; a.t.x = pick.at.X; a.t.y = pick.at.Y; a.t.z = pick.at.Z; a.t.yaw = cam.rot.Yaw;
         for (auto& pr : props) if (pr.path == placeProp) { a.name = pr.name; break; }
+        if (placeProp.rfind("light:", 0) == 0) {
+            // Off the clicked surface (a wall, a ceiling), towards the camera.
+            const float dx = cam.loc.X - pick.at.X, dy = cam.loc.Y - pick.at.Y, dz = cam.loc.Z - pick.at.Z, len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len > 1) { a.t.x += dx / len * 40; a.t.y += dy / len * 40; a.t.z += dz / len * 40; }
+            a.t.yaw = 0; a.light = true;
+            a.name = placeProp == "light:spot" ? T("Прожектор") : T("Точечный свет");
+        }
         world.add.push_back(a);
         wsel = {2, a.uid, "", a.t};
         if (!repeatPlace) placeProp.clear();
@@ -777,6 +1356,18 @@ void WorldRestore(std::vector<World>& from, std::vector<World>& to, const char* 
     worldCommittedJson = WorldJson(world).dump(); worldCommitted = world; worldCommittedValid = true;
     wsel = {}; worldDirty = true; Toast(done);
 }
+LItem* LogicOf(const std::string& id) {
+    const size_t hash = id.rfind('#');
+    if (hash == std::string::npos) return nullptr;
+    auto it = world.logic.find(id.substr(0, hash));
+    const int index = std::atoi(id.c_str() + hash + 1);
+    return it != world.logic.end() && index >= 0 && index < int(it->second.size()) ? &it->second[index] : nullptr;
+}
+void SelectLogic(const std::string& name, int index) {
+    auto it = world.logic.find(name);
+    if (it == world.logic.end() || index < 0 || index >= int(it->second.size())) { wsel = {}; return; }
+    wsel = {3, name + "#" + std::to_string(index), "", it->second[index].t};
+}
 void WorldDelete() {
     if (wsel.kind == 1) {
         if (std::find(world.remove.begin(), world.remove.end(), wsel.id) == world.remove.end()) world.remove.push_back(wsel.id);
@@ -785,15 +1376,278 @@ void WorldDelete() {
     } else if (wsel.kind == 2) {
         world.add.erase(std::remove_if(world.add.begin(), world.add.end(), [](const WAdd& a) { return a.uid == wsel.id; }), world.add.end());
         Toast(T("Удалён проп"));
+    } else if (wsel.kind == 3) {
+        const size_t hash = wsel.id.rfind('#');
+        auto it = world.logic.find(wsel.id.substr(0, hash));
+        const int index = std::atoi(wsel.id.c_str() + hash + 1);
+        if (it != world.logic.end() && index < int(it->second.size())) it->second.erase(it->second.begin() + index);
+        if (it != world.logic.end() && it->second.empty()) world.logic.erase(it);
+    } else if (wsel.kind == 5) {
+        const int i = std::atoi(wsel.id.c_str());
+        if (i >= 0 && i < int(world.zones.size())) world.zones.erase(world.zones.begin() + i);
+    } else if (wsel.kind == 4) {
+        world.actors.erase(std::remove_if(world.actors.begin(), world.actors.end(), [](const WActor& a) { return wsel.id == a.id; }), world.actors.end());
     } else return;
     wsel = {}; worldDirty = true;
 }
 void WorldDuplicate() {
+    if (wsel.kind == 4) {
+        if (WActor* a = ActorById(wsel.id)) {
+            WActor copy = *a;
+            Copy(copy.id, sizeof copy.id, FreeActorId(copy.group[0] ? std::string(copy.group) + "_" : std::string("npc")));
+            copy.t.x += 100; copy.t.y += 100;
+            world.actors.push_back(copy); SelectActor(copy.id); Toast(T("Копия"));
+        }
+        return;
+    }
+    if (wsel.kind == 5) {
+        if (WZone* z = ZoneOf(wsel.id)) {
+            WZone copy = *z;
+            std::string base = copy.name; while (!base.empty() && isdigit(static_cast<unsigned char>(base.back()))) base.pop_back();
+            Copy(copy.name, sizeof copy.name, FreeZoneName(base.empty() ? "zone" : base));
+            copy.t.x += 500; copy.t.y += 500;
+            world.zones.push_back(copy); SelectZone(int(world.zones.size()) - 1); Toast(T("Копия"));
+        }
+        return;
+    }
     if (wsel.kind != 2) { Toast(T("Дублируются поставленные пропсы")); return; }
     for (auto& a : world.add) if (a.uid == wsel.id) {
         WAdd copy = a; copy.uid = "p" + std::to_string(GetTickCount64() % 100000000); copy.t.x += 100; copy.t.y += 100;
         world.add.push_back(copy); wsel = {2, copy.uid, "", copy.t}; worldDirty = true; Toast(T("Копия")); return;
     }
+}
+// Time of day and weather of the mode: changed live, kept in world.json when "with the mode" is on.
+void DrawEnvironment() {
+    if (!ImGui::CollapsingHeader(T("Время и погода"), ImGuiTreeNodeFlags_DefaultOpen)) return;
+    const auto snap = environment::GetSnapshot();
+    World::Env& e = world.env;
+    if (!e.set) {  // show what the world has now
+        e.time = snap.state.hours; e.paused = snap.state.timePaused != 0; e.weather = snap.state.weatherAutomatic ? -1 : int(snap.state.weatherId);
+    }
+    bool changed = false;
+    ImGui::Checkbox(T("Сохранять с режимом"), &e.set);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Режим стартует с этим временем и погодой (сервер применяет их до кода режима)"));
+    float t = e.time;
+    const int hh = int(t) % 24, mm = int((t - int(t)) * 60);
+    char label[32]; snprintf(label, sizeof label, "%02d:%02d", hh, mm);
+    ImGui::SetNextItemWidth(240);
+    if (ImGui::SliderFloat(T("Время"), &t, 0.f, 23.99f, label)) { e.time = t; DGMP_SetTimeOfDay(t); changed = true; }
+    ImGui::SameLine();
+    if (ImGui::Checkbox(T("Остановить часы"), &e.paused)) { DGMP_SetTimePaused(e.paused); changed = true; }
+    std::string current = T("авто");
+    for (auto& w : snap.weather) if (int(w.id) == e.weather) current = w.name;
+    ImGui::SetNextItemWidth(240);
+    if (ImGui::BeginCombo(T("Погода"), current.c_str())) {
+        if (ImGui::Selectable(T("авто"), e.weather < 0)) { e.weather = -1; DGMP_SetWeatherAutomatic(1); changed = true; }
+        for (auto& w : snap.weather) if (ImGui::Selectable(w.name, int(w.id) == e.weather)) { e.weather = int(w.id); DGMP_SetWeather(w.id); changed = true; }
+        ImGui::EndCombo();
+    }
+    if (changed) e.set = true;
+}
+// Logic objects: what the mode's code asks for, and what is placed.
+void DrawLogicList() {
+    ImGui::SeparatorText(T("Логика режима"));
+    if (ImGui::SmallButton(T("Обновить из кода"))) ScanLogic(worldMode);
+    ImGui::SameLine(); ImGui::Checkbox(T("Повторять##logic"), &repeatPlace);
+    if (logicDecls.empty() && world.logic.empty()) { ImGui::TextDisabled("%s", T("Код режима не просит объектов: logic.trigger(\"имя\"), logic.points(\"имя\")…")); return; }
+    std::vector<std::string> names;
+    for (auto& d : logicDecls) names.push_back(d.name);
+    for (auto& [n, items] : world.logic) if (!FindDecl(n)) names.push_back(n);  // placed, but the code no longer asks
+    for (auto& name : names) {
+        const LDecl* d = FindDecl(name);
+        if (d && d->actor) {  // logic.actor("id") / logic.actors("group"): NPCs placed here
+            std::vector<const WActor*> mine;
+            for (auto& a : world.actors) if (d->list ? name == a.group : name == a.id) mine.push_back(&a);
+            ImGui::PushID(name.c_str());
+            const bool armed = placeActor == name;
+            if (ImGui::SmallButton(armed ? T("отмена") : !d->list ? (mine.empty() ? T("поставить") : T("переставить")) : T("добавить"))) {
+                placeActor = armed ? "" : name; placeProp.clear(); placeLogic.clear(); placeZone = 0;
+                if (!armed) Toast(T("ЛКМ в мире ставит NPC: ") + name);
+            }
+            ImGui::SameLine();
+            if (!d->list) {
+                if (ImGui::Selectable((name + "  —  NPC" + (mine.empty() ? std::string(T(", не поставлен")) : std::string())).c_str(), wsel.kind == 4 && wsel.id == name) && !mine.empty()) SelectActor(name);
+            } else if (ImGui::TreeNodeEx(name.c_str(), ImGuiTreeNodeFlags_DefaultOpen, "%s  —  %s, %d", name.c_str(), T("NPC, группа"), int(mine.size()))) {
+                for (const WActor* a : mine) if (ImGui::Selectable(a->id, wsel.kind == 4 && wsel.id == a->id)) SelectActor(a->id);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+            continue;
+        }
+        auto it = world.logic.find(name);
+        const int count = it == world.logic.end() ? 0 : int(it->second.size());
+        ImGui::PushID(name.c_str());
+        const bool armed = placeLogic == name;
+        if (ImGui::SmallButton(armed ? T("отмена") : d && !d->list ? (count ? T("переставить") : T("поставить")) : T("добавить"))) {
+            placeLogic = armed ? "" : name; placeProp.clear(); placeActor.clear(); placeZone = 0;
+            if (!armed) Toast(T("ЛКМ в мире ставит: ") + name);
+        }
+        ImGui::SameLine();
+        const char* kind = name == "wardrobe" ? T("место выбора скина") : !d ? T("не используется в коде") : d->trigger ? (d->list ? T("триггеры") : T("триггер")) : (d->list ? T("точки") : T("точка"));
+        if (d && !d->list) {
+            if (ImGui::Selectable((name + "  —  " + kind + (count ? "" : std::string(T(", не поставлен")))).c_str(), wsel.kind == 3 && wsel.id == name + "#0") && count) SelectLogic(name, 0);
+        } else if (ImGui::TreeNodeEx(name.c_str(), ImGuiTreeNodeFlags_DefaultOpen, "%s  —  %s, %d", name.c_str(), kind, count)) {
+            for (int i = 0; i < count; ++i) {
+                ImGui::PushID(i);
+                const std::string id = name + "#" + std::to_string(i);
+                if (ImGui::Selectable((std::to_string(i + 1) + ". " + name).c_str(), wsel.kind == 3 && wsel.id == id, 0, ImVec2(160, 0))) SelectLogic(name, i);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("^") && i > 0) { std::swap(it->second[i], it->second[i - 1]); SelectLogic(name, i - 1); }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("v") && i + 1 < count) { std::swap(it->second[i], it->second[i + 1]); SelectLogic(name, i + 1); }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) { it->second.erase(it->second.begin() + i); wsel = {}; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+}
+// PvP of the mode and its PvE / PvP zones (World > PvP and zones).
+void DrawZones() {
+    if (!ImGui::CollapsingHeader(T("PvP и зоны"), ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::Checkbox(T("Урон между игроками (PvP)"), &world.pvp);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Выключено: игроки ранят друг друга только в PvP-зонах. Код режима может менять это: setPvp(), player:setPvp(), setPvpRule()."));
+    for (int kind = 1; kind <= 2; ++kind) {
+        const bool armed = placeZone == kind;
+        if (kind == 2) ImGui::SameLine();
+        if (ImGui::Button(armed ? (std::string(T("отмена")) + "##zone" + std::to_string(kind)).c_str() : kind == 1 ? T("+ PvE зона") : T("+ PvP зона"))) {
+            placeZone = armed ? 0 : kind; placeProp.clear(); placeLogic.clear(); placeActor.clear();
+            if (!armed) Toast(T("ЛКМ в мире ставит центр зоны"));
+        }
+    }
+    ImGui::SameLine(); ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("PvE (зелёная) — безопасная зона: игроки не ранят друг друга, стрелять из неё тоже нельзя. PvP (красная) — урон между игроками есть, даже если PvP режима выключен (нужно, чтобы оба были в PvP-зонах). Зомби и NPC опасны везде."));
+    if (world.zones.empty()) { ImGui::TextDisabled("%s", T("Зон нет")); return; }
+    for (int i = 0; i < int(world.zones.size()); ++i) {
+        const WZone& z = world.zones[size_t(i)];
+        ImGui::PushID(i);
+        ImGui::PushStyleColor(ImGuiCol_Text, z.pvp ? IM_COL32(240, 110, 100, 255) : IM_COL32(110, 220, 130, 255));
+        ImGui::TextUnformatted(z.pvp ? "PvP" : "PvE");
+        ImGui::PopStyleColor(); ImGui::SameLine();
+        char label[160];
+        if (z.box) snprintf(label, sizeof label, "%s  —  %.0f x %.0f %s%s", z.name, z.length, z.width, T("м"), z.enabled ? "" : T(", выключена"));
+        else snprintf(label, sizeof label, "%s  —  R %.0f %s%s", z.name, z.radius, T("м"), z.enabled ? "" : T(", выключена"));
+        if (ImGui::Selectable(label, wsel.kind == 5 && wsel.id == std::to_string(i))) SelectZone(i);
+        ImGui::PopID();
+    }
+}
+void DrawZoneProps() {
+    WZone* z = ZoneOf(wsel.id);
+    if (!z) { wsel = {}; return; }
+    ImGui::PushID("zone");
+    char name[48]; Copy(name, sizeof name, z->name);
+    if (ImGui::InputText(T("Имя зоны"), name, sizeof name)) {
+        bool used = false; for (auto& o : world.zones) used |= &o != z && std::strcmp(o.name, name) == 0;
+        if (ValidId(name) && !used) Copy(z->name, sizeof z->name, name);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Имя для кода режима: getZone(\"имя\"), setZone(\"имя\", {...}), player:inZone(\"имя\"). Латиница, цифры, _ и -"));
+    if (ImGui::RadioButton(T("PvE (безопасная)"), !z->pvp)) z->pvp = false;
+    ImGui::SameLine(); if (ImGui::RadioButton("PvP", z->pvp)) z->pvp = true;
+    if (ImGui::RadioButton(T("Круг"), !z->box)) z->box = false;
+    ImGui::SameLine(); if (ImGui::RadioButton(T("Прямоугольник"), z->box)) z->box = true;
+    bool moved = ImGui::DragFloat3(T("Центр"), &z->t.x, 5.f, 0, 0, "%.0f");
+    if (z->box) {
+        moved |= ImGui::DragFloat(T("Поворот"), &z->t.yaw, 1.f, -360, 360, "%.0f°");
+        ImGui::DragFloat(T("Длина, м"), &z->length, 0.5f, 1.f, 5000.f, "%.0f");
+        ImGui::DragFloat(T("Ширина, м"), &z->width, 0.5f, 1.f, 5000.f, "%.0f");
+    } else ImGui::DragFloat(T("Радиус, м"), &z->radius, 0.5f, 1.f, 5000.f, "%.0f");
+    ImGui::DragFloat(T("Высота вверх и вниз, м"), &z->height, 0.5f, 1.f, 2000.f, "%.0f");
+    if (moved) wsel.t = z->t;
+    ImGui::Checkbox(T("Включена при старте"), &z->enabled);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Выключенную зону код режима включает сам: setZone(\"имя\", {enabled = true})"));
+    ImGui::Checkbox(T("Надпись на экране в зоне"), &z->notify);
+    if (z->notify) {
+        ImGui::InputText(T("Своя надпись"), z->text, sizeof z->text);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Пусто — стандартная («Безопасная зона» / «PvP-зона»). Можно цвета {RRGGBB}"));
+    }
+    ImGui::SetNextItemWidth(120); ImGui::InputInt(T("Мир (-1 — во всех)"), &z->world); if (z->world < -1) z->world = -1;
+    const std::string luaName = z->name;
+    if (ImGui::Button(T("Удалить"))) { ImGui::PopID(); WorldDelete(); return; }
+    ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
+    ImGui::TextDisabled("Lua: getZone(\"%s\")", luaName.c_str());
+    ImGui::PopID();
+}
+// The selected NPC's settings (World > Selected).
+char actorIdEdit[48] = "";
+std::string actorIdFor;  // the NPC actorIdEdit belongs to
+void DrawActorProps() {
+    WActor* a = ActorById(wsel.id);
+    if (!a) { wsel = {}; return; }
+    ImGui::TextWrapped("NPC  %s", a->id);
+    bool moved = false;
+    moved |= ImGui::DragFloat3(T("Позиция"), &a->t.x, 5.f, 0, 0, "%.0f");
+    moved |= ImGui::DragFloat(T("Поворот"), &a->t.yaw, 1.f, -360, 360, "%.0f°");
+    if (moved) wsel.t = a->t;
+    if (actorIdFor != a->id) { actorIdFor = a->id; Copy(actorIdEdit, sizeof actorIdEdit, a->id); }
+    ImGui::InputText("id", actorIdEdit, sizeof actorIdEdit);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (!ValidId(actorIdEdit)) Toast(T("id: латиница, цифры, _ и -"));
+        else if (ActorById(actorIdEdit) && std::strcmp(actorIdEdit, a->id) != 0) Toast(T("Такой id уже есть"));
+        else { Copy(a->id, sizeof a->id, actorIdEdit); wsel.id = a->id; actorIdFor = a->id; }
+        Copy(actorIdEdit, sizeof actorIdEdit, a->id);
+    }
+    ImGui::InputText(T("Группа"), a->group, sizeof a->group);
+    ImGui::SameLine(); ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("logic.actors(\"группа\") в коде режима вернёт всех NPC этой группы"));
+    ImGui::InputText(T("Имя над головой"), a->name, sizeof a->name);
+    // Look: a skin of the mode or a look of the game.
+    static char filter[64] = "";
+    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::InputTextWithHint("##look", T("облик (пусто — Дикон)"), a->look, sizeof a->look);
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::ArrowButton("##lookpick", ImGuiDir_Down)) { filter[0] = 0; ImGui::OpenPopup("lookpick"); }
+    ImGui::SameLine(); ImGui::TextUnformatted(T("Облик"));
+    if (ImGui::BeginPopup("lookpick")) {
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextWithHint("##f", T("Поиск"), filter, sizeof filter);
+        if (ImGui::BeginChild("##looks", ImVec2(360, 320))) {
+            for (auto& [id, label] : ModeSkinChoices()) {
+                if (filter[0] && !Contains(label, filter)) continue;
+                if (ImGui::Selectable(label.c_str())) { Copy(a->look, sizeof a->look, id); ImGui::CloseCurrentPopup(); }
+            }
+            static const std::vector<std::string> names = skins::LookNames();
+            int shown = 0;
+            for (auto& n : names) {
+                if (filter[0] && !Contains(n, filter)) continue;
+                if (++shown > 400) { ImGui::TextDisabled("%s", T("…уточните поиск")); break; }
+                if (ImGui::Selectable(n.c_str())) { Copy(a->look, sizeof a->look, n); ImGui::CloseCurrentPopup(); }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    // Animation: a short name or any of data/anims.txt.
+    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::InputText("##anim", a->anim, sizeof a->anim);
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::ArrowButton("##animpick", ImGuiDir_Down)) { filter[0] = 0; ImGui::OpenPopup("animpick"); }
+    ImGui::SameLine(); ImGui::TextUnformatted(T("Анимация"));
+    if (a->anim[0] && AnimPath(a->anim).empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", T("нет такой анимации"));
+    if (ImGui::BeginPopup("animpick")) {
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextWithHint("##f", T("Поиск"), filter, sizeof filter);
+        if (ImGui::BeginChild("##anims", ImVec2(420, 320))) {
+            int shown = 0;
+            for (auto& [n, path] : Anims()) {
+                if (filter[0] && !Contains(n, filter)) continue;
+                if (++shown > 400) { ImGui::TextDisabled("%s", T("…уточните поиск")); break; }
+                if (ImGui::Selectable(n.c_str())) { Copy(a->anim, sizeof a->anim, n); ImGui::CloseCurrentPopup(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    ImGui::Checkbox(T("Твёрдый (в него упираются)"), &a->solid);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt(T("Мир (-1 — во всех)"), &a->world)) a->world = std::max(-1, a->world);
+    ImGui::TextDisabled(a->group[0] ? "Lua: logic.actor(\"%s\")  /  logic.actors(\"%s\")" : "Lua: logic.actor(\"%s\")", a->id, a->group);
+    if (ImGui::Button(T("Удалить"))) { WorldDelete(); return; }
+    ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
 }
 void DrawWorld() {
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkSize.x - 520, 20), ImGuiCond_FirstUseEver);
@@ -810,21 +1664,73 @@ void DrawWorld() {
     ImGui::SameLine(); ImGui::BeginDisabled(worldRedo.empty()); if (ImGui::Button(T("Вернуть"))) WorldRestore(worldRedo, worldUndo, T("Возвращено")); ImGui::EndDisabled();
     ImGui::SameLine(); ImGui::TextDisabled("Ctrl+Z/Y/D   Del");
     ImGui::Text(T("Убрано: %zu   Сдвинуто: %zu   Добавлено: %zu"), world.remove.size(), world.move.size(), world.add.size());
+    DrawEnvironment();
+    ImGui::SeparatorText(T("Свет"));
+    for (const char* kind : {"light:point", "light:spot"}) {
+        const bool armed = placeProp == kind;
+        const char* label = std::strcmp(kind, "light:spot") == 0 ? T("Прожектор") : T("Точечный свет");
+        if (std::strcmp(kind, "light:spot") == 0) ImGui::SameLine();
+        if (ImGui::Button(armed ? (std::string(T("отмена")) + "##" + kind).c_str() : (std::string("+ ") + label).c_str())) {
+            placeProp = armed ? "" : kind; placeLogic.clear(); placeZone = 0;
+            if (!armed) Toast(T("ЛКМ в мире ставит: ") + std::string(label));
+        }
+    }
+    ImGui::SameLine(); ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Свет для интерьеров. Прожектор светит из основания конуса (по умолчанию вниз), поворачивается гизмо. Тени дорогие: включайте немногим."));
+    ImGui::SeparatorText("NPC");
+    {
+        const bool armed = placeActor == "*";
+        if (ImGui::Button(armed ? T("отмена##npc") : "+ NPC")) {
+            placeActor = armed ? "" : "*"; placeProp.clear(); placeLogic.clear(); placeZone = 0;
+            if (!armed) Toast(T("ЛКМ в мире ставит NPC"));
+        }
+        ImGui::SameLine(); ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Статисты режима: облик, анимация, имя. Сервер создаёт их сам при запуске режима; код режима находит их по id: logic.actor(\"id\"), logic.actors(\"группа\"). Клик по NPC в мире выделяет его."));
+        if (!world.actors.empty()) {
+            ImGui::SameLine();
+            if (ImGui::TreeNode(T("Поставленные NPC"))) {
+                for (auto& a : world.actors) if (ImGui::Selectable((std::string(a.id) + (a.name[0] ? "  —  " + std::string(a.name) : std::string()) + "##npc").c_str(), wsel.kind == 4 && wsel.id == a.id)) SelectActor(a.id);
+                ImGui::TreePop();
+            }
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", T("NPC, созданные кодом режима (createActor), здесь не видны. Ставьте их здесь, а в коде берите через logic.actor(\"id\") / logic.actors(\"группа\")."));
+        ImGui::PopStyleColor();
+    }
     ImGui::SeparatorText(T("Выделено"));
     if (wsel.kind == 0) ImGui::TextDisabled(placeProp.empty() ? T("Кликните по объекту в мире") : T("Кликните в мире, чтобы поставить проп"));
+    else if (wsel.kind == 4) DrawActorProps();
+    else if (wsel.kind == 5) DrawZoneProps();
     else {
-        ImGui::TextWrapped("%s", wsel.kind == 1 ? wsel.id.c_str() : (T("Проп ") + wsel.id).c_str());
+        ImGui::TextWrapped("%s", wsel.kind == 2 ? (T("Проп ") + wsel.id).c_str() : wsel.id.c_str());
         if (!wsel.cls.empty()) ImGui::TextDisabled("%s", wsel.cls.c_str());
         WT& t = wsel.t;
         bool changed = false;
         changed |= ImGui::DragFloat3(T("Позиция"), &t.x, 5.f, 0, 0, "%.0f");
         changed |= ImGui::DragFloat3(T("Поворот"), &t.pitch, 1.f, -360, 360, "%.0f°");
-        if (wsel.kind == 2) changed |= ImGui::DragFloat(T("Масштаб"), &t.scale, 0.01f, 0.05f, 20.f, "%.2f");
+        WAdd* added = nullptr;
+        if (wsel.kind == 2) for (auto& a : world.add) if (a.uid == wsel.id) added = &a;
+        if (wsel.kind == 2 && !(added && added->light)) changed |= ImGui::DragFloat(T("Масштаб"), &t.scale, 0.01f, 0.05f, 20.f, "%.2f");
+        if (added && added->light) {
+            WLight& l = added->l;
+            bool lit = false;
+            lit |= ImGui::ColorEdit3(T("Цвет"), l.color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueWheel);
+            lit |= ImGui::DragFloat(T("Яркость"), &l.intensity, 50.f, 0.f, 200000.f, "%.0f", ImGuiSliderFlags_Logarithmic);
+            lit |= ImGui::DragFloat(T("Дальность, м"), &l.radius, 0.1f, 0.5f, 200.f, "%.1f");
+            if (added->asset == "light:spot") lit |= ImGui::DragFloat(T("Угол конуса"), &l.cone, 0.5f, 2.f, 89.f, "%.0f°");
+            lit |= ImGui::Checkbox(T("Тени"), &l.shadows);
+            if (lit) worldDirty = true;
+        }
+        LItem* li = wsel.kind == 3 ? LogicOf(wsel.id) : nullptr;
+        const LDecl* ld = li ? FindDecl(wsel.id.substr(0, wsel.id.rfind('#'))) : nullptr;
+        if (li && (!ld || ld->trigger)) ImGui::DragFloat(T("Радиус, м"), &li->radius, 0.1f, 0.5f, 200.f, "%.1f");
         if (changed) {
-            if (wsel.kind == 1) world.move[wsel.id] = t; else for (auto& a : world.add) if (a.uid == wsel.id) a.t = t;
+            if (wsel.kind == 1) world.move[wsel.id] = t;
+            else if (li) li->t = t;
+            else for (auto& a : world.add) if (a.uid == wsel.id) a.t = t;
             worldDirty = true;
         }
-        if (ImGui::Button(wsel.kind == 1 ? T("Убрать из мира") : T("Удалить проп"))) WorldDelete();
+        if (ImGui::Button(wsel.kind == 1 ? T("Убрать из мира") : wsel.kind == 3 ? T("Удалить") : T("Удалить проп"))) WorldDelete();
         if (wsel.kind == 1 && world.move.count(wsel.id)) { ImGui::SameLine(); if (ImGui::Button(T("Вернуть на место"))) { world.move.erase(wsel.id); wsel = {}; worldDirty = true; } }
         if (wsel.kind == 2) { ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate(); }
     }
@@ -841,6 +1747,8 @@ void DrawWorld() {
         for (auto& a : world.add) if (ImGui::Selectable((a.name + "##" + a.uid).c_str(), wsel.kind == 2 && wsel.id == a.uid)) wsel = {2, a.uid, "", a.t};
         ImGui::TreePop();
     }
+    DrawZones();
+    DrawLogicList();
     ImGui::End();
 }
 
@@ -1223,12 +2131,16 @@ void DrawWorldTools() {
         const float* snap = io.KeyCtrl ? (worldGizmo == 0 ? snapMove : worldGizmo == 1 ? snapTurn : snapScale) : nullptr;
         if (Gizmo(view, proj, op, m, snap)) {
             FromMatrix(m, wsel.t);
-            if (wsel.kind == 1) world.move[wsel.id] = wsel.t; else for (auto& a : world.add) if (a.uid == wsel.id) a.t = wsel.t;
+            if (wsel.kind == 1) world.move[wsel.id] = wsel.t;
+            else if (wsel.kind == 3) { if (LItem* li = LogicOf(wsel.id)) li->t = wsel.t; }
+            else if (wsel.kind == 4) { if (WActor* a = ActorById(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; a->t = wsel.t; } }
+            else if (wsel.kind == 5) { if (WZone* z = ZoneOf(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; z->t = wsel.t; } }
+            else for (auto& a : world.add) if (a.uid == wsel.id) a.t = wsel.t;
             worldDirty = true;
         }
         busy = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
         ImVec2 sp;
-        if (Project(view, proj, w, h, wsel.t.x, wsel.t.y, wsel.t.z, sp)) ImGui::GetBackgroundDrawList()->AddText(ImVec2(sp.x + 12, sp.y + 12), IM_COL32(255, 200, 80, 255), wsel.kind == 1 ? wsel.id.c_str() : T("проп"));
+        if (Project(view, proj, w, h, wsel.t.x, wsel.t.y, wsel.t.z, sp)) ImGui::GetBackgroundDrawList()->AddText(ImVec2(sp.x + 12, sp.y + 12), IM_COL32(255, 200, 80, 255), wsel.kind == 2 ? T("проп") : wsel.kind == 5 && ZoneOf(wsel.id) ? ZoneOf(wsel.id)->name : wsel.id.c_str());
         ImGui::SetNextWindowPos(ImVec2(w * 0.5f, 12), ImGuiCond_Always, ImVec2(0.5f, 0));
         ImGui::SetNextWindowBgAlpha(0.7f);
         ImGui::Begin("##wgizmo", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing);
@@ -1238,7 +2150,47 @@ void DrawWorldTools() {
         ImGui::SameLine(); ImGui::TextDisabled(T("Ctrl — шаг   Del — убрать"));
         ImGui::End();
     }
-    if (overlay::CursorMode() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse && !busy) actions.push_back({Action::WorldClick, ""});
+    // Logic objects: rings for triggers, arrows for points, lines along lists; a click on a label selects.
+    int hoverIndex = -1; std::string hoverName; float hoverBest = 20.f * 20.f;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    for (auto& [name, items] : world.logic) {
+        const LDecl* d = FindDecl(name);
+        const bool trigger = !d || d->trigger;
+        ImVec2 prev; bool hasPrev = false;
+        for (int i = 0; i < int(items.size()); ++i) {
+            const LItem& it = items[i];
+            const bool isSel = wsel.kind == 3 && wsel.id == name + "#" + std::to_string(i);
+            const ImU32 col = isSel ? IM_COL32(255, 200, 80, 255) : trigger ? IM_COL32(90, 210, 230, 220) : IM_COL32(240, 150, 70, 220);
+            ImVec2 c;
+            if (!Project(view, proj, w, h, it.t.x, it.t.y, it.t.z + 200, c)) { hasPrev = false; continue; }  // the middle of its beam
+            (void)col; (void)trigger; (void)prev; (void)hasPrev; (void)dl;  // drawn in the world (UpdateLogicVisuals)
+            const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
+            if (dx * dx + dy * dy < hoverBest) { hoverBest = dx * dx + dy * dy; hoverIndex = i; hoverName = name; }
+        }
+    }
+    int hoverZone = -1;  // zones: their centre beam
+    for (int i = 0; i < int(world.zones.size()); ++i) {
+        ImVec2 c;
+        const WZone& z = world.zones[size_t(i)];
+        if (!Project(view, proj, w, h, z.t.x, z.t.y, z.t.z + 200, c)) continue;
+        const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
+        if (dx * dx + dy * dy < hoverBest) { hoverBest = dx * dx + dy * dy; hoverZone = i; hoverIndex = -1; }
+    }
+    int hoverActor = -1;  // NPCs: a click on the body (its chest) selects it
+    for (int i = 0; i < int(world.actors.size()); ++i) {
+        ImVec2 c;
+        const WActor& a = world.actors[size_t(i)];
+        if (!Project(view, proj, w, h, a.t.x, a.t.y, a.t.z + 110, c)) continue;
+        const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
+        if (dx * dx + dy * dy < std::max(hoverBest, 30.f * 30.f)) { hoverBest = dx * dx + dy * dy; hoverActor = i; hoverIndex = -1; hoverZone = -1; }
+    }
+    if (overlay::CursorMode() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse && !busy) {
+        const bool placing = !placeLogic.empty() || !placeProp.empty() || !placeActor.empty() || placeZone;
+        if (hoverActor >= 0 && !placing) SelectActor(world.actors[size_t(hoverActor)].id);
+        else if (hoverZone >= 0 && !placing) SelectZone(hoverZone);
+        else if (hoverIndex >= 0 && !placing) SelectLogic(hoverName, hoverIndex);
+        else actions.push_back({Action::WorldClick, ""});
+    }
     if (!io.WantTextInput && io.KeyCtrl) {
         if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (io.KeyShift) WorldRestore(worldRedo, worldUndo, T("Возвращено")); else WorldRestore(worldUndo, worldRedo, T("Отменено")); }
         else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) WorldRestore(worldRedo, worldUndo, T("Возвращено"));
@@ -1308,6 +2260,273 @@ void DrawSceneTools() {
     }
 }
 
+// ---------------------------------------------------------------- mode skins (modes/<mode>/skins.json)
+// What players of a mode may wear: "skins" they choose from when they start (player:customize()) and
+// "uniforms" the mode puts over them (player:setUniform("id")). Each is built in the character
+// creator on a mannequin in front of the camera, from a preset of the game or its parts.
+struct SkinEntry { char id[48] = ""; LT name; std::string look; };
+std::vector<SkinEntry> skinLists[2];
+const char* kSkinKinds[] = {"skins", "uniforms"};
+int skinKind = 0, skinSel = -1;
+bool skinsChanged = false;  // not saved yet
+struct Wardrobe { bool want = false, open = false; int kind = 0, index = -1; std::string start, title; UObject* body = nullptr; } wardrobe;
+const char* kMannequinIdle = "/Game/Animation/Deacon/ambient/dcn_idle_normal.dcn_idle_normal";
+const char* kMannequinLook = "/Game/Characters/Deacon/looks/deacon_standard.deacon_standard";
+
+fs::path SkinsFile(const std::string& m) { return fs::path(profile::Root()) / L"modes" / m / L"skins.json"; }
+void LoadSkinLists(const std::string& m) {
+    for (auto& l : skinLists) l.clear();
+    skinSel = -1; skinsChanged = false;
+    std::ifstream in(SkinsFile(m), std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+    json::Value v;
+    if (ss.str().empty() || !json::Value::Parse(ss.str(), v) || !v.isObject()) return;
+    for (int k = 0; k < 2; ++k) {
+        const json::Value& list = v[kSkinKinds[k]];
+        for (size_t i = 0; i < list.size(); ++i) {
+            SkinEntry e;
+            Copy(e.id, sizeof e.id, list[i]["id"].asString());
+            LFrom(list[i]["name"], e.name);
+            e.look = list[i]["look"].asString();
+            skinLists[k].push_back(std::move(e));
+        }
+    }
+}
+// "" when the lists can be saved, else what is wrong.
+std::string SkinsProblem() {
+    for (int k = 0; k < 2; ++k) {
+        const char* kind = k ? T("Формы") : T("Скины на старте");
+        for (size_t i = 0; i < skinLists[k].size(); ++i) {
+            const SkinEntry& e = skinLists[k][i];
+            if (!ValidId(e.id)) return std::string(kind) + " #" + std::to_string(i + 1) + T(": id — латиница, цифры, _ и -");
+            if (e.look.empty()) return std::string(kind) + " " + e.id + T(": облик не собран");
+            for (size_t j = 0; j < i; ++j) if (std::strcmp(skinLists[k][j].id, e.id) == 0) return std::string(kind) + " " + e.id + T(": такой id уже есть");
+        }
+    }
+    return {};
+}
+bool SaveSkinLists() {
+    const std::string problem = SkinsProblem();
+    if (!problem.empty()) { Toast(problem); return false; }
+    json::Value v = json::Value::Object();
+    for (int k = 0; k < 2; ++k) {
+        json::Value list = json::Value::Array();
+        for (auto& e : skinLists[k]) {
+            json::Value j = json::Value::Object();
+            j.set("id", std::string(e.id));
+            if (e.name.en[0] || e.name.ru[0]) j.set("name", LJson(e.name));
+            j.set("look", e.look);
+            list.push(j);
+        }
+        v.set(kSkinKinds[k], list);
+    }
+    if (!WriteFile(SkinsFile(worldMode), v.dump())) { Toast(T("Не удалось сохранить")); return false; }
+    skinsChanged = false;
+    Toast(T("Сохранено: modes/") + worldMode + "/skins.json");
+    return true;
+}
+void OpenWardrobe(int kind, int index) {
+    const SkinEntry& e = skinLists[kind][size_t(index)];
+    wardrobe = {};
+    wardrobe.want = true; wardrobe.kind = kind; wardrobe.index = index; wardrobe.start = e.look;
+    wardrobe.title = std::string(T("Облик: ")) + (Shown(e.name)[0] ? Shown(e.name) : e.id);
+}
+bool Dressing() { return wardrobe.want || wardrobe.open; }
+std::string ModeSkinLook(const std::string& id) {
+    for (auto& list : skinLists) for (auto& e : list) if (id == e.id) return e.look;
+    return {};
+}
+std::vector<std::pair<std::string, std::string>> ModeSkinChoices() {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (int k = 0; k < 2; ++k) for (auto& e : skinLists[k]) out.emplace_back(e.id, std::string(k ? "[uniform] " : "[skin] ") + e.id + "  " + Shown(e.name));
+    return out;
+}
+
+void DrawSkins() {
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkSize.x - 520, 20), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 560), ImGuiCond_FirstUseEver);
+    ImGui::Begin(T("Персонажи"));
+    ImGui::BeginDisabled(Dressing());
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo(T("Режим"), worldMode.empty() ? T("— выберите —") : worldMode.c_str())) {
+        for (auto& m : modes) if (ImGui::Selectable(m.c_str(), m == worldMode)) actions.push_back({Action::WorldLoad, m});
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+    if (worldMode.empty()) { ImGui::TextWrapped(T("Выберите режим: у каждого режима свои скины (modes/<режим>/skins.json).")); ImGui::End(); return; }
+    ImGui::SameLine(); ImGui::BeginDisabled(Dressing()); if (ImGui::Button(T("Сохранить"))) { actions.push_back({Action::SkinsSave, ""}); actions.push_back({Action::WorldSave, ""}); } ImGui::EndDisabled();
+    if (skinsChanged) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", T("не сохранено")); }
+    ImGui::TextWrapped("%s", T("Игроки выбирают только из этих скинов (player:customize()); формы режим надевает поверх скина (player:setUniform(\"id\")). Облик собирается на манекене перед камерой: пресет игры или своя сборка из частей."));
+    {
+        auto it = world.logic.find("wardrobe");
+        const bool placed = it != world.logic.end() && !it->second.empty();
+        ImGui::SeparatorText(T("Место выбора скина"));
+        if (placed) ImGui::Text(T("Поставлено: %.0f %.0f %.0f"), it->second[0].t.x, it->second[0].t.y, it->second[0].t.z);
+        else ImGui::TextDisabled("%s", T("Не задано: игрок выбирает там, где стоит"));
+        ImGui::BeginDisabled(Dressing());
+        if (ImGui::Button(placed ? T("Переставить") : T("Поставить в мире"))) {
+            mode = 0; placeLogic = "wardrobe"; placeProp.clear();
+            Toast(T("ЛКМ в мире ставит место выбора; стрелка — куда смотрит персонаж"));
+        }
+        if (placed) {
+            ImGui::SameLine(); if (ImGui::Button(T("Показать"))) { mode = 0; SelectLogic("wardrobe", 0); }
+            ImGui::SameLine(); if (ImGui::Button(T("Убрать##place"))) world.logic.erase("wardrobe");
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Например комната под землёй из пропсов со светом. player:customize() переносит игрока туда, после выбора возвращает назад (на спавн при первом входе). Хранится в world.json — «Сохранить» здесь пишет и его."));
+    }
+    if (Dressing()) {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", T("Идёт сборка облика: окно слева. «Готово» запишет облик в запись, «Отмена» оставит как было."));
+        ImGui::End();
+        return;
+    }
+    if (ImGui::BeginTabBar("##kinds")) {
+        for (int k = 0; k < 2; ++k) {
+            const std::string label = std::string(k ? T("Формы") : T("Скины на старте")) + " (" + std::to_string(skinLists[k].size()) + ")###kind" + std::to_string(k);
+            if (ImGui::BeginTabItem(label.c_str())) { if (skinKind != k) { skinKind = k; skinSel = -1; } ImGui::EndTabItem(); }
+        }
+        ImGui::EndTabBar();
+    }
+    auto& list = skinLists[skinKind];
+    if (skinSel >= int(list.size())) skinSel = -1;
+    if (ImGui::BeginChild("##skinlist", ImVec2(0, 180), ImGuiChildFlags_Borders)) {
+        if (list.empty()) ImGui::TextDisabled("%s", skinKind ? T("Пусто: «Добавить» соберёт форму") : T("Пусто: игроки получат полный редактор персонажа. «Добавить» соберёт скин"));
+        for (int i = 0; i < int(list.size()); ++i) {
+            const SkinEntry& e = list[size_t(i)];
+            const std::string label = std::string(Shown(e.name)[0] ? Shown(e.name) : e.id) + "   (" + e.id + ")" + (e.look.empty() ? T("  — без облика") : "") + "##" + std::to_string(i);
+            if (ImGui::Selectable(label.c_str(), i == skinSel)) skinSel = i;
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { skinSel = i; OpenWardrobe(skinKind, i); }
+        }
+    }
+    ImGui::EndChild();
+    if (ImGui::Button(T("Добавить"))) {
+        SkinEntry e;
+        const char* base = skinKind ? "uniform" : "skin";
+        for (int n = int(list.size()) + 1;; ++n) {
+            const std::string id = base + std::to_string(n);
+            bool used = false; for (auto& o : list) used |= id == o.id;
+            if (!used) { Copy(e.id, sizeof e.id, id); break; }
+        }
+        Copy(e.name.en, sizeof e.name.en, skinKind ? "New uniform" : "New skin");
+        Copy(e.name.ru, sizeof e.name.ru, skinKind ? "Новая форма" : "Новый скин");
+        if (skinSel >= 0) e.look = list[size_t(skinSel)].look;  // from the selected one
+        list.push_back(e);
+        skinSel = int(list.size()) - 1; skinsChanged = true;
+        OpenWardrobe(skinKind, skinSel);
+    }
+    const bool has = skinSel >= 0;
+    ImGui::BeginDisabled(!has);
+    ImGui::SameLine();
+    if (ImGui::Button(T("Дублировать")) && has) {
+        SkinEntry e = list[size_t(skinSel)];
+        const std::string id = std::string(e.id) + "_2"; Copy(e.id, sizeof e.id, id);
+        list.insert(list.begin() + skinSel + 1, e); ++skinSel; skinsChanged = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(T("Удалить")) && has) { list.erase(list.begin() + skinSel); skinSel = -1; skinsChanged = true; }
+    ImGui::SameLine();
+    if (ImGui::ArrowButton("##up", ImGuiDir_Up) && has && skinSel > 0) { std::swap(list[size_t(skinSel)], list[size_t(skinSel - 1)]); --skinSel; skinsChanged = true; }
+    ImGui::SameLine();
+    if (ImGui::ArrowButton("##down", ImGuiDir_Down) && has && skinSel + 1 < int(list.size())) { std::swap(list[size_t(skinSel)], list[size_t(skinSel + 1)]); ++skinSel; skinsChanged = true; }
+    ImGui::EndDisabled();
+    if (has) {
+        SkinEntry& e = list[size_t(skinSel)];
+        ImGui::SeparatorText(T("Запись"));
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::InputText("id", e.id, sizeof e.id)) skinsChanged = true;
+        if (!ValidId(e.id)) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", T("латиница, цифры, _ и -")); }
+        if (ImGui::InputText(T("Название (EN)"), e.name.en, sizeof e.name.en)) skinsChanged = true;
+        if (ImGui::InputText(T("Название (RU)"), e.name.ru, sizeof e.name.ru)) skinsChanged = true;
+        if (ImGui::Button(e.look.empty() ? T("Собрать облик") : T("Изменить облик"), ImVec2(180, 0))) OpenWardrobe(skinKind, skinSel);
+        ImGui::SameLine(); ImGui::TextDisabled("%s", T("(двойной клик по записи)"));
+        if (!e.look.empty()) ImGui::TextWrapped("%s", e.look.c_str());
+        ImGui::Spacing();
+        ImGui::TextDisabled(skinKind ? "Lua: player:setUniform(\"%s\")" : "Lua: player:setSkin(\"%s\")", e.id);
+    }
+    ImGui::End();
+}
+
+// Game thread: the mannequin the creator dresses, standing in front of the editor camera.
+UObject* SpawnMannequin(UObject* pawn, const std::string& look, const LItem* spot) {
+    static UObject* statics = nullptr; static UObject* kismet = nullptr;
+    if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
+    if (!IsValid(kismet)) kismet = FindObject("/Script/Engine.Default__KismetSystemLibrary");
+    Cam view; { std::lock_guard g(lock); view = cam; }
+    if (!statics || !view.valid) return nullptr;
+    const float rad = 0.0174532925f, cy = std::cos(view.rot.Yaw * rad), sy = std::sin(view.rot.Yaw * rad);
+    FVector at{view.loc.X + cy * 350.f, view.loc.Y + sy * 350.f, view.loc.Z - 150.f};
+    float yaw = view.rot.Yaw + 180.f;  // facing the camera
+    if (spot) {
+        // The mode's choosing place: there, facing its way. The hidden player goes along to stream it in
+        // (the editor camera follows it there afterwards).
+        at = {spot->t.x, spot->t.y, spot->t.z}; yaw = spot->t.yaw;
+        if (auto f = Fn(pawn, "K2_SetActorLocation")) { Params p(f); p.Set("NewLocation", FVector{at.X, at.Y, at.Z + 100.f}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true); Call(pawn, "K2_SetActorLocation", &p); }
+    } else if (auto trace = kismet ? Fn(kismet, "LineTraceSingle_NEW") : nullptr; trace) if (auto brk = Fn(statics, "BreakHitResult")) {
+        Params t(trace); t.Set("WorldContextObject", pawn); t.Set("Start", FVector{at.X, at.Y, view.loc.Z + 50.f}); t.Set("End", FVector{at.X, at.Y, view.loc.Z - 3000.f});
+        t.Set<uint8_t>("TraceChannel", 0); t.SetBool("bTraceComplex", false); t.SetBool("bIgnoreSelf", true);
+        Call(kismet, "LineTraceSingle_NEW", &t);
+        if (t.GetBool("ReturnValue")) {
+            Params b(brk);
+            auto hitProp = FindProperty(trace, "OutHit"), inProp = FindProperty(brk, "Hit");
+            std::memcpy(static_cast<uint8_t*>(b.Data()) + Field<int>(inProp, off::UProperty_Offset), static_cast<uint8_t*>(t.Data()) + Field<int>(hitProp, off::UProperty_Offset), 136);
+            Call(statics, "BreakHitResult", &b);
+            at.Z = b.Get<FVector>("ImpactPoint").Z;
+        }
+    }
+    FTransform t; t.Translation = at;
+    Params begin(Fn(statics, "BeginSpawningActorFromClass"));
+    begin.Set("WorldContextObject", pawn); begin.Set("ActorClass", FindClass("SkeletalMeshActor")); begin.Set("SpawnTransform", t); begin.SetBool("bNoCollisionFail", true);
+    Call(statics, "BeginSpawningActorFromClass", &begin);
+    UObject* body = begin.Get<UObject*>("ReturnValue");
+    if (!body) return nullptr;
+    Params finish(Fn(statics, "FinishSpawningActor")); finish.Set("Actor", body); finish.Set("SpawnTransform", t);
+    Call(statics, "FinishSpawningActor", &finish);
+    if (auto f = Fn(body, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(body, "SetActorEnableCollision", &p); }
+    if (auto f = Fn(body, "K2_SetActorRotation")) { Params p(f); p.Set("NewRotation", FRotator{0, yaw, 0}); Call(body, "K2_SetActorRotation", &p); }
+    UObject* mesh = Field<UObject*>(body, off::SkelMeshActor_Component);
+    SetBoolProp(mesh, "bDisableClothSimulation", true);
+    if (!IsValid(mesh) || !skins::Wear(mesh, look.empty() ? kMannequinLook : look)) { Call(body, "K2_DestroyActor"); return nullptr; }
+    return body;
+}
+// The mannequin stands idle (a new look may stop its animation).
+void KeepIdle(UObject* mesh) {
+    static UObject* idle = nullptr;
+    if (!IsValid(idle)) { idle = FindObject(kMannequinIdle); if (!idle) idle = LoadAsset(kMannequinIdle); }
+    if (!idle) return;
+    if (auto f = Fn(mesh, "IsPlaying")) { Params p(f); Call(mesh, "IsPlaying", &p); if (p.GetBool("ReturnValue")) return; }
+    if (auto f = Fn(mesh, "SetAnimationMode")) { Params p(f); p.Set<uint8_t>("InAnimationMode", 1); Call(mesh, "SetAnimationMode", &p); }
+    if (auto f = Fn(mesh, "PlayAnimation")) { Params p(f); p.Set("NewAnimToPlay", idle); p.SetBool("bLooping", true); Call(mesh, "PlayAnimation", &p); }
+}
+void UpdateWardrobe(UObject* pawn, UObject* controller) {
+    Wardrobe w; LItem spot; bool hasSpot = false;
+    {
+        std::lock_guard g(lock); w = wardrobe;
+        if (auto it = world.logic.find("wardrobe"); it != world.logic.end() && !it->second.empty()) { spot = it->second[0]; hasSpot = true; }
+    }
+    if (w.want && !w.open) {
+        UObject* body = SpawnMannequin(pawn, w.start, hasSpot ? &spot : nullptr);
+        std::lock_guard g(lock);
+        wardrobe.want = false;
+        if (!body) { Toast(T("Не удалось поставить манекен")); return; }
+        wardrobe.open = true; wardrobe.body = body;
+        skins::Options o;
+        o.title = w.title; o.current = w.start; o.embedded = true; o.rootHeight = -90.f;
+        skins::OpenCreator(o);
+        return;
+    }
+    if (!w.open) return;
+    UObject* mesh = IsValid(w.body) ? Field<UObject*>(w.body, off::SkelMeshActor_Component) : nullptr;
+    if (!IsValid(mesh)) { w.body = nullptr; mesh = nullptr; skins::CloseCreator(); }
+    bool ok = false; std::string look;
+    if (!skins::UpdateCreator(w.body, controller, mesh, ok, look)) { if (mesh) KeepIdle(mesh); return; }
+    if (IsValid(w.body)) Call(w.body, "K2_DestroyActor");
+    std::lock_guard g(lock);
+    auto& list = skinLists[w.kind];
+    if (ok && !look.empty() && w.index >= 0 && w.index < int(list.size())) { list[size_t(w.index)].look = look; skinsChanged = true; }
+    wardrobe = {};
+}
+
 void Draw() {
     std::lock_guard g(lock);
     ImGuizmo::BeginFrame();
@@ -1315,19 +2534,33 @@ void Draw() {
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 20, vp->WorkPos.y + 120), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(380, 90), ImGuiCond_FirstUseEver);
     ImGui::Begin(T("Редактор DGMP"), nullptr, ImGuiWindowFlags_NoCollapse);
+    const int wasMode = mode;
     ImGui::RadioButton(T("Мир"), &mode, 0); ImGui::SameLine(); if (ImGui::RadioButton(T("Квест"), &mode, 1)) previewDirty = true;
-    ImGui::SameLine(200);
+    ImGui::SameLine(); ImGui::RadioButton(T("Персонажи"), &mode, 2);
+    if (mode != wasMode && wasMode == 2 && Dressing()) skins::CloseCreator();
+    ImGui::SameLine(0, 24);
     ImGui::TextDisabled("%s", overlay::CursorMode() ? T("Tab — полёт") : T("Tab — курсор"));
-    ImGui::SameLine(ImGui::GetWindowWidth() - 70);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 150);
+    bool inv = invertLook;
+    if (ImGui::Checkbox("Invert Y", &inv)) {
+        invertLook = inv;
+        WritePrivateProfileStringW(L"Editor", L"InvertY", inv ? L"1" : L"0", (fs::path(profile::Root()) / L"editor.ini").c_str());
+    }
+    ImGui::SameLine(ImGui::GetWindowWidth() - 50);
     if (ImGui::SmallButton(english ? "RU" : "EN")) {
         english = !english;
         WritePrivateProfileStringW(L"Editor", L"Language", english ? L"en" : L"ru", (fs::path(profile::Root()) / L"editor.ini").c_str());
     }
     ImGui::End();
-    DrawLibrary();
-    if (mode == 1) DrawQuest();
-    else DrawWorld();
-    DrawSceneTools();
+    if (mode == 2) {
+        DrawSkins();
+        if (Dressing()) skins::DrawCreator();
+    } else {
+        DrawLibrary();
+        if (mode == 1) DrawQuest();
+        else DrawWorld();
+        DrawSceneTools();
+    }
     if (mode == 1) { HistoryKeys(); TrackHistory(); }
     // Status, bottom left: one line "DGMP v…" until clicked.
     {
@@ -1355,11 +2588,13 @@ void SetStatus(const std::wstring& text) {
     std::lock_guard g(lock); status = std::move(out);
 }
 
+bool InvertLook() { return invertLook; }
 void Start() {
     if (!overlay::Install()) return;
     wchar_t lang[8] = L"en";
     GetPrivateProfileStringW(L"Editor", L"Language", L"en", lang, 8, (fs::path(profile::Root()) / L"editor.ini").c_str());
     english = wcscmp(lang, L"ru") != 0;
+    invertLook = GetPrivateProfileIntW(L"Editor", L"InvertY", 1, (fs::path(profile::Root()) / L"editor.ini").c_str()) != 0;
     overlay::SetDraw(&Draw);
     overlay::SetVisible(true);
     overlay::SetKeepFocus(true);
@@ -1390,6 +2625,7 @@ void Update(double now, UObject* pawn, UObject* controller) {
             case Action::Save: SaveQuest(); break;
             case Action::Delete: { std::error_code ec; fs::remove(QuestDir() / (arg + ".json"), ec); questOpen = false; loadedId.clear(); RefreshQuestList(); previewDirty = true; Toast(T("Квест удалён")); break; }
             case Action::WorldLoad: LoadWorld(arg); break;
+            case Action::SkinsSave: SaveSkinLists(); break;
             case Action::WorldSave: {
                 std::error_code ec; fs::create_directories(WorldFile(worldMode).parent_path(), ec);
                 if (WriteFile(WorldFile(worldMode), WorldJson(world).dump())) Toast(T("Сохранено: modes/") + worldMode + "/world.json"); else Toast(T("Не удалось сохранить"));
@@ -1419,7 +2655,10 @@ void Update(double now, UObject* pawn, UObject* controller) {
     }
     if (worldClick) WorldClick(pawn, controller);
     worldedit::Update(pawn);
+    UpdateLogicVisuals(pawn);
+    UpdateActorPreviews(pawn);
     UpdateSelectionOutline(controller);
+    UpdateWardrobe(pawn, controller);
     // Left click into the world (not on a window) while the cursor belongs to the editor.
     static bool wasDown = false;
     DWORD pid = 0; GetWindowThreadProcessId(GetForegroundWindow(), &pid);

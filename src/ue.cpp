@@ -78,10 +78,20 @@ int32_t SerialAt(int32_t index)
     return it ? it->SerialNumber : 0;
 }
 
+// The index of an object that may already be freed (a cached pointer after garbage collection):
+// its memory can be gone, so the read is guarded. -1 when unreadable.
+static int32_t IndexOf(const UObject* o)
+{
+    __try { return o->InternalIndex; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+
 bool IsValid(const UObject* o)
 {
     if (!o) return false;
-    const FUObjectItem* it = ItemAt(o->InternalIndex);
+    const int32_t index = IndexOf(o);
+    if (index < 0) return false;
+    const FUObjectItem* it = ItemAt(index);
     if (!it || it->Object != o) return false;
     return (it->Flags & (kItemFlag_PendingKill | kItemFlag_Unreachable)) == 0;
 }

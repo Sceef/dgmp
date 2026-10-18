@@ -52,15 +52,42 @@ public:
         std::function<void(uint16_t id, const uint8_t* payload, size_t size)> pose;        // raw PoseFrame payload
         std::function<void(ItemAction action, const std::string& key, int amount)> item;
         std::function<void(BikeAction action, float x, float y, float z, float yaw)> bike;
-        std::function<void(NametagMode nametags)> settings;
+        std::function<void(NametagMode nametags, uint8_t collisions)> settings;  // collisions: CollisionMask
+        std::function<void(uint16_t id, const uint8_t* gear, size_t size)> gear;  // GearList payload
         std::function<void(uint16_t id, const std::string& lookPath)> look;  // id == localId(): wear it
         struct MarkerInfo { float x, y, z; uint8_t category, style; bool route; std::string icon, title, description; };
         std::function<void(uint16_t id, const MarkerInfo* info)> marker;  // info null = removed
         std::function<void(uint16_t id, const std::string* item, int count, float x, float y, float z, float yaw)> worldItem;  // item null = removed
         std::function<void(uint16_t playerId)> corpse;
+        std::function<void(uint16_t attacker, float damage, HitZone zone)> damage;  // another player hurt you
+        std::function<void(bool on)> freeze;
+        // choices: (name, look) to pick from; empty: the full character creator
+        // place: x, y, z, yaw where the server put the player to choose (null: where it is)
+        std::function<void(bool cancel, const std::string& title, const std::string& families, const std::string& current,
+                           const std::vector<std::pair<std::string, std::string>>& choices, const float* place)> customize;
+        std::function<void(bool on, const std::vector<uint16_t>& only)> spectate;  // only: players to watch (empty: anyone)
         std::function<void(const std::string& json)> worldEdits;  // whole world.json once all parts arrived
         std::function<void(uint8_t state, uint8_t category, uint8_t style, const std::string& title, const std::string& text, int xp)> objective;
         std::function<void(bool show, const std::string& title, float percent)> objectiveMeter;
+        struct DialogInfo { uint16_t id = 0; DialogStyle style = DialogStyle::MsgBox; std::string title, text, button1, button2, defaultText, headers; std::vector<std::string> items; };
+        std::function<void(const DialogInfo& d)> dialog;                           // style Close: close dialog d.id
+        std::function<void(const std::string& id, const std::string& json)> hud;  // json "": remove (id "": all)
+        struct InteractionInfo { float x, y, z, radius; uint8_t key; std::string text; int world = -1; };
+        std::function<void(uint16_t id, const InteractionInfo* info)> interaction;  // info null = removed
+        std::function<void(const std::vector<uint8_t>& keys)> watchKeys;
+        std::function<void(int world)> setWorld;
+        struct ActorInfo { float x, y, z, yaw; int world; std::string look, anim, name; bool solid; };
+        std::function<void(uint16_t id, const ActorInfo* info)> actor;  // info null = removed
+        struct VehicleInfo { VehicleState state; int world = 0; uint16_t driver = 0xFFFF; bool locked = false, yours = false, marked = false; uint32_t color = 0; std::string icon, model; bool npc = false; std::string npcLook, npcName; uint16_t passenger = 0xFFFF; uint8_t riders = 0; };  // marked: on your map; color RGBA (0: default); model "": the bike; npc: an NPC of the mode drives it
+        std::function<void(uint16_t id, const VehicleInfo* info)> vehicle;  // info null = removed
+        std::function<void(uint16_t id, int seat)> vehicleAllow;  // seat 0: the driver's
+        // The way an NPC drives a vehicle: x,y,z of each point (empty: it stopped), units a second, seconds since it set off.
+        std::function<void(uint16_t id, const std::vector<float>& points, float speed, float elapsed, bool loop)> vehicleRoute;
+        std::function<void(uint16_t id)> vehicleEject;
+        std::function<void(const std::vector<std::pair<std::string, std::string>>& images)> imageList;  // (name, sha256)
+        std::function<void(const std::string& name, int part, int parts, const std::string& bytes)> imageData;
+        struct IconInfo { float x, y, z, size, distance; int world; uint32_t color; std::string image, text; bool throughWalls = false; };
+        std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
     } on;
 
     ~Client();
@@ -71,8 +98,16 @@ public:
     void SendChat(const std::string& text);
     void SendPose(const std::vector<uint8_t>& payload);  // payload without the op byte
     void SendInventory(const std::vector<std::pair<std::string, int>>& items);
+    void SendHit(uint16_t victim, float damage, HitZone zone, const std::string& weapon);
     void SendGameEvent(GameEventType type, const std::string& cls, const std::string& detail, const std::string& id, float x, float y, float z);
     void SendLook(const std::string& lookPath);
+    void SendGear(const std::vector<uint8_t>& gear);  // GearList payload
+    void SendCustomizeDone(bool ok, const std::string& skin);
+    void SendDialogResponse(uint16_t id, bool ok, int item, const std::string& text);
+    void SendUse(uint16_t interaction);
+    void SendKey(uint8_t virtualKey);
+    void SendImageRequest(const std::string& name);
+    void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
 
     Status status() const { return status_; }
     uint16_t localId() const { return localId_; }

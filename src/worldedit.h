@@ -1,6 +1,7 @@
 #pragma once
 // A mode's own edits of the game world (modes/<mode>/world.json, docs/world.md): objects of the game
-// removed or moved, and props added. Applied by the multiplayer client (sent by the server on join)
+// removed or moved, and props and lights added (a light is an added entry with asset "light:point"
+// or "light:spot" and its settings in "light"). Applied by the multiplayer client (sent by the server on join)
 // and by the editor (live preview while editing). Game thread only.
 #include "ue.h"
 #include "shared/json.h"

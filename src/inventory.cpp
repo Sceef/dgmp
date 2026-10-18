@@ -1,4 +1,5 @@
 #include "inventory.h"
+#include "vehicles.h"
 #include "log.h"
 #include <algorithm>
 #include <cmath>
@@ -99,7 +100,8 @@ UObject* AssignedBike() {
     Params p(f); Call(controller, "GetAssignedVehicle", &p);
     UObject* bike = p.Get<UObject*>("ReturnValue");
     if (IsValid(bike)) bikeClass = bike->Class;
-    return IsValid(bike) ? bike : nullptr;
+    // A server vehicle the game assigned on getting on it is not the player's own bike.
+    return IsValid(bike) && !vehicles::IsServerBike(bike) ? bike : nullptr;
 }
 bool InVehicle() {
     auto f = IsValid(pawn) ? Fn(pawn, "IsInVehicle") : nullptr; if (!f) return false;
@@ -168,9 +170,16 @@ void SweepDroppedWeapons(double now) {
     for (auto o : drop) { dg::Log("Inventory: replaced weapon removed (%s)", GetName(o).c_str()); Call(o, "K2_DestroyActor"); }
 }
 
+// Orders that arrive before the player has an inventory (joining while the world loads) wait here.
+struct Order { net::ItemAction action; std::string key; int amount; };
+std::vector<Order> waiting;
 void Apply(net::ItemAction action, const std::string& key, int amount) {
     UObject* inv = Component();
-    if (!inv) { dg::Log("Inventory: no inventory component yet (%s)", key.c_str()); return; }
+    if (!inv) {
+        if (waiting.size() < 256) waiting.push_back({action, key, amount});
+        dg::Log("Inventory: no inventory component yet, %s waits", key.empty() ? "order" : key.c_str());
+        return;
+    }
     switch (action) {
     case net::ItemAction::Give: case net::ItemAction::Take: case net::ItemAction::GiveReplace: {
         UObject* item = Item(key);
@@ -213,18 +222,83 @@ void Apply(net::ItemAction action, const std::string& key, int amount) {
 
 void RequestBike(net::BikeAction action, const FVector& pos, float yaw) { bikeRequest = {true, action, pos, yaw}; }
 
+// ---------------------------------------------------------------- getting on the bike, freezing
+double mountUntil = 0, nextMountTry = 0;
+bool frozen = false, frozenApplied = false, frozenOnBike = false;
+UObject* MountedVehicle() {
+    auto f = IsValid(controller) ? Fn(controller, "GetMountedVehicle") : nullptr; if (!f) return nullptr;
+    Params p(f); Call(controller, "GetMountedVehicle", &p);
+    UObject* v = p.Get<UObject*>("ReturnValue");
+    return IsValid(v) ? v : nullptr;
+}
+// The player's bike to the spot (the existing one moved, else a new one); then onto it (UpdateMount).
+void MountBike(const FVector& at, float yaw) {
+    UObject* bike = AssignedBike();
+    if (bike) {  // a rider on it goes along
+        if (auto f = Fn(bike, "K2_SetActorLocationAndRotation")) {
+            Params p(f); p.Set("NewLocation", FVector{at.X, at.Y, at.Z + 60.f}); p.Set("NewRotation", FRotator{0, yaw, 0}); p.SetBool("bTeleport", true);
+            Call(bike, "K2_SetActorLocationAndRotation", &p);
+        }
+        dg::Log("Inventory: bike moved to %.0f %.0f %.0f", at.X, at.Y, at.Z);
+    } else GiveBike(at, yaw);
+    mountUntil = GetTickCount64() / 1000.0 + 30; nextMountTry = 0;
+}
+void UpdateMount(double now) {
+    if (!mountUntil) return;
+    if (now > mountUntil) { mountUntil = 0; dg::Log("Inventory: could not get on the bike"); return; }
+    UObject* bike = AssignedBike();
+    if (!bike || now < nextMountTry) return;
+    if (MountedVehicle() == bike) { mountUntil = 0; dg::Log("Inventory: on the bike"); return; }
+    UObject* a = Field<UObject*>(bike, off::Actor_RootComponent), *b = Field<UObject*>(pawn, off::Actor_RootComponent);
+    if (!IsValid(a) || !IsValid(b)) return;
+    const FVector p = Field<FVector>(a, off::Scene_C2W_Trans), q = Field<FVector>(b, off::Scene_C2W_Trans);
+    if ((p.X - q.X) * (p.X - q.X) + (p.Y - q.Y) * (p.Y - q.Y) + (p.Z - q.Z) * (p.Z - q.Z) > 1500.f * 1500.f) return;  // still travelling there
+    nextMountTry = now + 1.0;
+    if (auto f = Fn(pawn, "TryEnterVehicle")) {
+        Params e(f); e.Set("VehiclePawn", bike); e.SetBool("bForce", true); e.Set<float>("MaxDistance", 2000.f);
+        Call(pawn, "TryEnterVehicle", &e);
+    }
+}
+void SetFrozen(bool on) { frozen = on; }
+void UpdateFreeze() {
+    UObject* ride = nullptr;
+    for (auto c = pawn->Class; c && !ride; c = SuperOf(c)) if (auto prop = FindProperty(c, "VehicleRideComponent")) ride = Field<UObject*>(pawn, Field<int>(prop, off::UProperty_Offset));
+    auto canExit = [&](bool v) { if (auto f = IsValid(ride) ? Fn(ride, "SetCanExitVehicle") : nullptr) { Params p(f); p.SetBool("bCanExit", v); Call(ride, "SetCanExitVehicle", &p); } };
+    auto ignoreMove = [&](bool v) { if (auto f = Fn(controller, "SetIgnoreMoveInput")) { Params p(f); p.SetBool("bNewMoveInput", v); Call(controller, "SetIgnoreMoveInput", &p); } };
+    const bool onBike = MountedVehicle() != nullptr;
+    if (frozen && (!frozenApplied || onBike != frozenOnBike)) {
+        if (!frozenApplied) ignoreMove(true);  // a counter in the engine: once per freeze
+        if (onBike) { Call(controller, "SuppressThrottleBrake"); canExit(false); }
+        frozenApplied = true; frozenOnBike = onBike;
+        dg::Log("Frozen%s", onBike ? " on the bike" : "");
+    } else if (!frozen && frozenApplied) {
+        ignoreMove(false);
+        Call(controller, "UnSuppressThrottleBrake"); canExit(true);
+        frozenApplied = false;
+        dg::Log("Unfrozen");
+    }
+}
+
 void Update(UObject* p, UObject* c) {
     pawn = p; controller = c;
     if (!IsValid(pawn) || !IsValid(controller)) return;
+    if (!waiting.empty() && Component()) {
+        auto orders = std::move(waiting); waiting.clear();
+        for (auto& o : orders) Apply(o.action, o.key, o.amount);
+    }
     if (bikeRequest.pending) {
         bikeTaken = bikeRequest.action == net::BikeAction::Take;
-        if (bikeTaken) TakeBike(); else GiveBike(bikeRequest.pos, bikeRequest.yaw);
+        if (bikeTaken) TakeBike();
+        else if (bikeRequest.action == net::BikeAction::Mount) MountBike(bikeRequest.pos, bikeRequest.yaw);
+        else GiveBike(bikeRequest.pos, bikeRequest.yaw);
         bikeRequest.pending = false;
         nextSnapshot = 0;
     }
     static double nextEnforce = 0;
     const double now = GetTickCount64() / 1000.0;
     if (bikeTaken && now >= nextEnforce) { nextEnforce = now + 0.5; TakeBike(); }
+    UpdateMount(now);
+    UpdateFreeze();
     SweepDroppedWeapons(now);
 }
 

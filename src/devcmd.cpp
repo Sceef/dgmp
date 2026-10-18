@@ -3,8 +3,10 @@
 #include "log.h"
 #include "policy.h"
 #include "worldedit.h"
+#include "mp.h"
 #include <windows.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -265,7 +267,9 @@ std::string Run(const std::string& line) {
     }
     if (cmd == "trace") {
         const double seconds = a.size() > 1 ? std::stod(a[1]) : 60;
-        return "tracing " + std::to_string(policy::TraceEvents(seconds)) + " objects (see DGMP.log, lines TRACE)";
+        std::vector<UObject*> extra;  // trace <seconds> ghosts | <obj>: also those objects
+        if (a.size() > 2) { if (a[2] == "ghosts") extra = mp::GhostActors(); else if (UObject* o = Resolve(a[2])) extra.push_back(o); }
+        return "tracing " + std::to_string(policy::TraceEvents(seconds, extra)) + " objects (see DGMP.log, lines TRACE)";
     }
     if (cmd == "ray" && a.size() >= 4) {  // ray x y z [complex]: vertical trace through the point, prints the hit
         static UObject* kismet = nullptr;
@@ -293,10 +297,79 @@ std::string Run(const std::string& line) {
         }
         return out.str();
     }
+    if (cmd == "attached" && a.size() > 1) {  // attached <obj>: actors attached to it, their socket, visibility and meshes
+        UObject* o = Resolve(a[1]);
+        auto f = o ? Fn(o, "GetAttachedActors") : nullptr;
+        if (!f) return "no GetAttachedActors";
+        Params p(f); Call(o, "GetAttachedActors", &p);
+        struct Raw { UObject** data; int num, max; };
+        const Raw list = p.Get<Raw>("OutActors");
+        static UObject* meshCls = FindClass("MeshComponent");
+        for (int i = 0; i < list.num; ++i) {
+            UObject* act = list.data[i];
+            if (!IsValid(act)) continue;
+            UObject* root = Field<UObject*>(act, off::Actor_RootComponent);
+            out << GetName(act) << " (" << GetName(act->Class) << ")" << (GetBoolProp(act, "bHidden") ? " hidden" : "")
+                << " socket=" << (root ? NameOf(Field<FName>(root, 0xE8)) : std::string("?")) << "\n";
+            if (auto g = Fn(act, "GetComponentsByClass")) {
+                Params q(g); q.Set("ComponentClass", meshCls); Call(act, "GetComponentsByClass", &q);
+                const Raw comps = q.Get<Raw>("ReturnValue");
+                for (int k = 0; k < comps.num; ++k) if (IsValid(comps.data[k])) {
+                    UObject* c = comps.data[k];
+                    UObject* mesh = nullptr;
+                    for (auto cl = c->Class; cl && !mesh; cl = SuperOf(cl)) for (const char* n : {"StaticMesh", "SkeletalMesh"}) if (auto prop = FindProperty(cl, n)) { mesh = Field<UObject*>(c, Field<int>(prop, off::UProperty_Offset)); break; }
+                    out << "    " << GetName(c) << " (" << GetName(c->Class) << ") vis=" << GetBoolProp(c, "bVisible") << " hiddenInGame=" << GetBoolProp(c, "bHiddenInGame")
+                        << " socket=" << NameOf(Field<FName>(c, 0xE8)) << " mesh=" << (mesh ? FullName(mesh) : std::string("-")) << "\n";
+                }
+            }
+        }
+        return out.str();
+    }
     if (cmd == "poke") {  // poke <hexaddr> <float> [float ...]: write floats (research only)
         float* at = reinterpret_cast<float*>(std::stoull(a[1], nullptr, 16));
         for (size_t i = 2; i < a.size(); ++i) at[i - 2] = std::stof(a[i]);
         return "written " + std::to_string(a.size() - 2) + " floats";
+    }
+    // Bike research: bikespawn [statics|controller] [distance] - another player bike in front of the
+    // pawn (GameplayStatics spawn, or the controller's SpawnPlayerVehicle), optionally of another class [Class_C]; bikeassign <obj>; bikeenter <obj>.
+    if (cmd == "bikespawn" || cmd == "bikeassign" || cmd == "bikeenter") {
+        if (!ctxPawn || !ctxController) return "no pawn";
+        if (cmd == "bikeassign" || cmd == "bikeenter") {
+            if (a.size() < 2) return "usage: " + cmd + " <obj>";
+            UObject* bike = Resolve(a[1]);
+            if (!bike || !IsValid(bike)) return "object not found";
+            if (cmd == "bikeassign") { auto f = FunctionOf(ctxController, "SetAssignedVehicle"); if (!f) return "no SetAssignedVehicle"; Params p(f); p.Set("InAssignedVehicle", bike); ProcessEvent(ctxController, f, p.Data()); }
+            else { auto f = FunctionOf(ctxPawn, "TryEnterVehicle"); if (!f) return "no TryEnterVehicle"; Params p(f); p.Set("VehiclePawn", bike); p.SetBool("bForce", true); p.Set<float>("MaxDistance", 2000.f); ProcessEvent(ctxPawn, f, p.Data()); out << "returned " << Format(FindProperty(f, "ReturnValue"), static_cast<const uint8_t*>(p.Data())) << "\n"; }
+            auto g = FunctionOf(ctxController, "GetAssignedVehicle"); Params q(g); ProcessEvent(ctxController, g, q.Data());
+            out << "assigned now: " << (q.Get<UObject*>("ReturnValue") ? FullName(q.Get<UObject*>("ReturnValue")) : std::string("none")) << "\n";
+            return out.str();
+        }
+        const bool viaController = a.size() > 1 && a[1] == "controller";
+        const float dist = a.size() > 2 ? std::stof(a[2]) : 400.f;
+        UObject* cls = FindClass(a.size() > 3 ? a[3].c_str() : "BP_bike04Drifter_C"); if (!cls) return "class not loaded (load <path> first)";
+        auto loc = FunctionOf(ctxPawn, "K2_GetActorLocation"); Params l(loc); ProcessEvent(ctxPawn, loc, l.Data());
+        auto rot = FunctionOf(ctxController, "GetControlRotation"); Params r(rot); ProcessEvent(ctxController, rot, r.Data());
+        const FVector at = l.Get<FVector>("ReturnValue"); const float yaw = r.Get<FRotator>("ReturnValue").Yaw, rad = yaw * 0.0174532925f;
+        FTransform t; t.Translation = {at.X + std::cos(rad) * dist, at.Y + std::sin(rad) * dist, at.Z};
+        auto g = FunctionOf(ctxController, "GetAssignedVehicle"); Params before(g); ProcessEvent(ctxController, g, before.Data());
+        UObject* bike = nullptr;
+        if (viaController) {
+            auto f = FunctionOf(ctxController, "SpawnPlayerVehicle"); if (!f) return "no SpawnPlayerVehicle";
+            Params p(f); p.Set<int>("PlayerIndex", 0); p.Set("Class", cls); p.Set("SpawnTransform", t); p.SetBool("SpawnEvenIfColliding", true);
+            ProcessEvent(ctxController, f, p.Data());
+            bike = p.Get<UObject*>("ReturnValue");
+        } else {
+            UObject* statics = FindObject("/Script/Engine.Default__GameplayStatics");
+            auto b = FunctionOf(statics, "BeginSpawningActorFromClass"), fin = FunctionOf(statics, "FinishSpawningActor");
+            Params p(b); p.Set("WorldContextObject", ctxPawn); p.Set("ActorClass", cls); p.Set("SpawnTransform", t); p.SetBool("bNoCollisionFail", true);
+            ProcessEvent(statics, b, p.Data());
+            bike = p.Get<UObject*>("ReturnValue");
+            if (bike) { Params q(fin); q.Set("Actor", bike); q.Set("SpawnTransform", t); ProcessEvent(statics, fin, q.Data()); }
+        }
+        Params after(g); ProcessEvent(ctxController, g, after.Data());
+        auto name = [](UObject* o) { return o ? FullName(o) : std::string("none"); };
+        out << "spawned: " << name(bike) << "\nassigned before: " << name(before.Get<UObject*>("ReturnValue")) << "\nassigned after: " << name(after.Get<UObject*>("ReturnValue")) << "\n";
+        return out.str();
     }
     if (cmd == "coll") {  // coll [radius] [mesh filter]: merged-mesh collection instances near the pawn (64-byte entries at +0x768)
         const float radius = a.size() > 1 ? std::stof(a[1]) : 1500.f;
@@ -339,6 +412,10 @@ std::string Run(const std::string& line) {
             out << row;
         }
         return out.str();
+    }
+    if (cmd == "load" && a.size() > 1) {  // load </Game/Path.Asset_C>: loads an asset (a class to spawn)
+        UObject* x = FindObject(a[1].c_str()); if (!x) x = LoadAsset(a[1].c_str());
+        return x ? "loaded " + FullName(x) : std::string("not found");
     }
     if (a.size() < 2) return "missing object";
     UObject* o = Resolve(a[1]);

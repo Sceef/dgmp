@@ -1,0 +1,30 @@
+# systemd unit for dgmp-server on Linux (see docs/server-linux.md).
+#   sudo cp dgmp-server.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now dgmp-server
+[Unit]
+Description=DGMP dedicated server (Days Gone multiplayer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dgmp
+Group=dgmp
+WorkingDirectory=/opt/dgmp
+# Flags override server.ini; leave them out to use only server.ini.
+ExecStart=/opt/dgmp/dgmp-server --mode freeroam --port 7777
+# SIGTERM works like the `quit` command: players are told the server is shutting down.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=5
+# No console under systemd: stdin is closed, the log goes to journald and logs/server.log.
+StandardInput=null
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/dgmp
+
+[Install]
+WantedBy=multi-user.target

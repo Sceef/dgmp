@@ -12,11 +12,71 @@ on("playerJoin", function(player)
     broadcast(player.name .. " joined the server", GREY)
     player:message("Welcome to " .. server.name .. "! Type /help for commands.", GREEN)
     player.data.joinedAt = now()
+    -- First time on this server: choose a character among the mode's skins (skins.json, made in
+    -- the editor's Characters section); kept by nick, worn on every visit.
+    if not player.skin then
+        player:customize({ title = "Your character", cancel = false,
+                           onDone = function(p, look, id) p:message("Character saved. /skin changes it.", GREEN) end })
+    end
 end)
+
+-- Skins: /skin chooses again (a clothes shop in an RP mode would do the same); /uniform picks clothes
+-- over the skin (a job) or puts one on by id, /nouniform takes them off.
+command("skin", function(player) player:customize({ title = "Character" }) end)
+command("uniform", function(player, args)
+    if args == "" then
+        if #skinList("uniforms") == 0 then player:message("This mode has no uniforms.", GREY); return end
+        player:customize({ title = "Uniform", list = "uniforms" })
+        return
+    end
+    local ok, err = pcall(function() player:setUniform(args) end)
+    player:message(ok and ("Uniform: " .. args) or err, ok and GREEN or YELLOW)
+end)
+command("nouniform", function(player) player:setUniform(nil); player:message("Uniform off", GREEN) end)
 
 on("playerQuit", function(player, reason)
     broadcast(player.name .. " left (" .. reason .. ")", GREY)
 end)
+
+-- Vehicles: every player gets a bike of its own next to it (locked, on its own map only). /bike brings
+-- it, /lock and /unlock; an unlocked bike can be ridden by anyone. It goes when its player leaves.
+local bikes = {}  -- player id -> vehicle id
+local function besidePlayer(player)
+    local x, y, z, yaw = player:position()
+    local r = math.rad(yaw or 0)
+    return x - math.sin(r) * 300, y + math.cos(r) * 300, z - 90, yaw or 0
+end
+on("playerJoin", function(player)
+    after(3000, function()
+        if not player.valid or bikes[player.id] then return end
+        local x, y, z, yaw = besidePlayer(player)
+        bikes[player.id] = createVehicle({ x = x, y = y, z = z, yaw = yaw, owner = player, locked = true })
+    end)
+end)
+on("playerQuit", function(player)
+    if bikes[player.id] then removeVehicle(bikes[player.id]); bikes[player.id] = nil end
+end)
+command("bike", function(player)
+    local id = bikes[player.id]
+    local v = id and vehicleInfo(id)
+    if not v then
+        local x, y, z, yaw = besidePlayer(player)
+        bikes[player.id] = createVehicle({ x = x, y = y, z = z, yaw = yaw, owner = player, locked = true })
+    elseif v.driver then player:message("Someone is riding your bike.", YELLOW); return
+    else
+        local x, y, z, yaw = besidePlayer(player)
+        setVehicle(id, { x = x, y = y, z = z, yaw = yaw })
+    end
+    player:message("Your bike is here.", GREEN)
+end)
+local function setLock(player, locked)
+    local id = bikes[player.id]
+    if not id or not vehicleInfo(id) then player:message("You have no bike: /bike", GREY); return end
+    setVehicle(id, { locked = locked })
+    player:message(locked and "Bike locked" or "Bike unlocked: anyone can ride it", GREEN)
+end
+command("lock", function(player) setLock(player, true) end)
+command("unlock", function(player) setLock(player, false) end)
 
 on("chat", function(player, text)
     -- Return false to block a message; nothing to filter in freeroam.
@@ -34,7 +94,7 @@ local function findPlayer(query)
 end
 
 command("help", function(player)
-    player:message("/players  /tp <player>  /pos  /time <0-24>  /weather <id|auto>  /hint", YELLOW)
+    player:message("/players  /tp <player>  /pos  /time <0-24>  /weather <id|auto>  /hint  /skin  /uniform [id]  /nouniform  /bike  /lock  /unlock", YELLOW)
     if player.admin then player:message(adminUsage, YELLOW) end
 end)
 
@@ -81,6 +141,7 @@ local admin = {}
 
 admin.give = function(target, key, count) target:giveItem(key, tonumber(count) or 1); return "gave " .. key end
 admin.take = function(target, key, count) target:takeItem(key, tonumber(count) or 1); return "took " .. key end
+admin.damage = function(target, amount) target:damage(tonumber(amount) or 20); return "damage " .. (tonumber(amount) or 20) end
 admin.weapon = function(target, key, ammo) target:giveWeapon(key, tonumber(ammo)); return "weapon " .. key end
 -- replace: the weapon already in that slot disappears instead of dropping to the ground
 admin.replace = function(target, key, ammo) target:giveWeapon(key, tonumber(ammo), { replace = true }); return "weapon " .. key .. " (replaced)" end
@@ -111,11 +172,17 @@ admin.inv = function(target)
 end
 
 adminUsage = "give|take <player> <item> [n], weapon|replace <player> <weapon> [ammo], ammo <player> <item> <n>, " ..
-                   "disarm <player> [all|knife|rock], clear <player>, bike|nobike <player>, inv <player>, nametags visible|walls|hidden, hint <title> | <text>, look <player> <name>, looks [filter]"
+                   "disarm <player> [all|knife|rock], clear <player>, bike|nobike <player>, inv <player>, nametags visible|walls|hidden, collisions on|off|players|bikes, hint <title> | <text>, look <player> <name>, looks [filter]"
 
 local function runAdmin(words)
     local action = words[1]
     if action == "nametags" then setNametags(words[2] or "visible"); return "nametags: " .. (words[2] or "visible") end
+    if action == "collisions" then
+        -- collisions on|off|players|bikes: players' bodies / bikes block each other
+        local m = words[2] or "on"
+        if m == "players" or m == "bikes" then setCollisions({ players = m == "players", bikes = m == "bikes" }) else setCollisions(m == "on") end
+        return "collisions: " .. m
+    end
     if action == "looks" then
         local list = looks(words[2] or "")
         return #list .. " looks: " .. table.concat(list, ", ", 1, math.min(#list, 40)) .. (#list > 40 and " ..." or "")

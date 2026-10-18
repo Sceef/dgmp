@@ -14,6 +14,7 @@ struct FName { int32_t Index; int32_t Number; };
 struct FString { const wchar_t* Data; int32_t Num; int32_t Max; };
 struct FVector { float X, Y, Z; };
 struct FRotator { float Pitch, Yaw, Roll; };
+struct FVector2D { float X, Y; };
 struct FQuat { float X, Y, Z, W; };
 struct alignas(16) FTransform {
     FQuat Rotation{0, 0, 0, 1};

@@ -247,6 +247,110 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         break;
     }
     case Msg::Corpse: { const auto id = r.U16(); if (r.ok() && on.corpse) on.corpse(id); break; }
+    case Msg::Spectate: {
+        const bool spectating = r.U8() != 0; const int n = r.U8();
+        std::vector<uint16_t> only;
+        for (int i = 0; i < n && r.ok(); ++i) only.push_back(r.U16());
+        if (r.ok() && on.spectate) on.spectate(spectating, only);
+        break;
+    }
+    case Msg::Customize: {
+        const bool cancel = r.U8() != 0; const auto title = r.Str(256), families = r.Str(256), current = r.Str(kLookPathMax);
+        std::vector<std::pair<std::string, std::string>> choices;
+        const int n = r.U8();
+        for (int i = 0; i < n && r.ok(); ++i) { auto name = r.Str(256); auto look = r.Str(kLookPathMax); choices.emplace_back(std::move(name), std::move(look)); }
+        float place[4] = {};
+        const bool hasPlace = r.U8() != 0;
+        if (hasPlace) for (float& f : place) f = r.F32();
+        if (r.ok() && on.customize) on.customize(cancel, title, families, current, choices, hasPlace ? place : nullptr);
+        break;
+    }
+    case Msg::Dialog: {
+        Events::DialogInfo d;
+        d.id = r.U16(); d.style = static_cast<DialogStyle>(r.U8());
+        if (d.style != DialogStyle::Close) {
+            d.title = r.Str(256); d.text = r.Str(kDialogTextMax); d.button1 = r.Str(64); d.button2 = r.Str(64); d.defaultText = r.Str(256); d.headers = r.Str(512);
+            const int n = r.U8();
+            for (int i = 0; i < n && r.ok(); ++i) d.items.push_back(r.Str(512));
+        }
+        if (r.ok() && on.dialog) on.dialog(d);
+        break;
+    }
+    case Msg::HudElement: {
+        const auto id = r.Str(64), json = r.Str(4096);
+        if (r.ok() && on.hud) on.hud(id, json);
+        break;
+    }
+    case Msg::Interaction: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::InteractionInfo info;
+            info.x = r.F32(); info.y = r.F32(); info.z = r.F32(); info.radius = r.F32(); info.key = r.U8(); info.text = r.Str(256); info.world = r.I32();
+            if (r.ok() && on.interaction) on.interaction(id, &info);
+        } else if (r.ok() && on.interaction) on.interaction(id, nullptr);
+        break;
+    }
+    case Msg::VehicleRoute: {
+        const uint16_t id = r.U16(); const float speed = r.F32(), elapsed = r.F32(); const bool loop = r.U8() != 0;
+        const uint16_t n = r.U16();
+        std::vector<float> points;
+        for (uint16_t i = 0; i < n && i < 512 && r.ok(); ++i) { points.push_back(r.F32()); points.push_back(r.F32()); points.push_back(r.F32()); }
+        if (r.ok() && on.vehicleRoute) on.vehicleRoute(id, points, speed, elapsed, loop);
+        break;
+    }
+    case Msg::Vehicle: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::VehicleInfo v;
+            v.state = r.Vehicle(); v.world = r.I32(); v.driver = r.U16(); v.locked = r.U8() != 0; v.yours = r.U8() != 0; v.marked = r.U8() != 0; v.color = r.U32(); v.icon = r.Str(64); v.model = r.Str(32); v.npc = r.U8() != 0; v.npcLook = r.Str(net::kLookPathMax); v.npcName = r.Str(64); v.passenger = r.U16(); v.riders = r.U8();
+            if (r.ok() && on.vehicle) on.vehicle(id, &v);
+        } else if (r.ok() && on.vehicle) on.vehicle(id, nullptr);
+        break;
+    }
+    case Msg::VehicleAllow: { const uint16_t id = r.U16(); const int seat = r.U8(); if (r.ok() && on.vehicleAllow) on.vehicleAllow(id, seat); break; }
+    case Msg::VehicleEject: { const uint16_t id = r.U16(); if (r.ok() && on.vehicleEject) on.vehicleEject(id); break; }
+    case Msg::ImageList: {
+        std::vector<std::pair<std::string, std::string>> list;
+        const int n = r.U16();
+        for (int i = 0; i < n && r.ok(); ++i) { auto name = r.Str(128); auto hash = r.Str(64); list.emplace_back(std::move(name), std::move(hash)); }
+        if (r.ok() && on.imageList) on.imageList(list);
+        break;
+    }
+    case Msg::ImageData: {
+        const auto name = r.Str(128); const int part = r.U16(), parts = r.U16(); const auto bytes = r.Str();
+        if (r.ok() && on.imageData) on.imageData(name, part, parts, bytes);
+        break;
+    }
+    case Msg::Icon: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::IconInfo i;
+            i.x = r.F32(); i.y = r.F32(); i.z = r.F32(); i.size = r.F32(); i.distance = r.F32(); i.world = r.I32(); i.color = r.U32();
+            i.image = r.Str(128); i.text = r.Str(256); i.throughWalls = r.U8() != 0;
+            if (r.ok() && on.icon) on.icon(id, &i);
+        } else if (r.ok() && on.icon) on.icon(id, nullptr);
+        break;
+    }
+    case Msg::SetWorld: { const int world = r.I32(); if (r.ok() && on.setWorld) on.setWorld(world); break; }
+    case Msg::Actor: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::ActorInfo a;
+            a.x = r.F32(); a.y = r.F32(); a.z = r.F32(); a.yaw = r.F32(); a.world = r.I32();
+            a.look = r.Str(kLookPathMax); a.anim = r.Str(512); a.name = r.Str(128); a.solid = r.U8() != 0;
+            if (r.ok() && on.actor) on.actor(id, &a);
+        } else if (r.ok() && on.actor) on.actor(id, nullptr);
+        break;
+    }
+    case Msg::WatchKeys: {
+        std::vector<uint8_t> keys;
+        const int n = r.U8();
+        for (int i = 0; i < n && r.ok(); ++i) keys.push_back(r.U8());
+        if (r.ok() && on.watchKeys) on.watchKeys(keys);
+        break;
+    }
+    case Msg::Freeze: { const bool frozen = r.U8() != 0; if (r.ok() && on.freeze) on.freeze(frozen); break; }
+    case Msg::Damage: { const auto from = r.U16(); const float amount = r.F32(); const auto zone = r.U8(); if (r.ok() && on.damage) on.damage(from, amount, HitZone(zone)); break; }
     case Msg::WorldItem: {
         const auto id = r.U16(); const auto op = r.U8();
         if (!r.ok() || !on.worldItem) break;
@@ -264,7 +368,8 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok()) on.marker(id, &m);
         break;
     }
-    case Msg::Settings: { const auto tags = static_cast<NametagMode>(r.U8()); if (r.ok() && on.settings) on.settings(tags); break; }
+    case Msg::Settings: { const auto tags = static_cast<NametagMode>(r.U8()); const uint8_t coll = r.left() ? r.U8() : 0; if (r.ok() && on.settings) on.settings(tags, coll); break; }
+    case Msg::PlayerGear: { const auto id = r.U16(); size_t n = 0; const uint8_t* rest = r.Rest(n); if (r.ok() && on.gear) on.gear(id, rest, n); break; }
     case Msg::Message: { const auto c = r.U32(); const auto t = r.Str(); if (r.ok() && on.message) on.message(c, t); break; }
     case Msg::SetTime: { const auto h = r.F32(); const auto p = r.U8(); if (r.ok() && on.setTime) on.setTime(h, p != 0); break; }
     case Msg::SetWeather: { const auto w = r.I32(); if (r.ok() && on.setWeather) on.setWeather(w); break; }
@@ -301,6 +406,11 @@ void Client::SendInventory(const std::vector<std::pair<std::string, int>>& items
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 
+void Client::SendHit(uint16_t victim, float damage, HitZone zone, const std::string& weapon) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::Hit); w.U16(victim); w.F32(damage); w.U8(uint8_t(zone)); w.Str(weapon.substr(0, kItemKeyMax));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
 void Client::SendGameEvent(GameEventType type, const std::string& cls, const std::string& detail, const std::string& id, float x, float y, float z) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::GameEvent); w.U8(uint8_t(type)); w.Str(cls.substr(0, 128)); w.Str(detail.substr(0, kItemKeyMax)); w.Str(id.substr(0, 128));
@@ -308,6 +418,42 @@ void Client::SendGameEvent(GameEventType type, const std::string& cls, const std
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 
+void Client::SendDialogResponse(uint16_t id, bool ok, int item, const std::string& text) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::DialogResponse); w.U16(id); w.U8(ok); w.Put<int16_t>(int16_t(item)); w.Str(text.substr(0, 256));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendUse(uint16_t interaction) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::Use); w.U16(interaction);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendVehicle(Msg op, uint16_t id, const VehicleState* state) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(op); w.U16(id);
+    if (state) w.Vehicle(*state);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendImageRequest(const std::string& name) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::ImageRequest); w.Str(name.substr(0, 128));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendKey(uint8_t virtualKey) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::Key); w.U8(virtualKey);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendCustomizeDone(bool ok, const std::string& skin) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::CustomizeDone); w.U8(ok); w.Str(skin.substr(0, kLookPathMax));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendGear(const std::vector<uint8_t>& gear) {
+    if (status_ != Status::Connected || gear.size() > kGearMax) return;
+    Writer w; w.Op(Msg::Gear); w.Raw(gear.data(), gear.size());
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
 void Client::SendLook(const std::string& lookPath) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::Look); w.Str(lookPath.substr(0, kLookPathMax));

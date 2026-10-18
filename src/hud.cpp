@@ -1,4 +1,5 @@
 #include "hud.h"
+#include "overlay.h"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -44,7 +45,8 @@ LRESULT CALLBACK GameProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         std::lock_guard g(lock);
         if (!open) {
             const bool fresh = !(l & (1 << 30));
-            if (msg == WM_KEYDOWN && fresh && allowed && visible && (w == 'T' || w == VK_OEM_2) && !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
+            // Not while a DGMP window holds the cursor (its text fields take the keys).
+            if (msg == WM_KEYDOWN && fresh && allowed && visible && !overlay::CursorMode() && (w == 'T' || w == VK_OEM_2) && !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
                 open = true; skipChar = true; input = w == VK_OEM_2 ? L"/" : L""; historyPos = -1; dirty = true;
                 return 0;
             }

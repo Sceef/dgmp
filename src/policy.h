@@ -1,6 +1,7 @@
 #pragma once
 #include "ue.h"
 #include <cstdint>
+#include <vector>
 namespace policy {
 struct State {
     bool photoDisabled=false;
@@ -26,6 +27,10 @@ struct State {
 void ConfigureMarkers(uint32_t mask);
 // Map markers created by DGMP itself (other players): always shown, whatever the category mask.
 void AllowMarker(ue::UObject* component,bool allowed);
+// A marker of the game kept off the map and radar whatever its category (a bike that is not yours).
+void DenyMarker(ue::UObject* component,bool denied);
+// Shown on the radar (minimap) only, not on the big map.
+void RadarOnly(ue::UObject* component,bool radarOnly);
 // While true the game's mission waypoint and its road route belong to a server marker: the story
 // suppression stops hiding them.
 void SetRouteOwned(bool owned);
@@ -36,7 +41,11 @@ void SetQuestHud(bool active);
 void WatchRewardScreens();
 bool RewardPanelOpen();  // the quest reward panel is up
 bool TakeDeath();  // the local player died since the last call
-void SetEditorSession(bool on);  // single-player editor: no pause when the window loses focus
+void SetEditorSession(bool on);
+// The game never pauses when its window loses focus (editor and multiplayer). Once, after ue::Init.
+void DisableFocusPause(ue::UObject* engine);
+// Multiplayer: the game's menus (pause menu, map) open without pausing the world.
+void DisableMenuPause();  // single-player editor: no pause when the window loses focus
 // Multiplayer: a hit that would kill the local player is cancelled (ModifyDamage returns 0) and
 // reported here instead; the mode's death (body, respawn) follows. Set by mp.
 void SetInterceptLethalHits(bool on);
@@ -47,7 +56,13 @@ bool TakeDeathReloadBlocked();     // it was skipped since the last call (the pl
 void SetTakeable(ue::UObject* pickup,bool takeable);
 // Dev: logs every distinct event the local pawn, controller and their components receive for
 // `seconds` (finding the game functions behind looting, pickups, interactions...). Returns hooked count.
-int TraceEvents(double seconds);
+// `extra`: also these objects and their components.
+// Point and radial damage taken by watched actors (remote players' bodies): the actor, the hit
+// component (null for radial damage), the damage, the instigating controller and the damage causer.
+using DamageWatcher = void (*)(ue::UObject* actor, ue::UObject* component, float damage, ue::UObject* instigator, ue::UObject* causer);
+void SetDamageWatcher(DamageWatcher watcher);
+void WatchDamage(ue::UObject* actor);
+int TraceEvents(double seconds, const std::vector<ue::UObject*>& extra = {});
 // Game events (gameevents.cpp): every event of an observed object is passed to the observer.
 void SetObserver(void(*observer)(ue::UObject* object,const std::string& name));
 void Observe(ue::UObject* object);

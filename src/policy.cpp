@@ -1,4 +1,5 @@
 #include "policy.h"
+#include "overlay.h"
 #include "lang.h"
 #include "log.h"
 #include "devmenu.h"
@@ -42,6 +43,7 @@ bool blockDeathReload=false,deathReloadBlocked=false;
 bool interceptLethal=false,lethalHit=false;  // SetInterceptLethalHits / TakeLethalHit  // diagnostics: what the game does after a death
 std::set<UObject*> takeable;  // SetTakeable
 void(*observer)(UObject*,const std::string&)=nullptr; std::set<UObject*> observed;  // SetObserver / Observe
+std::set<UObject*> damageWatched; DamageWatcher damageWatcher=nullptr;
 std::set<UObject*> traceObjects; std::set<std::string> traceSeen; double traceUntil=0;  // TraceEvents  // _Objectives.RewardsPanel (UI_HudJob_C), hooked while a quest reward is shown
 bool questHud=false;  // a server quest owns the objective HUD (SetQuestHud)
 UObject* pauseControls=nullptr;
@@ -133,6 +135,13 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
         if(name=="OnConfirmPressed" || name.rfind("BndEvt__MenuInteract_Confirm",0)==0) rewardAutoConfirmUntil=GetTickCount64()/1000.0+2;
     }
     if(observer && observed.count(object)) observer(object,name);
+    if(damageWatcher && parameters && damageWatched.count(object) && (name=="ReceivePointDamage" || name=="ReceiveRadialDamage")) {
+        auto at=[&](const char* field) -> uint8_t* { auto p=FindProperty(function,field); return p?static_cast<uint8_t*>(parameters)+Field<int>(p,off::UProperty_Offset):nullptr; };
+        auto obj=[&](const char* field) -> UObject* { auto p=at(field); return p?*reinterpret_cast<UObject**>(p):nullptr; };
+        const float damage=at("Damage")?*reinterpret_cast<float*>(at("Damage")):at("DamageReceived")?*reinterpret_cast<float*>(at("DamageReceived")):0.f;
+        UObject* instigator=name=="ReceivePointDamage"?obj("InstigatedBy"):obj("InstigatedBy");
+        damageWatcher(object,name=="ReceivePointDamage"?obj("HitComponent"):nullptr,damage,instigator,obj("DamageCauser"));
+    }
     // The editor keeps running when its window loses focus (alt-tab to notes, the launcher...).
     if(editorSession && name=="PauseOnFocusLost") { static int n=0; if(n++<3) dg::Log("Editor: pause on focus loss skipped"); return; }
     // Multiplayer death: no checkpoint reload (it rolls the world and the backpack back to the save);
@@ -221,7 +230,7 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
         if(state.blockedPhoto<=4) dg::Log("Photo mode event blocked: %s",name.c_str());
         return;
     }
-    if(editorActive && (CombatInput(name) || name=="StartPrimaryFire" || name=="StartManualAimWeapon" || name=="StartManualAimThrowable" || name=="StartMeleeAttack")) {
+    if((editorActive || overlay::CursorMode()) && (CombatInput(name) || name=="StartPrimaryFire" || name=="StartManualAimWeapon" || name=="StartManualAimThrowable" || name=="StartMeleeAttack")) {
         ++state.blockedCombat;
         if(state.blockedCombat<=8) dg::Log("Editor combat event blocked: %s",name.c_str());
         return;
@@ -329,7 +338,14 @@ bool MakeReturnText(TextValue& out) {
     auto library=FindObject("/Script/Engine.Default__KismetTextLibrary");
     auto f=library?Fn(library,"Conv_StringToText"):nullptr;
     if(!f) { if(++attempts==8) dg::Log("Pause menu: Conv_StringToText unavailable; return entry keeps its native label"); return false; }
-    const wchar_t* label=lang::Pick(L"Вернуться в игру",L"Return to game"); const int32_t len=int32_t(wcslen(label)+1);
+    // In the game's own menu: the game's interface language (its culture), not the launcher's.
+    bool russian=!lang::English();
+    if(auto intl=FindObject("/Script/Engine.Default__KismetInternationalizationLibrary")) if(auto c=Fn(intl,"GetCurrentCulture")) {
+        Params q(c); Call(intl,"GetCurrentCulture",&q);
+        const FString culture=q.Get<FString>("ReturnValue");  // the engine's string; left to it (read once)
+        if(culture.Data && culture.Num>=3) russian=(culture.Data[0]==L'r' || culture.Data[0]==L'R') && (culture.Data[1]==L'u' || culture.Data[1]==L'U');
+    }
+    const wchar_t* label=russian?L"Вернуться в игру":L"Return to game"; const int32_t len=int32_t(wcslen(label)+1);
     Params p(f); if(!p.Set("InString",FString{label,len,len})) { attempts=8; return false; }
     Call(library,"Conv_StringToText",&p);
     // The parameter frame is never destructed, so the returned reference now belongs to `out`.
@@ -572,8 +588,11 @@ void BoolArg(UObject* object,const char* fn,const char* parameter,bool value) {
     if(auto f=Fn(object,fn)) { Params p(f); p.SetBool(parameter,value); Call(object,fn,&p); }
 }
 std::map<UObject*,int> ownMarkers;  // component -> serial
+std::map<UObject*,int> deniedMarkers;  // component -> serial
+std::map<UObject*,int> radarOnlyMarkers;  // component -> serial
 bool MarkerAllowed(UObject* component) {
     if(auto it=ownMarkers.find(component);it!=ownMarkers.end() && it->second==SerialAt(component->InternalIndex)) return true;
+    if(auto it=deniedMarkers.find(component);it!=deniedMarkers.end() && it->second==SerialAt(component->InternalIndex)) return false;
     const uint8_t type=Read<uint8_t>(component,"LocationType",255);
     if(type>=30 || !(markerMask.load()&(1u<<type))) return false;
     if(type==9 && storyOff && IsValid(map)) {
@@ -611,7 +630,9 @@ void SuppressPresentation() {
             if(baseline==markerBaselines.end() || baseline->second.serial!=serial)
                 baseline=markerBaselines.insert_or_assign(o->InternalIndex,MarkerBaseline{serial,GetBoolProp(o,"bRenderWaypointMarker")}).first;
             BoolArg(o,"SetHudAndMapVisibility","Visible",visible);
-            if(auto f=Fn(o,"SetVisibility")) { Params p(f); p.SetBool("VisibleOnMiniMap",visible); p.SetBool("VisibleOnMap",visible); Call(o,"SetVisibility",&p); }
+            auto radar=radarOnlyMarkers.find(o);
+            const bool onMap=visible && !(radar!=radarOnlyMarkers.end() && radar->second==serial);
+            if(auto f=Fn(o,"SetVisibility")) { Params p(f); p.SetBool("VisibleOnMiniMap",visible); p.SetBool("VisibleOnMap",onMap); Call(o,"SetVisibility",&p); }
             SetBoolProp(o,"bHidden",!visible);
             SetBoolProp(o,"bRenderWaypointMarker",visible && baseline->second.waypoint);
             if(!visible) { ++state.hiddenMarkers; }
@@ -924,7 +945,7 @@ void PruneHooks() {
         // so they cannot tell objects apart). A reused slot or a new object at the address is not ours.
         if(ObjectAt(h->index)==h->object && h->object->VTable==h->table.data()) { ++it; continue; }
         if(auto a=activeHooks.find(h->object);a!=activeHooks.end() && a->second==h) activeHooks.erase(a);
-        observed.erase(h->object); traceObjects.erase(h->object); takeable.erase(h->object);
+        observed.erase(h->object); traceObjects.erase(h->object); takeable.erase(h->object); damageWatched.erase(h->object);
         it=hooks.erase(it); ++freed;
     }
     if(freed>100) dg::Log("Policy hooks pruned: %zu (live %zu)",freed,hooks.size());
@@ -951,7 +972,7 @@ void NeutralizeVignettes() {
         Write<float>(anim,"RateScale",50.f);
     }
 }
-int TraceEvents(double seconds) {
+int TraceEvents(double seconds, const std::vector<UObject*>& extra) {
     UObject* controller=abilityController;
     traceObjects.clear(); traceSeen.clear();
     // World objects the player acts on: searchable cars, doors, pickups, explosives.
@@ -964,22 +985,59 @@ int TraceEvents(double seconds) {
             bool world=false; for(auto cls:worldClasses) world|=IsA(o,cls);
             if(world) { Install(o); traceObjects.insert(o); continue; }
         }
-        for(UObject* outer=o;outer;outer=outer->Outer) if(outer==localPawn || (controller && outer==controller)) { Install(o); traceObjects.insert(o); break; }
+        for(UObject* outer=o;outer;outer=outer->Outer) if(outer==localPawn || (controller && outer==controller) || std::find(extra.begin(),extra.end(),outer)!=extra.end()) { Install(o); traceObjects.insert(o); break; }
     }
     traceUntil=GetTickCount64()/1000.0+seconds;
     dg::Log("TRACE start: %zu objects for %.0f s",traceObjects.size(),seconds);
     return int(traceObjects.size());
 }
+void SetDamageWatcher(DamageWatcher fn) { damageWatcher=fn; }
+void WatchDamage(UObject* o) { if(!IsValid(o)) return; Install(o,true); damageWatched.insert(o); }
 void SetBlockDeathReload(bool on) { blockDeathReload=on; }
 bool TakeDeathReloadBlocked() { const bool b=deathReloadBlocked; deathReloadBlocked=false; return b; }
 void SetInterceptLethalHits(bool on) { interceptLethal=on; }
 bool TakeLethalHit() { const bool h=lethalHit; lethalHit=false; return h; }
 void SetEditorSession(bool on) { editorSession=on; }
+// ABendPlayerController::PauseOnFocusLost (virtual, called from native code: no event to block)
+// opens the pause menu. Its body becomes a plain return; the bytes are checked against this build.
+// UBaseMenuWidget::SetGamePaused (native, called by every menu of the game) pauses the world
+// through the player controller. Its body becomes a plain return; the bytes are checked first.
+void DisableMenuPause() {
+    static bool done=false; if(done) return; done=true;
+    uint8_t* code=reinterpret_cast<uint8_t*>(Base()+0x8021F0);
+    static const uint8_t expected[]{0x48,0x89,0x5C,0x24,0x08};  // mov [rsp+8], rbx
+    if(std::memcmp(code,expected,sizeof(expected))!=0) { dg::Log("Menu pause: unexpected code at BaseMenuWidget::SetGamePaused, left alone"); return; }
+    DWORD old=0;
+    if(VirtualProtect(code,1,PAGE_EXECUTE_READWRITE,&old)) { code[0]=0xC3; VirtualProtect(code,1,old,&old); FlushInstructionCache(GetCurrentProcess(),code,1); }
+    dg::Log("Menu pause disabled (menus do not pause the world)");
+    // UBendAudioManager::PauseMenuOpened pauses the game's sounds for the menu; the running bike's
+    // engine does not come back when it closes. The world goes on, so its sound does too.
+    uint8_t* audio=reinterpret_cast<uint8_t*>(Base()+0x3FA1B0);
+    static const uint8_t audioExpected[]{0x48,0x8B,0x81,0xE0,0x0A,0x00,0x00};  // mov rax, [rcx+0AE0h]
+    if(std::memcmp(audio,audioExpected,sizeof(audioExpected))!=0) { dg::Log("Menu sound pause: unexpected code at PauseMenuOpened, left alone"); return; }
+    if(VirtualProtect(audio,1,PAGE_EXECUTE_READWRITE,&old)) { audio[0]=0xC3; VirtualProtect(audio,1,old,&old); FlushInstructionCache(GetCurrentProcess(),audio,1); }
+    dg::Log("Menu sound pause disabled");
+}
+void DisableFocusPause(UObject* engine) {
+    if(IsValid(engine)) SetBoolProp(engine,"bPauseOnLossOfFocus",false);
+    static bool done=false; if(done) return; done=true;
+    uint8_t* code=reinterpret_cast<uint8_t*>(Base()+0x7986A0);
+    static const uint8_t expected[]{0x40,0x53,0x48,0x83,0xEC,0x20};  // push rbx; sub rsp, 20h
+    if(std::memcmp(code,expected,sizeof(expected))!=0 && !(code[0]==0x53 && code[1]==0x48 && code[2]==0x83 && code[3]==0xEC && code[4]==0x20)) {
+        dg::Log("Focus pause: unexpected code at PauseOnFocusLost, left alone");
+        return;
+    }
+    DWORD old=0;
+    if(VirtualProtect(code,1,PAGE_EXECUTE_READWRITE,&old)) { code[0]=0xC3; VirtualProtect(code,1,old,&old); FlushInstructionCache(GetCurrentProcess(),code,1); }
+    dg::Log("Focus pause disabled (PauseOnFocusLost returns at once)");
+}
 bool TakeDeath() { const bool d=playerDied; playerDied=false; return d; }
 bool RewardPanelOpen() { return IsValid(rewardsPanel) && Read<bool>(rewardsPanel,"Active"); }
 void SetTakeable(UObject* o,bool on) { if(on) takeable.insert(o); else takeable.erase(o); }
 void WatchRewardScreens() { rewardWatchUntil=GetTickCount64()/1000.0+180; rewardStuckSince=0; }
 void AllowMarker(UObject* component,bool allowed) { if(allowed) ownMarkers[component]=SerialAt(component->InternalIndex); else ownMarkers.erase(component); }
+void RadarOnly(UObject* component,bool radarOnly) { if(radarOnly) radarOnlyMarkers[component]=SerialAt(component->InternalIndex); else radarOnlyMarkers.erase(component); }
+void DenyMarker(UObject* component,bool denied) { if(denied) deniedMarkers[component]=SerialAt(component->InternalIndex); else deniedMarkers.erase(component); }
 void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool reveal,bool mapOnly,bool suppressStory) {
     editorActive=editor; revealMap=reveal; onlyMap=mapOnly; localPawn=pawn; storyOff=suppressStory;
     if(IsValid(gameMode)) SetBoolProp(gameMode,"bWantsOWSave",false);

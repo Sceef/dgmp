@@ -1,7 +1,7 @@
 // dgmp-probe.exe — test client for dgmp-server without the game.
 //   dgmp-probe query <host[:port]> [...]     server status
 //   dgmp-probe lan                           LAN discovery
-//   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text]
+//   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text] [--auto]
 //       stays connected, walks a small circle, prints server events; stdin lines are sent as chat.
 #include "../shared/netclient.h"
 #include <windows.h>
@@ -54,12 +54,13 @@ int main() {
         std::string host; uint16_t port;
         if (!net::ParseAddress(argv[2], host, port)) return 2;
         std::string nick = argv[3], password;
-        double seconds = 0; std::vector<std::string> says; bool sendPose = false; int posesIn = 0;
+        double seconds = 0; std::vector<std::string> says; bool sendPose = false, autoUi = false; int posesIn = 0;
         for (int i = 4; i < argc; ++i) {
             const std::string a = argv[i];
             if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
             else if (a == "--say" && i + 1 < argc) says.push_back(argv[++i]);
             else if (a == "--pose") sendPose = true;
+            else if (a == "--auto") autoUi = true;
             else password = a;
         }
         net::Client c;
@@ -75,6 +76,24 @@ int main() {
         c.on.teleport = [&](float x, float y, float z, float yaw) { px = x; py = y; pz = z; std::printf("* teleport %.0f %.0f %.0f yaw %.0f\n", x, y, z, yaw); };
         c.on.hint = [](const std::string& t, const std::string& x, const std::string& img, bool p, float) { std::printf("* HINT [%s] %s (image=%s pause=%d)\n", t.c_str(), x.c_str(), img.c_str(), p); };
         c.on.pose = [&](uint16_t, const uint8_t*, size_t size) { if (++posesIn == 1) std::printf("* first pose received: %zu bytes\n", size); };
+        // The mode's UI (--auto answers dialogs with the first button and the last item, uses interactions, presses watched keys).
+        c.on.dialog = [&](const net::Client::Events::DialogInfo& d) {
+            if (d.style == net::DialogStyle::Close) { std::printf("* DIALOG %u closed\n", d.id); return; }
+            std::printf("* DIALOG %u style %d [%s] %s  buttons [%s] [%s] default [%s] headers [%s] items %zu\n", d.id, int(d.style), d.title.c_str(), d.text.c_str(),
+                        d.button1.c_str(), d.button2.c_str(), d.defaultText.c_str(), d.headers.c_str(), d.items.size());
+            for (auto& it : d.items) std::printf("    - %s\n", it.c_str());
+            if (autoUi) c.SendDialogResponse(d.id, true, d.items.empty() ? -1 : int(d.items.size()) - 1, "typed by probe");
+        };
+        c.on.hud = [](const std::string& id, const std::string& json) { std::printf("* HUD [%s] %s\n", id.c_str(), json.empty() ? "(removed)" : json.c_str()); };
+        c.on.interaction = [&](uint16_t id, const net::Client::Events::InteractionInfo* in) {
+            if (!in) { std::printf("* INTERACTION %u removed\n", id); return; }
+            std::printf("* INTERACTION %u at %.0f %.0f %.0f r=%.0f key=%c [%s]\n", id, in->x, in->y, in->z, in->radius, in->key, in->text.c_str());
+            if (autoUi) c.SendUse(id);
+        };
+        c.on.watchKeys = [&](const std::vector<uint8_t>& keys) {
+            std::printf("* WATCH KEYS"); for (auto k : keys) std::printf(" %u", k); std::printf("\n");
+            if (autoUi) for (auto k : keys) c.SendKey(k);
+        };
         if (!c.Connect(host, port, nick, password)) return 1;
 
         std::mutex lock; std::vector<std::string> input;

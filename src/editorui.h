@@ -10,4 +10,6 @@ void Start();  // once the game window exists
 void Update(double now, ue::UObject* pawn, ue::UObject* controller);
 // The editor status text (position, fly speed, keys), shown folded in the bottom-left corner.
 void SetStatus(const std::wstring& text);
+// The editor camera's vertical look is inverted (a setting of the editor window, editor.ini).
+bool InvertLook();
 }

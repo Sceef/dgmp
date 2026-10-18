@@ -1,6 +1,7 @@
 #include "worldedit.h"
 #include "log.h"
 #include <windows.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -13,7 +14,14 @@ using namespace ue;
 namespace worldedit {
 namespace {
 struct Transform { FVector at{}; FRotator rot{}; float scale = 1; };
-struct Added { std::string uid, asset; Transform t; UObject* actor = nullptr; bool failed = false; };
+// A light of the mode: colour (sRGB 0..1), intensity (the engine's units), reach in metres, the spot's
+// cone in degrees. A small shape shows it in the editor; in a game only the light is there.
+struct Light {
+    bool spot = false, shadows = false;
+    float color[3] = {1.f, 0.85f, 0.7f}, intensity = 5000.f, radius = 10.f, cone = 40.f;
+    bool operator==(const Light&) const = default;
+};
+struct Added { std::string uid, asset; Transform t; bool light = false; Light cfg; UObject* actor = nullptr; UObject* lightComp = nullptr; bool failed = false; };
 
 std::set<std::string> removed;
 std::map<std::string, Transform> moved;
@@ -101,6 +109,88 @@ UObject* SpawnProp(const Added& a, UObject* context) {
     Place(actor, a.t);
     return actor;
 }
+// Live settings of a light component (the rest needs a new one: type, shadows).
+void ApplyLight(UObject* comp, UObject* shape, const Light& l) {
+    if (!IsValid(comp)) return;
+    if (auto f = Fn(comp, "SetIntensity")) { Params p(f); p.Set<float>("NewIntensity", l.intensity); Call(comp, "SetIntensity", &p); }
+    struct { float r, g, b, a; } linear{std::pow(l.color[0], 2.2f), std::pow(l.color[1], 2.2f), std::pow(l.color[2], 2.2f), 1.f};
+    if (auto f = Fn(comp, "SetLightColor")) { Params p(f); p.Set("NewLightColor", linear); p.SetBool("bSRGB", false); Call(comp, "SetLightColor", &p); }
+    if (auto f = Fn(comp, "SetAttenuationRadius")) { Params p(f); p.Set<float>("NewRadius", l.radius * 100.f); Call(comp, "SetAttenuationRadius", &p); }
+    if (l.spot) {
+        if (auto f = Fn(comp, "SetOuterConeAngle")) { Params p(f); p.Set<float>("NewOuterConeAngle", l.cone); Call(comp, "SetOuterConeAngle", &p); }
+        if (auto f = Fn(comp, "SetInnerConeAngle")) { Params p(f); p.Set<float>("NewInnerConeAngle", l.cone * 0.7f); Call(comp, "SetInnerConeAngle", &p); }
+    }
+    // The editor's shape takes the light's colour.
+    if (IsValid(shape)) if (auto f = Fn(shape, "GetMaterial")) {
+        Params g(f); g.Set<int>("ElementIndex", 0); Call(shape, "GetMaterial", &g);
+        UObject* mat = g.Get<UObject*>("ReturnValue");
+        if (IsValid(mat) && Fn(mat, "SetVectorParameterValue")) {
+            static const FName colorName = FindName("Color");
+            struct { float r, g, b, a; } c{l.color[0], l.color[1], l.color[2], 1.f};
+            Params p(Fn(mat, "SetVectorParameterValue")); p.Set("ParameterName", colorName); p.Set("Value", c); Call(mat, "SetVectorParameterValue", &p);
+        }
+    }
+}
+UObject* EngineObject(const char* path) { UObject* o = FindObject(path); return o ? o : LoadAsset(path); }
+// A light: a small sphere (point) or cone (spot, shining down out of its base) with the light on it.
+UObject* SpawnLight(Added& a, UObject* context) {
+    // Rooted: a cached pointer to an asset collected after a level change would crash.
+    static UObject *sphereAsset = nullptr, *coneAsset = nullptr, *baseMatAsset = nullptr;
+    auto kept = [](UObject*& cache, const char* path) { if (!IsValid(cache)) { cache = EngineObject(path); if (cache) AddToRoot(cache); } return cache; };
+    UObject* sphere = kept(sphereAsset, "/Engine/BasicShapes/Sphere.Sphere");
+    UObject* cone = kept(coneAsset, "/Engine/BasicShapes/Cone.Cone");
+    UObject* baseMat = kept(baseMatAsset, "/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial");
+    UObject* cls = FindClass("StaticMeshActor");
+    UObject* lightCls = FindClass(a.cfg.spot ? "SpotLightComponent" : "PointLightComponent");
+    UObject* shapeMesh = a.cfg.spot ? cone : sphere;
+    if (!cls || !lightCls || !shapeMesh || !Statics()) return nullptr;
+    FTransform t; t.Translation = a.t.at; t.Rotation = ToQuat(a.t.rot);
+    Params begin(Fn(Statics(), "BeginSpawningActorFromClass"));
+    begin.Set("WorldContextObject", context); begin.Set("ActorClass", cls); begin.Set("SpawnTransform", t); begin.SetBool("bNoCollisionFail", true);
+    Call(Statics(), "BeginSpawningActorFromClass", &begin);
+    UObject* actor = begin.Get<UObject*>("ReturnValue");
+    if (!actor) return nullptr;
+    UObject* shape = MeshComponent(actor);
+    MakeMovable(shape);
+    if (IsValid(shape)) if (auto f = Fn(shape, "SetStaticMesh")) { Params p(f); p.Set("NewMesh", shapeMesh); Call(shape, "SetStaticMesh", &p); }
+    Params finish(Fn(Statics(), "FinishSpawningActor"));
+    finish.Set("Actor", actor); finish.Set("SpawnTransform", t);
+    Call(Statics(), "FinishSpawningActor", &finish);
+    Place(actor, a.t);
+    if (auto f = Fn(actor, "SetActorScale3D")) { Params p(f); p.Set("NewScale3D", FVector{0.2f, 0.2f, 0.2f}); Call(actor, "SetActorScale3D", &p); }
+    if (IsValid(shape)) {
+        if (auto f = Fn(shape, "SetCastShadow")) { Params p(f); p.SetBool("NewCastShadow", false); Call(shape, "SetCastShadow", &p); }
+        if (baseMat) if (auto f = Fn(shape, "CreateDynamicMaterialInstance")) { Params p(f); p.Set<int>("ElementIndex", 0); p.Set("SourceMaterial", baseMat); Call(shape, "CreateDynamicMaterialInstance", &p); }
+        // A game shows only the light; the editor keeps the shape to click and move.
+        if (!previewMode) {
+            if (auto f = Fn(shape, "SetVisibility")) { Params p(f); p.SetBool("bNewVisibility", false); p.SetBool("bPropagateToChildren", false); Call(shape, "SetVisibility", &p); }
+            BoolCall(actor, "SetActorEnableCollision", "bNewActorEnableCollision", false);
+        }
+    }
+    UObject* light = NewObject(lightCls, actor);
+    if (!light) { Call(actor, "K2_DestroyActor"); return nullptr; }
+    MakeMovable(light);
+    SetBoolProp(light, "CastShadows", a.cfg.shadows);
+    SetBoolProp(light, "CastDynamicShadows", a.cfg.shadows);
+    RegisterComponent(light);
+    if (auto f = Fn(light, "K2_AttachTo")) { Params p(f); p.Set("InParent", shape); p.Set<uint8_t>("AttachType", 2); Call(light, "K2_AttachTo", &p); }
+    if (a.cfg.spot) if (auto f = Fn(light, "K2_SetRelativeRotation")) { Params p(f); p.Set("NewRotation", FRotator{-90.f, 0, 0}); Call(light, "K2_SetRelativeRotation", &p); }
+    a.lightComp = light;
+    ApplyLight(light, shape, a.cfg);
+    return actor;
+}
+Light ReadLight(const std::string& asset, const json::Value& v) {
+    Light l;
+    l.spot = asset == "light:spot";
+    if (!v.isObject()) return l;
+    const json::Value& c = v["color"];
+    if (c.isArray() && c.size() >= 3) for (int i = 0; i < 3; ++i) l.color[i] = std::clamp(float(c[size_t(i)].asNumber()), 0.f, 1.f);
+    l.intensity = std::max(0.f, float(v["intensity"].asNumber(l.intensity)));
+    l.radius = std::clamp(float(v["radius"].asNumber(l.radius)), 0.1f, 500.f);
+    l.cone = std::clamp(float(v["cone"].asNumber(l.cone)), 1.f, 89.f);
+    l.shadows = v["shadows"].asBool(false);
+    return l;
+}
 // ---------------------------------------------------------------- merged mesh collections
 // The game merges small static objects of a level into one BendStaticMeshCollection whose drawing is
 // baked: a single piece of it cannot be moved. Editing a piece replaces the whole collection by
@@ -155,11 +245,14 @@ FVector Rotate(const FQuat& q, const FVector& v) {  // q * v * q^-1
     const FVector t{2 * (u.Y * v.Z - u.Z * v.Y), 2 * (u.Z * v.X - u.X * v.Z), 2 * (u.X * v.Y - u.Y * v.X)};
     return {v.X + q.W * t.X + (u.Y * t.Z - u.Z * t.Y), v.Y + q.W * t.Y + (u.Z * t.X - u.X * t.Z), v.Z + q.W * t.Z + (u.X * t.Y - u.Y * t.X)};
 }
-UObject* SpawnPiece(const Piece& piece, UObject* context) {
+// `owner`: the collection actor. The piece is made in the collection's level, so it leaves with it
+// (its materials may live in that level's package: a piece outliving it crashed the renderer).
+UObject* SpawnPiece(const Piece& piece, UObject* context, UObject* owner) {
     static UObject* cls = nullptr; if (!cls) cls = FindClass("StaticMeshActor");
     if (!cls || !Statics() || !IsValid(piece.mesh)) return nullptr;
     Params begin(Fn(Statics(), "BeginSpawningActorFromClass"));
     begin.Set("WorldContextObject", context); begin.Set("ActorClass", cls); begin.Set("SpawnTransform", piece.t); begin.SetBool("bNoCollisionFail", true);
+    begin.Set("Owner", owner);
     Call(Statics(), "BeginSpawningActorFromClass", &begin);
     UObject* actor = begin.Get<UObject*>("ReturnValue");
     if (!actor) return nullptr;
@@ -278,18 +371,29 @@ void PlacePiece(UObject* actor, const Collection& c, int index, const Transform&
 // Spline pieces (roads, curbs) would come back straight: collections made of them are not replaced.
 constexpr int kMaxSplines = 8;
 int SplineCount(UObject* comp) { return *reinterpret_cast<const int16_t*>(reinterpret_cast<uint8_t*>(comp) + 0x622); }  // CachedMeshSplineMeshCount
-void Replace(UObject* collectionActor, UObject* context) {
+// False when it cannot be done yet (its pieces are not loaded): try again later.
+bool Replace(UObject* collectionActor, UObject* context) {
     const std::string key = KeyOfLevelActor(collectionActor);
     UObject* comp = Field<UObject*>(collectionActor, kCollectionComponent);
-    if (!IsValid(comp)) return;
-    const bool spawn = !collections.count(key);
+    if (!IsValid(comp)) return true;
+    // Again when the level streamed out (its pieces left with it) and back in.
+    bool spawn = !collections.count(key);
+    if (!spawn) {
+        bool any = false;
+        for (UObject* a : collections[key].actors) if (IsValid(a)) { any = true; break; }
+        if (!any) { for (auto it = pieceKeys.begin(); it != pieceKeys.end();) it = it->second.rfind(key + "#", 0) == 0 ? pieceKeys.erase(it) : std::next(it);
+                    for (auto it = pieceOf.begin(); it != pieceOf.end();) it = !IsValid(it->first) ? pieceOf.erase(it) : std::next(it);
+                    collections.erase(key); spawn = true; }
+    }
     std::vector<Piece> pieces;
     if (spawn) {
         pieces = ReadPieces(comp);
-        if (SplineCount(comp) > kMaxSplines) { dg::Log("World edit: collection %s has %d spline pieces, not replaced", key.c_str(), SplineCount(comp)); return; }
+        if (SplineCount(comp) > kMaxSplines) { dg::Log("World edit: collection %s has %d spline pieces, not replaced", key.c_str(), SplineCount(comp)); return true; }
+        // Still streaming in: removing it now would leave the place empty (walls and roofs gone).
+        if (pieces.empty()) { collections.erase(key); return false; }
     }
     if (auto f = Fn(comp, "K2_DestroyComponent")) { Params p(f); p.Set("Object", comp); Call(comp, "K2_DestroyComponent", &p); }
-    if (!spawn) return;
+    if (!spawn) return true;
     const ULONGLONG started = GetTickCount64();
     Collection& c = collections[key];
     c.actors.assign(pieces.size(), nullptr);
@@ -300,11 +404,12 @@ void Replace(UObject* collectionActor, UObject* context) {
     for (size_t i = 0; i < pieces.size(); ++i) {
         const std::string pieceKey = key + "#" + std::to_string(c.leader[i]);
         if (!previewMode && (removed.count(pieceKey) || removed.count(pieceKey + ":" + std::to_string(i)))) continue;
-        UObject* actor = SpawnPiece(pieces[i], context);
+        UObject* actor = SpawnPiece(pieces[i], context, collectionActor);
         if (!actor) continue;
         c.actors[i] = actor; pieceKeys[actor] = pieceKey; pieceOf[actor] = {&c, int(i)}; ++made;
     }
     dg::Log("World edit: collection %s replaced by %d of %zu pieces in %llu ms", key.c_str(), made, pieces.size(), GetTickCount64() - started);
+    return true;
 }
 bool Edited(const std::string& collectionKey) {
     const std::string prefix = collectionKey + "#";
@@ -362,9 +467,12 @@ void Set(const json::Value& edits, bool preview) {
     std::vector<Added> next;
     for (auto& v : edits["add"].elements()) {
         Added a; a.uid = v["uid"].asString(); a.asset = v["asset"].asString(); a.t = ReadTransform(v);
-        for (auto& old : added) if (old.uid == a.uid && old.asset == a.asset && IsValid(old.actor)) {
-            a.actor = old.actor; old.actor = nullptr;
+        a.light = a.asset.rfind("light:", 0) == 0;
+        if (a.light) a.cfg = ReadLight(a.asset, v["light"]);
+        for (auto& old : added) if (old.uid == a.uid && old.asset == a.asset && IsValid(old.actor) && (!a.light || old.cfg.shadows == a.cfg.shadows)) {
+            a.actor = old.actor; old.actor = nullptr; a.lightComp = old.lightComp;
             Place(a.actor, a.t);
+            if (a.light && !(old.cfg == a.cfg)) ApplyLight(a.lightComp, MeshComponent(a.actor), a.cfg);
         }
         next.push_back(std::move(a));
     }
@@ -389,7 +497,7 @@ void Update(UObject* pawn) {
         if (!o || (o->ObjectFlags & 0x10) || known.count(o) || !IsValid(o) || !IsA(o, actorClass)) continue;
         const std::string key = KeyOf(o);
         known[o] = key;
-        if (IsA(o, collectionClass) && Edited(key)) { Replace(o, pawn); continue; }
+        if (IsA(o, collectionClass) && Edited(key)) { if (!Replace(o, pawn)) known.erase(o); continue; }  // not loaded yet: the next pass
         // A part of an object of a collection has its own edits, over those of the whole object.
         const auto piece = pieceOf.find(o);
         const std::string part = piece != pieceOf.end() ? key + ":" + std::to_string(piece->second.second) : std::string();
@@ -412,7 +520,7 @@ void Update(UObject* pawn) {
         if (IsValid(a.actor) || a.failed) continue;
         const float dx = a.t.at.X - here.X, dy = a.t.at.Y - here.Y;
         if (dx * dx + dy * dy > 40000.f * 40000.f) continue;
-        a.actor = SpawnProp(a, pawn);
+        a.actor = a.light ? SpawnLight(a, pawn) : SpawnProp(a, pawn);
         if (!a.actor) { a.failed = true; dg::Log("World edit: cannot spawn %s", a.asset.c_str()); }
     }
 }

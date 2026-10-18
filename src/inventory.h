@@ -12,6 +12,8 @@ using Snapshot = std::vector<std::pair<std::string, int>>;  // item key -> amoun
 
 // Game thread. Item keys are the game's KeyName, e.g. kWeaponID_AK47, kAmmoID_AK47, kConsumableID_Bandage_Small.
 void Apply(net::ItemAction action, const std::string& key, int amount);
+// Frozen: no moving; on a bike no throttle, brake or getting off (race countdowns).
+void SetFrozen(bool on);
 void RequestBike(net::BikeAction action, const ue::FVector& pos, float yaw);  // executed by Update
 void Update(ue::UObject* pawn, ue::UObject* controller);
 bool OwnsBike();

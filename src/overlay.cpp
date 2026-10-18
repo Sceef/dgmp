@@ -24,10 +24,27 @@ HWND window = nullptr;
 WNDPROC gameProc = nullptr;
 bool ready = false, failed = false;
 std::atomic<bool> visible{false}, cursor{false}, typing{false}, overUi{false};
-std::atomic<DrawFn> draw{nullptr}, cover{nullptr};
+std::atomic<DrawFn> draw{nullptr}, cover{nullptr}, hud{nullptr};
 std::atomic<ULONGLONG> lastPresent{0};
 ImFont* large = nullptr;
 std::atomic<bool> keepFocus{false};
+std::atomic<int> blockedKey{0};
+// The game hides the system cursor (ShowCursor counter below zero, WM_SETCURSOR); in cursor mode the
+// overlay shows it and gives the game back what it raised afterwards. Window thread only.
+bool cursorShown = false;
+int shownCalls = 0;
+void ApplyCursor() {
+    const bool want = visible && cursor;
+    if (want == cursorShown) return;
+    cursorShown = want;
+    if (want) {
+        int count;
+        do { count = ShowCursor(TRUE); ++shownCalls; } while (count < 0 && shownCalls < 64);
+        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+    } else {
+        for (; shownCalls > 0; --shownCalls) ShowCursor(FALSE);
+    }
+}
 
 void CreateTarget(IDXGISwapChain* chain) {
     ID3D11Texture2D* back = nullptr;
@@ -44,12 +61,20 @@ LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     if (keepFocus) {
         if ((msg == WM_ACTIVATEAPP && !w) || (msg == WM_ACTIVATE && LOWORD(w) == WA_INACTIVE) || msg == WM_KILLFOCUS) return 0;
     }
+    ApplyCursor();
+    // A key the multiplayer UI uses right now (an interaction's E): the game must not act on it too.
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && blockedKey && int(w) == blockedKey && !(visible && cursor)) return 0;
     if (visible && msg == WM_KEYDOWN && w == VK_TAB && !(l & (1 << 30)) && !(cursor && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) {
         cursor = !cursor;
         return 0;
     }
+    // Releases reach ImGui in any mode: a key pressed in cursor mode and let go after it would stay
+    // held there (an Enter that keeps confirming every dialog).
+    if (!(visible && cursor) && ImGui::GetCurrentContext() && (msg == WM_KEYUP || msg == WM_SYSKEYUP)) ImGui_ImplWin32_WndProcHandler(h, msg, w, l);
     if (visible && cursor && ImGui::GetCurrentContext()) {
-        ImGui_ImplWin32_WndProcHandler(h, msg, w, l);
+        const LRESULT handled = ImGui_ImplWin32_WndProcHandler(h, msg, w, l);
+        // The cursor's shape is ImGui's (the game would set none).
+        if (msg == WM_SETCURSOR && LOWORD(l) == HTCLIENT) { if (!handled) SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512))); return TRUE; }
         switch (msg) {
         case WM_KEYDOWN: case WM_CHAR: case WM_INPUT:
         case WM_MOUSEMOVE: case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
@@ -100,14 +125,19 @@ bool Init(IDXGISwapChain* chain) {
 HRESULT __stdcall Present(IDXGISwapChain* chain, UINT sync, UINT flags) {
     if (!ready && !failed) { ready = Init(chain); failed = !ready; }
     lastPresent = GetTickCount64();
-    const DrawFn fn = visible ? DrawFn(draw) : nullptr, first = cover;
-    if (ready && (fn || first)) {
+    const DrawFn fn = visible ? DrawFn(draw) : nullptr, first = cover, layer = hud;
+    if (ready && (fn || first || layer)) {
         if (!target) CreateTarget(chain);
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGuiIO& io = ImGui::GetIO();
         if (cursor) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse; else io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        // The UI takes the keyboard from now on: nothing the game had down counts as held here.
+        static bool hadCursor = false;
+        if (cursor && !hadCursor) io.ClearInputKeys();
+        hadCursor = cursor;
         ImGui::NewFrame();
+        if (layer) layer();
         if (first) first();
         if (fn) fn();
         typing = fn && io.WantTextInput;
@@ -165,6 +195,7 @@ bool Typing() { return typing; }
 bool MouseOverUi() { return overUi; }
 void SetDraw(DrawFn fn) { draw = fn; }
 void SetCover(DrawFn fn) { cover = fn; }
+void SetHud(DrawFn fn) { hud = fn; }
 bool Presenting() { return ready && GetTickCount64() - lastPresent < 500; }
 void* CreateTexture(const void* bgra, int width, int height) {
     if (!device || !bgra || width <= 0 || height <= 0) return nullptr;
@@ -181,6 +212,7 @@ void* CreateTexture(const void* bgra, int width, int height) {
     return view;
 }
 void* LargeFont() { return large; }
+void SetBlockedKey(int vk) { blockedKey = vk; }
 void SetKeepFocus(bool keep) { keepFocus = keep; }
 
 }  // namespace overlay
