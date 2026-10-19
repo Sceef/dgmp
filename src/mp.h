@@ -24,7 +24,7 @@ void Update(double now, float dt, ue::UObject* pawn, ue::UObject* controller, bo
 bool Respawning();
 bool TakeTeleport(ue::FVector& pos, float& yaw, bool& initial);
 
-// Editor (no server): shows the quest open in the launcher's quest window (quest_preview.json) as
+// Editor (no server): shows the quest open in the in-game quest editor (quest_preview.json) as
 // quest markers in the world, the selected step highlighted. Game thread, every frame.
 void UpdateEditorPreview(double now, ue::UObject* pawn);
 

@@ -146,6 +146,7 @@ void Server::RemovePlayer(Player* p, uint8_t reason) {
         static const char* why[] = {"left", "timed out", "kicked"};
         Log("%s (id %u) %s", p->nick.c_str(), id, why[std::min<uint8_t>(reason, 2)]);
         LeaveVehicle(p, nullptr);  // its vehicle stays where it rode it
+        if (p->carrying) LoseCarry(*p, p->state.x, p->state.y, p->state.z - 90.f, p->state.yaw, "quit");  // its box falls where it stood
         script_->PlayerQuit(*p, reason);
         net::Writer w; w.Op(net::Msg::PlayerQuit); w.U16(id); w.U8(reason);
         players_.erase(id);
@@ -190,6 +191,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         if (e.type == uint8_t(net::GameEventType::Died)) {
             // The mode may take things away (playerDeath); the backpack is otherwise kept.
             p->inventoryAtDeath = p->inventory;
+            if (p->carrying) LoseCarry(*p, p->state.x, p->state.y, p->state.z - 90.f, p->state.yaw, "death");
             // Everyone else leaves a body where they see the player (the player leaves its own).
             net::Writer w; w.Op(net::Msg::Corpse); w.U16(p->id);
             for (auto& [id, other] : players_) if (other.get() != p && other->ready && other->peer) SendTo(other->peer, w, true);
@@ -294,6 +296,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         }
         break;
     }
+    case net::Msg::CarryAction: OnCarryAction(*p, r); break;
     case net::Msg::Key: {
         const uint8_t key = r.U8();
         if (r.ok() && watchedKeys_.count(key)) script_->KeyPress(*p, key);
@@ -405,6 +408,7 @@ void Server::OnHello(ENetPeer* peer, net::Reader& r) {
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
     for (auto& [aid, a] : actors_) SendActor(peer, a);
+    for (auto& [cid, c] : carries_) SendCarry(p, c);
     for (auto& [vid, v] : vehicles_) { SendVehicle(p, v); if (!v.route.empty()) SendRoute(p, v); }
     SendImageList(p);
     for (auto& [iid, ic] : icons_) SendIcon(peer, ic);
@@ -511,6 +515,7 @@ void Server::LoadEnvironment(const std::string& mode) {
     LoadModeSkins(mode);
     LoadImages(mode);
     LoadWorldActors(mode);
+    LoadCarries(mode);
     LoadZones(mode);
     std::ifstream in(root_ / "modes" / mode / "world.json", std::ios::binary);
     std::stringstream ss; ss << in.rdbuf();
@@ -699,6 +704,20 @@ bool Server::CanHurt(const Player& victim, const Player& attacker) const {
     return pvp_ || (v && a);
 }
 // The line at the top of the screen while the zone changes the rule (or says something of its own).
+void Server::SetMoney(Player* p, int64_t amount) {
+    if (!p) return;
+    p->money = std::clamp<int64_t>(amount, -999999999, 999999999);
+    ShowMoney(p);
+}
+void Server::ShowMoney(Player* p) {
+    if (!p || p->bot || !p->peer) return;
+    if (!p->money) { SetHud(p, "dgmp.money", ""); return; }
+    json::Value h = json::Value::Object();
+    const std::string sum = std::to_string(p->money < 0 ? -p->money : p->money);
+    h.set("text", (p->money < 0 ? "{E07070}-$ " : "{7CD67C}$ ") + sum);
+    h.set("x", 0.985); h.set("y", 0.06); h.set("align", std::string("right")); h.set("size", 1.5);
+    SetHud(p, "dgmp.money", h.dump());
+}
 void Server::UpdateZoneHud(Player* p) {
     if (!p || p->bot || !p->peer) return;
     std::string text;
@@ -1114,6 +1133,136 @@ bool Server::RemoveActor(uint16_t id) {
     net::Writer w; w.Op(net::Msg::Actor); w.U16(id); w.U8(2); Send(nullptr, w, true);
     return true;
 }
+// What the clients can show (src/carry.cpp kModels).
+static const char* const kCarryModels[] = {"crate", "cooler", "medcase", "centrifuge"};
+bool Carry::KnownModel(const std::string& m) { for (auto k : kCarryModels) if (m == k) return true; return false; }
+const char* Carry::ModelList() {
+    static const std::string list = [] { std::string s; for (auto k : kCarryModels) s += (s.empty() ? "" : ", ") + std::string(k); return s; }();
+    return list.c_str();
+}
+// The boxes the editor placed for the mode (a new mode or a reload: whatever lay before goes).
+void Server::LoadCarries(const std::string& mode) {
+    std::vector<uint16_t> old;
+    for (auto& [id, c] : carries_) old.push_back(id);
+    for (auto id : old) RemoveCarry(id);
+    std::ifstream in(root_ / "modes" / mode / "world.json", std::ios::binary);
+    std::stringstream ss; ss << in.rdbuf();
+    json::Value v;
+    if (ss.str().empty() || !json::Value::Parse(ss.str(), v) || !v.isObject()) return;
+    size_t made = 0;
+    for (auto& e : v["carries"].elements()) {
+        Carry c;
+        c.key = e["key"].asString().substr(0, 64); c.tag = e["tag"].asString().substr(0, 64);
+        c.model = e["model"].isString() ? e["model"].asString() : "crate";
+        c.x = float(e["x"].asNumber()); c.y = float(e["y"].asNumber()); c.z = float(e["z"].asNumber()); c.yaw = float(e["yaw"].asNumber());
+        c.world = e["world"].isNumber() ? int32_t(e["world"].asNumber()) : -1;
+        const std::string roll = e["roll"].asString();
+        c.roll = roll == "drop" ? net::CarryRoll::Drop : roll == "break" ? net::CarryRoll::Break : net::CarryRoll::Keep;
+        if (!Carry::KnownModel(c.model)) { Log("world.json: box %s skipped (unknown model \"%s\")", c.key.c_str(), c.model.c_str()); continue; }
+        if (!c.key.empty() && FindCarry(c.key)) { Log("world.json: box %s skipped (the key is taken)", c.key.c_str()); continue; }
+        AddCarry(c); ++made;
+    }
+    if (made) Log("Mode boxes: %zu", made);
+}
+void Server::SendCarry(Player* to, const Carry& c) {
+    net::Writer w; w.Op(net::Msg::Carry); w.U16(c.id); w.U8(1);
+    w.Str(c.model); w.F32(c.x); w.F32(c.y); w.F32(c.z); w.F32(c.yaw); w.I32(c.world); w.U16(c.carrier); w.U8(uint8_t(c.roll));
+    Send(to, w, true);
+}
+uint16_t Server::AddCarry(Carry c) {
+    while (carries_.count(nextCarry_) || !nextCarry_) ++nextCarry_;
+    c.id = nextCarry_++; c.carrier = 0xFFFF;
+    carries_[c.id] = c;
+    SendCarry(nullptr, c);
+    return c.id;
+}
+bool Server::UpdateCarry(const Carry& c) {
+    auto it = carries_.find(c.id);
+    if (it == carries_.end()) return false;
+    if (it->second.carrier != c.carrier) {
+        if (Player* was = Find(it->second.carrier); was && was->carrying == c.id) was->carrying = 0;
+        if (Player* now = Find(c.carrier)) now->carrying = c.id;
+    }
+    it->second = c;
+    SendCarry(nullptr, c);
+    return true;
+}
+bool Server::RemoveCarry(uint16_t id) {
+    auto it = carries_.find(id);
+    if (it == carries_.end()) return false;
+    if (Player* p = Find(it->second.carrier); p && p->carrying == id) p->carrying = 0;
+    carries_.erase(it);
+    net::Writer w; w.Op(net::Msg::Carry); w.U16(id); w.U8(2); Send(nullptr, w, true);
+    return true;
+}
+bool Server::GiveCarry(Player* p, uint16_t id) {
+    Carry* c = FindCarry(id);
+    if (!p || p->bot || !c) return false;
+    if (p->carrying) return p->carrying == id;
+    Carry n = *c; n.carrier = p->id;  // from someone else's hands too
+    return UpdateCarry(n);
+}
+uint16_t Server::DropCarry(Player* p, const float* at) {
+    Carry* c = p ? FindCarry(p->carrying) : nullptr;
+    if (!c) { if (p) p->carrying = 0; return 0; }
+    Carry n = *c;
+    if (at) { n.x = at[0]; n.y = at[1]; n.z = at[2]; n.yaw = at[3]; }
+    else { n.x = p->state.x; n.y = p->state.y; n.z = p->state.z - 90.f; n.yaw = p->state.yaw; }  // state: the capsule centre
+    if (n.world >= 0) n.world = p->world;
+    n.carrier = 0xFFFF;
+    UpdateCarry(n);
+    return n.id;
+}
+void Server::LoseCarry(Player& p, float x, float y, float z, float yaw, const char* reason) {
+    const uint16_t id = p.carrying;
+    const float at[4] = {x, y, z, yaw};
+    if (!DropCarry(&p, at)) return;
+    script_->CarryDrop(p, id, x, y, z, reason);  // told after: it lies there now (the mode may still move or remove it)
+}
+void Server::OnCarryAction(Player& p, net::Reader& r) {
+    const uint16_t id = r.U16();
+    const auto op = net::CarryOp(r.U8());
+    float at[4]; for (float& f : at) f = r.F32();
+    Carry* c = FindCarry(id);
+    if (!r.ok() || !c) return;
+    // The spot the client names must be a real one next to its player; else where the player stands.
+    const float sx = at[0] - p.state.x, sy = at[1] - p.state.y, sz = at[2] - p.state.z;
+    if (!std::isfinite(at[0]) || !std::isfinite(at[1]) || !std::isfinite(at[2]) || !std::isfinite(at[3]) ||
+        sx * sx + sy * sy > 600.f * 600.f || std::fabs(sz) > 600.f) {
+        at[0] = p.state.x; at[1] = p.state.y; at[2] = p.state.z - 90.f; at[3] = p.state.yaw;
+    }
+    switch (op) {
+    case net::CarryOp::Pick: {
+        if (c->carrier != 0xFFFF || p.carrying || p.vehicle || p.passengerOf || (p.state.flags & net::StateDead)) break;
+        if (c->world >= 0 && c->world != p.world) break;
+        const float dx = p.state.x - c->x, dy = p.state.y - c->y, dz = p.state.z - c->z;
+        if (dx * dx + dy * dy > 350.f * 350.f || std::fabs(dz) > 350.f) break;  // not at it
+        if (!script_->CarryPick(p, id)) break;
+        if (!GiveCarry(&p, id)) break;  // (the handler may have changed it)
+        break;
+    }
+    case net::CarryOp::Put: {
+        if (c->carrier != p.id) break;
+        if (!script_->CarryDrop(p, id, at[0], at[1], at[2], "put")) { SendCarry(&p, *c); break; }  // refused: it stays in the hands
+        c = FindCarry(id);
+        if (c && c->carrier == p.id) DropCarry(&p, at);  // (the handler may have taken it: a delivery)
+        break;
+    }
+    case net::CarryOp::Lost:
+    case net::CarryOp::Roll:
+        if (c->carrier == p.id) LoseCarry(p, at[0], at[1], at[2], at[3], op == net::CarryOp::Roll ? "roll" : "lost");
+        break;
+    case net::CarryOp::Break: {
+        // It broke in a dodge roll: it goes, unless the mode put it somewhere else in carryDrop (back on the shelf).
+        if (c->carrier != p.id || c->roll != net::CarryRoll::Break) break;
+        DropCarry(&p, at);
+        script_->CarryDrop(p, id, at[0], at[1], at[2], "break");
+        c = FindCarry(id);
+        if (c && c->carrier == 0xFFFF && c->x == at[0] && c->y == at[1] && c->z == at[2]) RemoveCarry(id);
+        break;
+    }
+    }
+}
 void Server::LoadAnims() {
     std::ifstream in(root_ / "data" / "anims.txt");
     for (std::string line; std::getline(in, line);) {
@@ -1353,7 +1502,7 @@ bool Server::ReloadMode() {
     for (auto& [id, item] : items_) ids.push_back(id);
     for (auto id : ids) RemoveWorldItem(id);
     for (auto& [id, p] : players_) if (p->ready && p->peer) { Objective(p.get(), 4, 0, 0, "", ""); ObjectiveMeter(p.get(), false, "", 0); CloseDialog(p.get()); SetHud(p.get(), "", ""); }
-    for (auto& [id, p] : players_) { p->pvp = -1; p->zones.clear(); p->zoneHud.clear(); }  // zones and PvP come again from the file and the new code
+    for (auto& [id, p] : players_) { p->pvp = -1; p->zones.clear(); p->zoneHud.clear(); p->money = 0; }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
     ids.clear();
     for (auto& [id, in] : interactions_) ids.push_back(id);
     for (auto id : ids) RemoveInteraction(id);
@@ -1367,6 +1516,9 @@ bool Server::ReloadMode() {
     ids.clear();
     for (auto& [id, ic] : icons_) ids.push_back(id);
     for (auto id : ids) RemoveIcon(id);
+    ids.clear();
+    for (auto& [id, c] : carries_) ids.push_back(id);
+    for (auto id : ids) RemoveCarry(id);
     if (!watchedKeys_.empty()) { watchedKeys_.clear(); SendWatchedKeys(nullptr); }
     LoadEnvironment(mode);
     if (!script_->Load(mode)) return false;

@@ -88,6 +88,8 @@ public:
         std::function<void(const std::string& name, int part, int parts, const std::string& bytes)> imageData;
         struct IconInfo { float x, y, z, size, distance; int world; uint32_t color; std::string image, text; bool throughWalls = false; };
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
+        struct CarryInfo { std::string model; float x, y, z, yaw; int world; uint16_t carrier; uint8_t roll = 0; };  // roll: CarryRoll
+        std::function<void(uint16_t id, const CarryInfo* info)> carry;  // info null = removed
     } on;
 
     ~Client();
@@ -108,6 +110,7 @@ public:
     void SendKey(uint8_t virtualKey);
     void SendImageRequest(const std::string& name);
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
+    void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);
 
     Status status() const { return status_; }
     uint16_t localId() const { return localId_; }

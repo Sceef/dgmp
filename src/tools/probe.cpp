@@ -2,7 +2,9 @@
 //   dgmp-probe query <host[:port]> [...]     server status
 //   dgmp-probe lan                           LAN discovery
 //   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text] [--auto]
-//       stays connected, walks a small circle, prints server events; stdin lines are sent as chat.
+//       stays connected, walks a small circle, prints server events; stdin lines are sent as chat, except:
+//       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
+//       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll).
 #include "../shared/netclient.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -66,6 +68,8 @@ int main() {
         net::Client c;
         bool done = false; int exitCode = 0;
         float px = -85462.8f, py = -301759.8f, pz = -5179.7f;
+        bool still = false;     // !at: stand on the spot instead of walking a circle
+        uint16_t carried = 0;
         c.on.welcome = [&](const std::string& n, const std::string& m) { std::printf("* connected to \"%s\" (mode %s) as id %u\n", n.c_str(), m.c_str(), c.localId()); for (auto& s : says) c.SendChat(s); };
         c.on.disconnected = [&](const std::string& why) { std::printf("* disconnected: %s\n", why.c_str()); done = true; exitCode = 1; };
         c.on.playerJoin = [](const net::RemotePlayer& p) { std::printf("* %s (id %u) is on the server\n", p.nick.c_str(), p.id); };
@@ -90,6 +94,23 @@ int main() {
             std::printf("* INTERACTION %u at %.0f %.0f %.0f r=%.0f key=%c [%s]\n", id, in->x, in->y, in->z, in->radius, in->key, in->text.c_str());
             if (autoUi) c.SendUse(id);
         };
+        c.on.carry = [&](uint16_t id, const net::Client::Events::CarryInfo* in) {
+            if (!in) { std::printf("* CARRY %u removed\n", id); return; }
+            if (in->carrier == c.localId()) carried = id; else if (carried == id) carried = 0;
+            std::printf("* CARRY %u %s at %.0f %.0f %.0f carrier %d roll %u\n", id, in->model.c_str(), in->x, in->y, in->z, in->carrier == 0xFFFF ? -1 : int(in->carrier), in->roll);
+        };
+        c.on.marker = [](uint16_t id, const net::Client::Events::MarkerInfo* in) {
+            if (!in) { std::printf("* MARKER %u removed\n", id); return; }
+            std::printf("* MARKER %u at %.0f %.0f %.0f style %u route %d [%s]\n", id, in->x, in->y, in->z, in->style, in->route, in->title.c_str());
+        };
+        c.on.objective = [](uint8_t state, uint8_t, uint8_t, const std::string& title, const std::string& text, int xp) {
+            std::printf("* OBJECTIVE state %u [%s] %s xp %d\n", state, title.c_str(), text.c_str(), xp);
+        };
+        c.on.actor = [](uint16_t id, const net::Client::Events::ActorInfo* in) {
+            if (!in) { std::printf("* ACTOR %u removed\n", id); return; }
+            std::printf("* ACTOR %u at %.0f %.0f %.0f look %s anim %s [%s]\n", id, in->x, in->y, in->z, in->look.c_str(), in->anim.c_str(), in->name.c_str());
+        };
+        c.on.look = [&](uint16_t id, const std::string& look) { if (id == c.localId()) std::printf("* LOOK %s\n", look.empty() ? "(own)" : look.c_str()); };
         c.on.watchKeys = [&](const std::vector<uint8_t>& keys) {
             std::printf("* WATCH KEYS"); for (auto k : keys) std::printf(" %u", k); std::printf("\n");
             if (autoUi) for (auto k : keys) c.SendKey(k);
@@ -103,11 +124,26 @@ int main() {
         while (!done) {
             const double now = Now();
             c.Service(now);
-            { std::lock_guard<std::mutex> g(lock); for (auto& s : input) { if (s == "quit") done = true; else c.SendChat(s); } input.clear(); }
+            {
+                std::lock_guard<std::mutex> g(lock);
+                for (auto& s : input) {
+                    float x = 0, y = 0, z = 0; unsigned id = 0, ok = 0; int item = -1;
+                    if (s == "quit") done = true;
+                    else if (std::sscanf(s.c_str(), "!at %f %f %f", &x, &y, &z) == 3) { px = x; py = y; pz = z + 90.f; still = true; nextState = 0; }
+                    else if (s == "!walk") still = false;
+                    else if (std::sscanf(s.c_str(), "!use %u", &id) == 1) c.SendUse(uint16_t(id));
+                    else if (std::sscanf(s.c_str(), "!dlg %u %u %d", &id, &ok, &item) >= 2) c.SendDialogResponse(uint16_t(id), ok != 0, item, "");
+                    else if (std::sscanf(s.c_str(), "!pick %u", &id) == 1) c.SendCarry(uint16_t(id), net::CarryOp::Pick);
+                    else if (std::sscanf(s.c_str(), "!put %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Put, x, y, z, 0);
+                    else if (std::sscanf(s.c_str(), "!break %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Break, x, y, z, 0);
+                    else c.SendChat(s);
+                }
+                input.clear();
+            }
             if (c.status() == net::Client::Status::Connected && now >= nextState) {
                 nextState = now + 0.05;
                 const float a = static_cast<float>(now - start) * 0.5f;
-                net::PlayerState s; s.x = px + std::cos(a) * 300; s.y = py + std::sin(a) * 300; s.z = pz; s.yaw = a * 57.3f;
+                net::PlayerState s; s.x = px + (still ? 0 : std::cos(a) * 300); s.y = py + (still ? 0 : std::sin(a) * 300); s.z = pz; s.yaw = still ? 0 : a * 57.3f;
                 c.SendState(s);
                 if (sendPose) {  // synthetic 224-bone body pose, the size of a real one
                     net::Writer w; w.U8(0); w.U16(0); w.U32(0x1234); w.U16(224); w.Put(now);

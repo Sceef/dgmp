@@ -7,6 +7,7 @@
 #include "worldedit.h"
 #include "environment.h"
 #include "skins.h"
+#include "carry.h"
 #include "../api/dgmp.h"
 #include "imgui.h"
 #include "ImGuizmo.h"
@@ -330,7 +331,50 @@ const char* T(const char* ru) {
     {"Выключенную зону код режима включает сам: setZone(\"имя\", {enabled = true})", "The mode's code turns an off zone on: setZone(\"name\", {enabled = true})"},
     {"Надпись на экране в зоне", "A line on the screen in the zone"},
     {"Своя надпись", "Own text"},
-    {"Пусто — стандартная («Безопасная зона» / «PvP-зона»). Можно цвета {RRGGBB}", "Empty: the default one (Safe zone / PvP zone). Colours {RRGGBB} work"}
+    {"Пусто — стандартная («Безопасная зона» / «PvP-зона»). Можно цвета {RRGGBB}", "Empty: the default one (Safe zone / PvP zone). Colours {RRGGBB} work"},
+    {"Переноска", "Carrying"}, {"+ Ящик", "+ Box"}, {"отмена##carry", "cancel##carry"},
+    {"ЛКМ в мире ставит ящик", "LMB in the world places a box"},
+    {"Ящики, которые игроки носят двумя руками (зажать F). Сервер кладёт их при запуске режима; код режима находит их по ключу: getCarry(\"ключ\"), по метке: carries(\"метка\"). Новый ящик берёт модель, метку и мир выделенного.",
+     "Boxes the players carry in both hands (hold F). The server lays them out when the mode starts; the mode's code finds them by key: getCarry(\"key\"), by tag: carries(\"tag\"). A new box takes the model, tag and world of the selected one."},
+    {"Перекат с ящиком", "Dodge roll with it"}, {"Ничего", "Nothing"}, {"Падает", "It falls"}, {"Ломается", "It breaks"},
+    {"Что будет, если игрок сделает перекат с ящиком в руках: ничего, ящик падает на землю, ящик ломается (исчезает)",
+     "What a dodge roll with the box in the hands does: nothing, the box falls to the ground, the box breaks (it is gone)"},
+    {"Поставленные ящики", "Placed boxes"}, {"Поставлен ящик ", "Box placed: "}, {"Ящик", "Box"},
+    {"Ключ", "Key"}, {"Модель", "Model"}, {"Метка", "Tag"},
+    {"Ключ: латиница, цифры, _ и -", "Key: Latin letters, digits, _ and -"}, {"Такой ключ уже есть", "That key is taken"},
+    {"Имя для кода режима: getCarry(\"ключ\")", "The name for the mode's code: getCarry(\"key\")"},
+    {"carries(\"метка\") в коде режима вернёт все ящики с этой меткой", "carries(\"tag\") in the mode's code returns every box with this tag"},
+    // jobs and the deliver step (docs/quests.md)
+    {"Перенести ящики", "Carry boxes"}, {"+ Перенести ящики", "+ Carry boxes"},
+    {"Квест (один раз)", "Quest (once)"}, {"Работа (повторяется)", "Job (repeats)"}, {"Вид", "Kind"},
+    {"Работа", "Job"}, {"NPC из мира", "NPC of the world"}, {"свой NPC (ниже)", "own NPC (below)"},
+    {"NPC мира — из режима, открытого во вкладке «Мир»", "World NPCs come from the mode opened on the World tab"},
+    {"В режиме «%s» работу даёт этот NPC. В других режимах (и в «Проверить») на его месте встаёт такой же NPC работы.",
+     "In the mode \"%s\" this NPC gives the job. In other modes (and in Test) the job puts the same NPC in its place."},
+    {"Место NPC: %.0f  %.0f  %.0f", "NPC spot: %.0f  %.0f  %.0f"}, {"Место NPC не задано — ЛКМ в мире", "NPC spot not set: LMB in the world"},
+    {"Поставить NPC", "Place the NPC"}, {"Имя NPC", "NPC name"},
+    {"Метка на карте", "Map marker"}, {"Форма на работе", "Work uniform"},
+    {"Облик на время работы: id формы режима или облик игры (пусто — без формы)", "The look while on the job: a uniform id of the mode or a look of the game (empty: none)"},
+    {"Оплата, $ за раз", "Pay, $ each time"}, {"Когда платить", "Paid"}, {"Сразу, за каждый раз", "At once, each time"}, {"При сдаче работы", "When the job is handed in"},
+    {"Раз за смену (0 — без ограничения)", "Times a shift (0: no limit)"},
+    {"Этапы ниже повторяются по кругу, пока игрок на работе. Раз = все этапы по одному разу.",
+     "The steps below repeat in a loop while the player is on the job. One time = every step once."},
+    {"Опыт при сдаче работы", "XP when the job is handed in"},
+    {"Погрузка: где лежат ящики", "Pick-up: where the boxes lie"}, {"Разгрузка: куда их отнести", "Drop-off: where to carry them"},
+    {"Погрузка: %.0f  %.0f  %.0f", "Pick-up: %.0f  %.0f  %.0f"}, {"Разгрузка: %.0f  %.0f  %.0f", "Drop-off: %.0f  %.0f  %.0f"},
+    {"Не задано — кнопка ниже, потом ЛКМ в мире", "Not set: the button below, then LMB in the world"},
+    {"Поставить погрузку", "Place the pick-up"}, {"Поставить разгрузку", "Place the drop-off"},
+    {"Радиус погрузки, м", "Pick-up radius, m"}, {"Радиус разгрузки, м", "Drop-off radius, m"}, {"Ящиков на погрузке", "Boxes at the pick-up"},
+    {"Ящики мира (метка)", "Boxes of the world (tag)"}, {"(нет)", "(none)"},
+    {"В режиме «%s» с этой меткой ящиков: %d — берутся они и возвращаются на свои места", "The mode \"%s\" has %d boxes with this tag: they are used and go back to their places"},
+    {"Ящики кладутся вокруг точки погрузки", "The boxes are laid out around the pick-up point"},
+    {"Название на карте", "Name on the map"}, {"Сколько ящиков отнести", "Boxes to deliver"}, {"Маршрут к разгрузке", "Route to the drop-off"},
+    {"Засчитывается ящик, поставленный (зажать F) в зоне разгрузки. Брать эти ящики может только тот, кто на этом этапе (у работы — кто на работе).",
+     "A box put down (hold F) in the drop-off area counts. Only the player on this step (for a job: on the job) may pick these boxes up."},
+    {"Выдаёт работу", "Gives the job"}, {"Место NPC работы", "Job NPC spot"}, {"Погрузка → ", "Pick-up → "}, {"Разгрузка → ", "Drop-off → "},
+    {": погрузка", ": pick-up"}, {": разгрузка", ": drop-off"}, {"Выберите этап «Перенести ящики»", "Select a \"Carry boxes\" step"},
+    {"Погрузка", "Pick-up"}, {"Разгрузка", "Drop-off"}, {"Кто даёт работу", "Who gives the job"}, {"Форма и оплата", "Uniform and pay"},
+    {"без формы", "no uniform"}
     };
     if (!english) return ru;
     auto it = en.find(ru);
@@ -347,8 +391,12 @@ const char* const* TArr(const char* const* arr, int count) {
 std::recursive_mutex lock;
 
 // ---------------------------------------------------------------- quest model (docs/quests.md)
-const char* kStepTypes[] = {"Дойти до точки", "Удерживать зону", "Сделать N раз"};
-const char* kStepKeys[] = {"goto", "hold", "collect"};
+const char* kStepTypes[] = {"Дойти до точки", "Удерживать зону", "Сделать N раз", "Перенести ящики"};
+const char* kStepKeys[] = {"goto", "hold", "collect", "deliver"};
+constexpr int kStepCount = 4;
+const char* kKinds[] = {"Квест (один раз)", "Работа (повторяется)"};
+const char* kPayouts[] = {"Сразу, за каждый раз", "При сдаче работы"};  // "each", "end"
+const char* const kCarryRolls[] = {"keep", "drop", "break"};          // a box's dodge roll (world.json carries, deliver steps)
 const char* kCategories[] = {"Сюжет", "Лагерь", "Заражённая зона", "Засада", "NERO", "Орда", "Задание лагеря", "Поручение"};
 const char* kCategoryKeys[] = {"story", "camp", "infestation", "ambush", "nero", "horde", "campmission", "task"};
 const char* kStyles[] = {"Обычный", "Убить", "Зачистить зону", "Защитить", "Оборона зоны", "Обыск", "Выследить", "Без убийств"};
@@ -383,6 +431,9 @@ struct Step {
     std::vector<std::string> ids;
     bool hasArea = false; float ax = 0, ay = 0, az = 0, ar = 5; bool marker = true;
     std::vector<SpawnRow> spawn;
+    // deliver: boxes from the pick-up area to the drop-off area (docs/quests.md); count = boxes to deliver
+    bool hasPickup = false; float px = 0, py = 0, pz = 0, pr = 3; int boxes = 4; char model[32] = "crate"; int roll = 0; char tag[48] = ""; LT pickName;
+    bool hasDrop = false; float dx = 0, dy = 0, dz = 0, dr = 4; LT dropName;
 };
 struct Reward { char item[96] = ""; int count = 1; };
 struct Quest {
@@ -393,6 +444,13 @@ struct Quest {
     int xp = 100;
     std::vector<Reward> reward;
     std::vector<Step> steps;
+    // "kind": "job": the steps repeat while the player is on the job (docs/quests.md)
+    bool job = false;
+    char giverActor[48] = "";                                          // an NPC of the mode's world, else its own NPC:
+    bool giverHasPoint = false; float gx = 0, gy = 0, gz = 0, gyaw = 0;  // (also the copy of the world one, for other modes)
+    char giverLook[192] = "", giverAnim[128] = "idle"; LT giverName; bool giverMarker = true;
+    char uniform[192] = "";
+    int pay = 5, payout = 1, cycles = 0;                               // payout: 0 "each", 1 "end"
 };
 
 Quest quest;
@@ -404,11 +462,11 @@ int selected = -1;             // selected step
 bool previewDirty = true;
 double previewAt = 0;
 std::vector<std::string> questFiles;
-enum ClickMode { kSelect = 0, kPoint = 1, kObject = 2, kItem = 3 };
+enum ClickMode { kSelect = 0, kPoint = 1, kObject = 2, kItem = 3, kPickup = 4, kDropoff = 5, kGiver = 6 };
 int clickMode = kSelect;       // what a left click into the world does
 bool repeatPlace = false;      // stay in the placing mode after a placement
 // Selection: one editable thing of the quest (a step's point, a collect zone, a quest item).
-struct Ref { int step = -1, kind = 0, index = 0; };  // kind 0 point, 1 zone, 2 spawned item
+struct Ref { int step = -1, kind = 0, index = 0; };  // kind 0 point, 1 zone, 2 spawned item, 3 pick-up, 4 drop-off, 5 the job's NPC (step -1)
 Ref picked;
 int gizmoOp = 0;               // 0 move, 1 rotate
 // Camera of the last game frame (game thread → frame thread), for projections and the gizmo.
@@ -445,6 +503,8 @@ struct WActor { char id[48] = "", group[48] = "", look[192] = "", anim[128] = "i
 // A PvE / PvP zone (world.json "zones", docs/API.md "PvP и зоны"): sizes in metres, t = the centre on the ground.
 struct WZone { char name[48] = ""; bool pvp = false, box = false; WT t; float radius = 20, length = 40, width = 40, height = 50;
                bool enabled = true, notify = true; char text[160] = ""; int world = -1; };
+// A box to carry in both hands (world.json "carries", docs/API.md "Переноска"): placed here, made by the server.
+struct WCarry { char key[48] = "", model[32] = "crate", tag[48] = ""; WT t; int world = -1; int roll = 0; };  // roll: 0 keep, 1 drop, 2 break
 struct World {
     std::vector<std::string> remove;          // world objects ("<level>/<actor>")
     std::map<std::string, WT> move;           // world objects moved/turned
@@ -452,6 +512,7 @@ struct World {
     std::map<std::string, std::vector<LItem>> logic;
     std::vector<WActor> actors;
     std::vector<WZone> zones;
+    std::vector<WCarry> carries;
     bool pvp = true;                          // world.json "rules" "pvp": players hurt each other outside PvE zones
     // Time of day and weather the mode starts with (world.json "environment"); weather -1 = automatic.
     struct Env { bool set = false; float time = 12; bool paused = false; int weather = -1; } env;
@@ -461,6 +522,7 @@ struct LDecl { std::string name; bool list = false, trigger = false, actor = fal
 std::vector<LDecl> logicDecls;
 std::string placeLogic;                       // name a click places an object of (world mode)
 int placeZone = 0;                            // a click places a zone: 1 PvE, 2 PvP
+bool placeCarry = false;                      // a click places a box to carry
 const LDecl* FindDecl(const std::string& name) { for (auto& d : logicDecls) if (d.name == name) return &d; return nullptr; }
 void SelectLogic(const std::string& name, int index);
 void LoadSkinLists(const std::string& m);
@@ -470,7 +532,7 @@ std::vector<std::string> modes;               // modes/* folders
 bool worldDirty = false;                      // the game should apply the edits again
 bool worldClickPending = false;
 // Selection in the world: kind 1 world object (id = key, t = its transform), 2 added prop (id = uid),
-// 3 logic object (id = "name#index"), 4 NPC (id = its id), 5 zone (id = its index).
+// 3 logic object (id = "name#index"), 4 NPC (id = its id), 5 zone (id = its index), 6 box to carry (id = its key).
 struct WSel { int kind = 0; std::string id, cls; WT t; UObject* actor = nullptr; };  // actor: the clicked world object
 WSel wsel;
 std::vector<World> worldUndo, worldRedo;
@@ -510,7 +572,22 @@ json::Value ToJson(const Quest& q) {
     if (q.style) v.set("style", kStyleKeys[q.style]);
     if (q.text.en[0] || q.text.ru[0]) v.set("text", LJson(q.text));
     if (q.xp) v.set("xp", q.xp);
-    if (!q.reward.empty()) {
+    if (q.job) {
+        v.set("kind", "job");
+        json::Value g = json::Value::Object();
+        if (q.giverActor[0]) g.set("actor", std::string(q.giverActor));
+        if (q.giverHasPoint) { g.set("x", double(std::round(q.gx))); g.set("y", double(std::round(q.gy))); g.set("z", double(std::round(q.gz))); g.set("yaw", double(std::round(q.gyaw))); }
+        if (q.giverLook[0]) g.set("look", std::string(q.giverLook));
+        if (q.giverAnim[0] && std::strcmp(q.giverAnim, "idle") != 0) g.set("anim", std::string(q.giverAnim));
+        if (q.giverName.en[0] || q.giverName.ru[0]) g.set("name", LJson(q.giverName));
+        if (!q.giverMarker) g.set("marker", false);
+        v.set("giver", g);
+        if (q.uniform[0]) v.set("uniform", std::string(q.uniform));
+        v.set("pay", q.pay);
+        v.set("payout", q.payout ? "end" : "each");
+        if (q.cycles > 0) v.set("cycles", q.cycles);
+    }
+    if (!q.reward.empty() && !q.job) {
         json::Value r = json::Value::Array();
         for (auto& w : q.reward) if (w.item[0]) { json::Value e = json::Value::Object(); e.set("item", std::string(w.item)); e.set("count", w.count); r.push(e); }
         if (r.size()) v.set("reward", r);
@@ -524,6 +601,20 @@ json::Value ToJson(const Quest& q) {
             j.set("radius", double(s.radius));
             if (s.type == 0 && !s.route) j.set("route", false);
             if (s.type == 1) { j.set("seconds", double(s.seconds)); if (s.meter.en[0] || s.meter.ru[0]) j.set("meter", LJson(s.meter)); }
+        } else if (s.type == 3) {
+            json::Value pu = s.hasPickup ? Point(s.px, s.py, s.pz) : json::Value::Object();
+            pu.set("radius", double(s.pr));
+            pu.set("boxes", s.boxes); pu.set("model", std::string(s.model));
+            if (s.roll) pu.set("roll", kCarryRolls[s.roll]);
+            if (s.tag[0]) pu.set("tag", std::string(s.tag));
+            if (s.pickName.en[0] || s.pickName.ru[0]) pu.set("name", LJson(s.pickName));
+            j.set("pickup", pu);
+            json::Value d = s.hasDrop ? Point(s.dx, s.dy, s.dz) : json::Value::Object();
+            d.set("radius", double(s.dr));
+            if (s.dropName.en[0] || s.dropName.ru[0]) d.set("name", LJson(s.dropName));
+            j.set("dropoff", d);
+            if (s.count > 1) j.set("count", s.count);
+            if (!s.route) j.set("route", false);
         } else {
             json::Value ev = json::Value::Array();
             for (int i = 0; i < 8; ++i) if (s.events & (1u << i)) ev.push(kEventKeys[i]);
@@ -558,9 +649,23 @@ void FromJson(const json::Value& v, Quest& q) {
     LFrom(v["text"], q.text);
     q.xp = v["xp"].asInt(0);
     for (auto& r : v["reward"].elements()) { Reward w; Copy(w.item, sizeof(w.item), r["item"].asString()); w.count = r["count"].asInt(1); q.reward.push_back(w); }
+    q.job = v["kind"].asString() == "job";
+    if (const json::Value& g = v["giver"]; g.isObject()) {
+        Copy(q.giverActor, sizeof(q.giverActor), g["actor"].asString());
+        q.giverHasPoint = g["x"].isNumber();
+        q.gx = float(g["x"].asNumber()); q.gy = float(g["y"].asNumber()); q.gz = float(g["z"].asNumber()); q.gyaw = float(g["yaw"].asNumber());
+        Copy(q.giverLook, sizeof(q.giverLook), g["look"].asString());
+        Copy(q.giverAnim, sizeof(q.giverAnim), g["anim"].isString() ? g["anim"].asString() : std::string("idle"));
+        LFrom(g["name"], q.giverName);
+        q.giverMarker = g["marker"].asBool(true);
+    }
+    Copy(q.uniform, sizeof(q.uniform), v["uniform"].asString());
+    q.pay = v["pay"].asInt(q.job ? 0 : 5);
+    q.payout = v["payout"].asString() == "each" ? 0 : 1;
+    q.cycles = std::max(0, v["cycles"].asInt(0));
     for (auto& j : v["steps"].elements()) {
         Step s;
-        s.type = IndexOf(kStepKeys, 3, j["type"].asString(), 0);
+        s.type = IndexOf(kStepKeys, kStepCount, j["type"].asString(), 0);
         LFrom(j["text"], s.text);
         s.hasPoint = j["x"].isNumber();
         s.x = float(j["x"].asNumber()); s.y = float(j["y"].asNumber()); s.z = float(j["z"].asNumber());
@@ -581,6 +686,21 @@ void FromJson(const json::Value& v, Quest& q) {
             row.x = float(r["x"].asNumber()); row.y = float(r["y"].asNumber()); row.z = float(r["z"].asNumber()); row.yaw = float(r["yaw"].asNumber());
             s.spawn.push_back(row);
         }
+        if (const json::Value& pu = j["pickup"]; pu.isObject()) {
+            s.hasPickup = pu["x"].isNumber();
+            s.px = float(pu["x"].asNumber()); s.py = float(pu["y"].asNumber()); s.pz = float(pu["z"].asNumber()); s.pr = float(pu["radius"].asNumber(3));
+            s.boxes = std::max(1, pu["boxes"].asInt(4));
+            Copy(s.model, sizeof(s.model), pu["model"].isString() ? pu["model"].asString() : std::string("crate"));
+            s.roll = IndexOf(kCarryRolls, 3, pu["roll"].asString(), 0);
+            Copy(s.tag, sizeof(s.tag), pu["tag"].asString());
+            LFrom(pu["name"], s.pickName);
+        }
+        if (const json::Value& d = j["dropoff"]; d.isObject()) {
+            s.hasDrop = d["x"].isNumber();
+            s.dx = float(d["x"].asNumber()); s.dy = float(d["y"].asNumber()); s.dz = float(d["z"].asNumber()); s.dr = float(d["radius"].asNumber(4));
+            LFrom(d["name"], s.dropName);
+        }
+        if (s.type == 3 && s.count < 1) s.count = 1;
         q.steps.push_back(s);
     }
 }
@@ -673,6 +793,19 @@ json::Value WorldJson(const World& w) {
         }
         v.set("zones", list);
     }
+    if (!w.carries.empty()) {
+        json::Value list = json::Value::Array();
+        for (auto& c : w.carries) {
+            json::Value j = json::Value::Object();
+            j.set("key", std::string(c.key)); j.set("model", std::string(c.model));
+            j.set("x", double(std::round(c.t.x))); j.set("y", double(std::round(c.t.y))); j.set("z", double(std::round(c.t.z))); j.set("yaw", double(std::round(c.t.yaw)));
+            if (c.world >= 0) j.set("world", double(c.world));
+            if (c.tag[0]) j.set("tag", std::string(c.tag));
+            if (c.roll) j.set("roll", std::string(kCarryRolls[c.roll]));
+            list.push(j);
+        }
+        v.set("carries", list);
+    }
     if (!w.pvp) { json::Value rules = json::Value::Object(); rules.set("pvp", false); v.set("rules", rules); }
     if (w.env.set) {
         json::Value e = json::Value::Object();
@@ -725,7 +858,27 @@ void WorldFrom(const json::Value& v, World& w) {
         z.enabled = j["enabled"].asBool(true); z.notify = j["notify"].asBool(true); Copy(z.text, sizeof z.text, j["text"].asString());
         if (z.name[0]) w.zones.push_back(z);
     }
+    for (auto& j : v["carries"].elements()) {
+        WCarry c;
+        Copy(c.key, sizeof c.key, j["key"].asString()); Copy(c.tag, sizeof c.tag, j["tag"].asString());
+        Copy(c.model, sizeof c.model, j["model"].isString() ? j["model"].asString() : std::string("crate"));
+        c.t.x = float(j["x"].asNumber()); c.t.y = float(j["y"].asNumber()); c.t.z = float(j["z"].asNumber()); c.t.yaw = float(j["yaw"].asNumber());
+        c.world = j["world"].isNumber() ? int(j["world"].asNumber()) : -1;
+        c.roll = IndexOf(kCarryRolls, 3, j["roll"].asString(), 0);
+        if (c.key[0]) w.carries.push_back(c);
+    }
     w.pvp = v["rules"]["pvp"].asBool(true);
+}
+// ---------------------------------------------------------------- boxes to carry (world.json "carries")
+WCarry* CarryByKey(const std::string& key) { for (auto& c : world.carries) if (key == c.key) return &c; return nullptr; }
+std::string FreeCarryKey(const std::string& base) {
+    for (int n = 1;; ++n) { const std::string key = base + std::to_string(n); if (!CarryByKey(key)) return key; }
+}
+void SelectCarry(const std::string& key) { if (WCarry* c = CarryByKey(key)) wsel = {6, key, "", c->t}; else wsel = {}; }
+const char* CarryModelName(const char* model) {
+    int n = 0; const carry::ModelInfo* m = carry::Models(n);
+    for (int i = 0; i < n; ++i) if (std::strcmp(m[i].name, model) == 0) return english ? m[i].en : m[i].ru;
+    return model;
 }
 WZone* ZoneOf(const std::string& id) {
     const int i = id.empty() ? -1 : std::atoi(id.c_str());
@@ -1104,6 +1257,55 @@ void UpdateActorPreviews(UObject* pawn) {
         if (auto f = Fn(p.body, "K2_SetActorLocationAndRotation")) { Params q(f); q.Set("NewLocation", at); q.Set("NewRotation", FRotator{0, w.t.yaw - 90.f, 0}); q.SetBool("bTeleport", true); Call(p.body, "K2_SetActorLocationAndRotation", &q); }
     }
 }
+// Boxes to carry as they will lie: the model's own pickup (its interaction off), the key and tag above.
+struct CPreview { UObject* body = nullptr; UObject* label = nullptr; std::string model, text; WT at; };
+std::map<std::string, CPreview> carryPreviews;
+void UpdateCarryPreviews(UObject* pawn) {
+    struct Want { std::string key, model, text; WT t; };
+    std::vector<Want> wants;
+    FVector camAt{};
+    {
+        std::lock_guard g(lock);
+        camAt = cam.loc;
+        if (!worldMode.empty())
+            for (auto& c : world.carries) wants.push_back({c.key, c.model, std::string(c.key) + (c.tag[0] ? std::string("  [") + c.tag + "]" : std::string()), c.t});
+    }
+    auto destroy = [](CPreview& p) { for (UObject* o : {p.body, p.label}) if (IsValid(o)) Call(o, "K2_DestroyActor"); p = CPreview{}; };
+    for (auto it = carryPreviews.begin(); it != carryPreviews.end();) {
+        bool keep = false; for (auto& w : wants) if (w.key == it->first) { keep = true; break; }
+        if (!keep) { destroy(it->second); it = carryPreviews.erase(it); } else ++it;
+    }
+    static UObject* textCls = FindClass("TextRenderActor");
+    for (auto& w : wants) {
+        CPreview& p = carryPreviews[w.key];
+        if ((p.body && !IsValid(p.body)) || (p.body && p.model != w.model)) destroy(p);
+        const FVector at{w.t.x, w.t.y, w.t.z};
+        if (!p.body) {
+            p.body = carry::SpawnPreview(w.model, at, w.t.yaw, pawn);
+            p.model = w.model; p.at = w.t;
+            if (!p.body) continue;
+        }
+        if (p.at.x != w.t.x || p.at.y != w.t.y || p.at.z != w.t.z || p.at.yaw != w.t.yaw) {
+            if (auto f = Fn(p.body, "K2_SetActorLocationAndRotation")) { Params q(f); q.Set("NewLocation", at); q.Set("NewRotation", FRotator{0, w.t.yaw, 0}); q.SetBool("bTeleport", true); Call(p.body, "K2_SetActorLocationAndRotation", &q); }
+            p.at = w.t;
+        }
+        if (p.label && !IsValid(p.label)) { p.label = nullptr; p.text.clear(); }
+        const FVector top{at.X, at.Y, at.Z + 90};
+        if (!p.label) { p.label = SpawnBare(textCls, top, pawn); p.text.clear(); }
+        UObject* tc = IsValid(p.label) ? Field<UObject*>(p.label, off::TextRenderActor_Component) : nullptr;
+        if (!IsValid(tc)) continue;
+        if (p.text != w.text) {
+            const std::wstring wt = Wide(w.text);
+            Params t(Fn(tc, "SetText")); t.Set("Value", FString{wt.c_str(), int32_t(wt.size() + 1), int32_t(wt.size() + 1)}); Call(tc, "SetText", &t);
+            if (auto f = Fn(tc, "SetHorizontalAlignment")) { Params a(f); a.Set<uint8_t>("Value", 1); Call(tc, "SetHorizontalAlignment", &a); }
+            if (auto f = Fn(tc, "SetWorldSize")) { Params a(f); a.Set<float>("Value", 20.f); Call(tc, "SetWorldSize", &a); }
+            if (auto f = Fn(tc, "SetTextRenderColor")) { Params a(f); a.Set<uint32_t>("Value", 0xFF9FD3FF); Call(tc, "SetTextRenderColor", &a); }
+            p.text = w.text;
+        }
+        const float yaw = std::atan2(camAt.Y - top.Y, camAt.X - top.X) * 57.2957795f;
+        if (auto f = Fn(p.label, "K2_SetActorLocationAndRotation")) { Params q(f); q.Set("NewLocation", top); q.Set("NewRotation", FRotator{0, yaw, 0}); q.SetBool("bTeleport", true); Call(p.label, "K2_SetActorLocationAndRotation", &q); }
+    }
+}
 void Outline(UObject* comp, bool on) {
     if (!IsValid(comp)) return;
     if (auto f = Fn(comp, "SetRenderCustomDepth")) { Params p(f); p.SetBool("bValue", on); Call(comp, "SetRenderCustomDepth", &p); }
@@ -1116,6 +1318,7 @@ void UpdateSelectionOutline(UObject* controller) {
         if (wsel.kind == 1) actors = worldedit::Members(wsel.id);
         if (wsel.kind == 1 && actors.empty() && IsValid(wsel.actor)) actors.push_back(wsel.actor);
         else if (wsel.kind == 2) if (UObject* a = worldedit::FindAdded(wsel.id)) actors.push_back(a);
+        if (wsel.kind == 6) if (auto it = carryPreviews.find(wsel.id); it != carryPreviews.end() && IsValid(it->second.body)) actors.push_back(it->second.body);
     }
     static UObject* primitive = nullptr;
     if (!primitive) primitive = FindClass("PrimitiveComponent");
@@ -1151,7 +1354,7 @@ void LoadWorld(const std::string& m) {
     if (!ss.str().empty() && json::Value::Parse(ss.str(), v) && v.isObject()) WorldFrom(v, world);
     ScanLogic(m);
     LoadSkinLists(m);
-    placeLogic.clear(); placeZone = 0;
+    placeLogic.clear(); placeZone = 0; placeCarry = false;
     if (world.env.set) {  // the mode's own time and weather
         DGMP_SetTimeOfDay(world.env.time); DGMP_SetTimePaused(world.env.paused);
         if (world.env.weather < 0) DGMP_SetWeatherAutomatic(1); else DGMP_SetWeather(uint32_t(world.env.weather));
@@ -1230,6 +1433,16 @@ void WorldClick(UObject* pawn, UObject* controller) {
         if (!repeatPlace) placeZone = 0;
         return;
     }
+    if (placeCarry) {
+        WCarry c; Copy(c.key, sizeof c.key, FreeCarryKey("box"));
+        if (WCarry* sel = wsel.kind == 6 ? CarryByKey(wsel.id) : nullptr) { Copy(c.model, sizeof c.model, sel->model); Copy(c.tag, sizeof c.tag, sel->tag); c.world = sel->world; c.roll = sel->roll; }
+        c.t.x = pick.at.X; c.t.y = pick.at.Y; c.t.z = pick.at.Z; c.t.yaw = std::round(cam.rot.Yaw);
+        world.carries.push_back(c);
+        SelectCarry(c.key);
+        Toast(T("Поставлен ящик ") + std::string(c.key));
+        if (!repeatPlace) placeCarry = false;
+        return;
+    }
     if (!placeLogic.empty()) {
         const LDecl* d = FindDecl(placeLogic);
         LItem it; it.t.x = pick.at.X; it.t.y = pick.at.Y; it.t.z = pick.at.Z; it.t.yaw = cam.rot.Yaw; it.radius = d ? d->radius : 5;
@@ -1277,6 +1490,7 @@ void WorldClick(UObject* pawn, UObject* controller) {
     UObject* hit = pick.actor;
     if (!IsValid(hit)) { wsel = {}; return; }
     for (auto& a : world.add) if (worldedit::FindAdded(a.uid) == hit) { wsel = {2, a.uid, GetName(hit->Class), a.t}; return; }
+    for (auto& [key, p] : carryPreviews) if (p.body == hit) { SelectCarry(key); return; }
     std::string cls = GetName(hit->Class);
     // Objects of merged collections: a click selects the whole object (a car), Alt+click one part of it.
     const bool part = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
@@ -1303,10 +1517,27 @@ void WorldClick(UObject* pawn, UObject* controller) {
 void ApplyPick(const Pick& pick) {
     std::lock_guard g(lock);
     if (mode != 1) return;  // world editing comes later
+    if (clickMode == kGiver) {  // the job's own NPC, facing the camera
+        if (!questOpen) return;
+        float yaw = cam.rot.Yaw + 180.f; while (yaw > 180) yaw -= 360; while (yaw < -180) yaw += 360;
+        quest.giverActor[0] = 0; quest.giverHasPoint = true;
+        quest.gx = pick.at.X; quest.gy = pick.at.Y; quest.gz = pick.at.Z; quest.gyaw = std::round(yaw);
+        picked = {-1, 5, 0};
+        Toast(T("Место NPC работы"));
+        clickMode = kSelect; previewDirty = true;
+        return;
+    }
     if (!questOpen || selected < 0 || selected >= int(quest.steps.size())) { Toast(T("Выберите этап квеста")); return; }
     Step& s = quest.steps[selected];
     const std::string where = T("этап ") + std::to_string(selected + 1);
     if (clickMode == kSelect) return;
+    if (s.type == 3) {
+        if (clickMode == kDropoff) { s.hasDrop = true; s.dx = pick.at.X; s.dy = pick.at.Y; s.dz = pick.at.Z; picked = {selected, 4, 0}; Toast(T("Разгрузка → ") + where); }
+        else { s.hasPickup = true; s.px = pick.at.X; s.py = pick.at.Y; s.pz = pick.at.Z; picked = {selected, 3, 0}; Toast(T("Погрузка → ") + where); }
+        clickMode = kSelect; previewDirty = true;
+        return;
+    }
+    if (clickMode == kPickup || clickMode == kDropoff) { Toast(T("Выберите этап «Перенести ящики»")); clickMode = kSelect; return; }
     if (s.type != 2 || clickMode == kPoint) {
         if (s.type == 2) { s.hasArea = true; s.ax = pick.at.X; s.ay = pick.at.Y; s.az = pick.at.Z; Toast(T("Зона → ") + where); }
         else { s.hasPoint = true; s.x = pick.at.X; s.y = pick.at.Y; s.z = pick.at.Z; Toast(T("Точка → ") + where); }
@@ -1387,6 +1618,8 @@ void WorldDelete() {
         if (i >= 0 && i < int(world.zones.size())) world.zones.erase(world.zones.begin() + i);
     } else if (wsel.kind == 4) {
         world.actors.erase(std::remove_if(world.actors.begin(), world.actors.end(), [](const WActor& a) { return wsel.id == a.id; }), world.actors.end());
+    } else if (wsel.kind == 6) {
+        world.carries.erase(std::remove_if(world.carries.begin(), world.carries.end(), [](const WCarry& c) { return wsel.id == c.key; }), world.carries.end());
     } else return;
     wsel = {}; worldDirty = true;
 }
@@ -1397,6 +1630,16 @@ void WorldDuplicate() {
             Copy(copy.id, sizeof copy.id, FreeActorId(copy.group[0] ? std::string(copy.group) + "_" : std::string("npc")));
             copy.t.x += 100; copy.t.y += 100;
             world.actors.push_back(copy); SelectActor(copy.id); Toast(T("Копия"));
+        }
+        return;
+    }
+    if (wsel.kind == 6) {
+        if (WCarry* c = CarryByKey(wsel.id)) {
+            WCarry copy = *c;
+            std::string base = copy.key; while (!base.empty() && isdigit(static_cast<unsigned char>(base.back()))) base.pop_back();
+            Copy(copy.key, sizeof copy.key, FreeCarryKey(base.empty() ? "box" : base));
+            copy.t.x += 80; copy.t.y += 80;
+            world.carries.push_back(copy); SelectCarry(copy.key); Toast(T("Копия"));
         }
         return;
     }
@@ -1461,7 +1704,7 @@ void DrawLogicList() {
             ImGui::PushID(name.c_str());
             const bool armed = placeActor == name;
             if (ImGui::SmallButton(armed ? T("отмена") : !d->list ? (mine.empty() ? T("поставить") : T("переставить")) : T("добавить"))) {
-                placeActor = armed ? "" : name; placeProp.clear(); placeLogic.clear(); placeZone = 0;
+                placeActor = armed ? "" : name; placeProp.clear(); placeLogic.clear(); placeZone = 0; placeCarry = false;
                 if (!armed) Toast(T("ЛКМ в мире ставит NPC: ") + name);
             }
             ImGui::SameLine();
@@ -1479,7 +1722,7 @@ void DrawLogicList() {
         ImGui::PushID(name.c_str());
         const bool armed = placeLogic == name;
         if (ImGui::SmallButton(armed ? T("отмена") : d && !d->list ? (count ? T("переставить") : T("поставить")) : T("добавить"))) {
-            placeLogic = armed ? "" : name; placeProp.clear(); placeActor.clear(); placeZone = 0;
+            placeLogic = armed ? "" : name; placeProp.clear(); placeActor.clear(); placeZone = 0; placeCarry = false;
             if (!armed) Toast(T("ЛКМ в мире ставит: ") + name);
         }
         ImGui::SameLine();
@@ -1513,7 +1756,7 @@ void DrawZones() {
         const bool armed = placeZone == kind;
         if (kind == 2) ImGui::SameLine();
         if (ImGui::Button(armed ? (std::string(T("отмена")) + "##zone" + std::to_string(kind)).c_str() : kind == 1 ? T("+ PvE зона") : T("+ PvP зона"))) {
-            placeZone = armed ? 0 : kind; placeProp.clear(); placeLogic.clear(); placeActor.clear();
+            placeZone = armed ? 0 : kind; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeCarry = false;
             if (!armed) Toast(T("ЛКМ в мире ставит центр зоны"));
         }
     }
@@ -1569,6 +1812,105 @@ void DrawZoneProps() {
     ImGui::TextDisabled("Lua: getZone(\"%s\")", luaName.c_str());
     ImGui::PopID();
 }
+// The selected box's settings (World > Selected).
+char carryKeyEdit[48] = "";
+std::string carryKeyFor;  // the box carryKeyEdit belongs to
+void DrawCarryProps() {
+    WCarry* c = CarryByKey(wsel.id);
+    if (!c) { wsel = {}; return; }
+    ImGui::PushID("carry");
+    ImGui::TextWrapped("%s  %s", T("Ящик"), c->key);
+    bool moved = false;
+    moved |= ImGui::DragFloat3(T("Позиция"), &c->t.x, 5.f, 0, 0, "%.0f");
+    moved |= ImGui::DragFloat(T("Поворот"), &c->t.yaw, 1.f, -360, 360, "%.0f°");
+    if (moved) wsel.t = c->t;
+    if (carryKeyFor != c->key) { carryKeyFor = c->key; Copy(carryKeyEdit, sizeof carryKeyEdit, c->key); }
+    ImGui::InputText(T("Ключ"), carryKeyEdit, sizeof carryKeyEdit);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (!ValidId(carryKeyEdit)) Toast(T("Ключ: латиница, цифры, _ и -"));
+        else if (CarryByKey(carryKeyEdit) && std::strcmp(carryKeyEdit, c->key) != 0) Toast(T("Такой ключ уже есть"));
+        else { Copy(c->key, sizeof c->key, carryKeyEdit); wsel.id = c->key; carryKeyFor = c->key; }
+        Copy(carryKeyEdit, sizeof carryKeyEdit, c->key);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Имя для кода режима: getCarry(\"ключ\")"));
+    if (ImGui::BeginCombo(T("Модель"), CarryModelName(c->model))) {
+        int n = 0; const carry::ModelInfo* m = carry::Models(n);
+        for (int i = 0; i < n; ++i) if (ImGui::Selectable(english ? m[i].en : m[i].ru, std::strcmp(m[i].name, c->model) == 0)) Copy(c->model, sizeof c->model, m[i].name);
+        ImGui::EndCombo();
+    }
+    ImGui::InputText(T("Метка"), c->tag, sizeof c->tag);
+    ImGui::SameLine(); ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("carries(\"метка\") в коде режима вернёт все ящики с этой меткой"));
+    static const char* const rolls[] = {"Ничего", "Падает", "Ломается"};
+    ImGui::Combo(T("Перекат с ящиком"), &c->roll, TArr(rolls, 3), 3);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Что будет, если игрок сделает перекат с ящиком в руках: ничего, ящик падает на землю, ящик ломается (исчезает)"));
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt(T("Мир (-1 — во всех)"), &c->world)) c->world = std::max(-1, c->world);
+    ImGui::TextDisabled(c->tag[0] ? "Lua: getCarry(\"%s\")  /  carries(\"%s\")" : "Lua: getCarry(\"%s\")", c->key, c->tag);
+    if (ImGui::Button(T("Удалить"))) { ImGui::PopID(); WorldDelete(); return; }
+    ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
+    ImGui::PopID();
+}
+// A look: a skin of the mode or a look of the game, typed or picked from the ▼ list (with a search).
+void LookField(const char* label, char* look, size_t size, const char* hint = nullptr) {
+    static char filter[64] = "";
+    ImGui::PushID(label);
+    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::InputTextWithHint("##look", hint ? hint : T("облик (пусто — Дикон)"), look, size);
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::ArrowButton("##lookpick", ImGuiDir_Down)) { filter[0] = 0; ImGui::OpenPopup("lookpick"); }
+    ImGui::SameLine(); ImGui::TextUnformatted(label);
+    if (ImGui::BeginPopup("lookpick")) {
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextWithHint("##f", T("Поиск"), filter, sizeof filter);
+        if (ImGui::BeginChild("##looks", ImVec2(360, 320))) {
+            for (auto& [id, text] : ModeSkinChoices()) {
+                if (filter[0] && !Contains(text, filter)) continue;
+                if (ImGui::Selectable(text.c_str())) { Copy(look, size, id); ImGui::CloseCurrentPopup(); }
+            }
+            static const std::vector<std::string> names = skins::LookNames();
+            int shown = 0;
+            for (auto& n : names) {
+                if (filter[0] && !Contains(n, filter)) continue;
+                if (++shown > 400) { ImGui::TextDisabled("%s", T("…уточните поиск")); break; }
+                if (ImGui::Selectable(n.c_str())) { Copy(look, size, n); ImGui::CloseCurrentPopup(); }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+// An animation: a short name or any of data/anims.txt.
+void AnimField(const char* label, char* anim, size_t size) {
+    static char filter[64] = "";
+    ImGui::PushID(label);
+    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::InputText("##anim", anim, size);
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::ArrowButton("##animpick", ImGuiDir_Down)) { filter[0] = 0; ImGui::OpenPopup("animpick"); }
+    ImGui::SameLine(); ImGui::TextUnformatted(label);
+    if (anim[0] && AnimPath(anim).empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", T("нет такой анимации"));
+    if (ImGui::BeginPopup("animpick")) {
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextWithHint("##f", T("Поиск"), filter, sizeof filter);
+        if (ImGui::BeginChild("##anims", ImVec2(420, 320))) {
+            int shown = 0;
+            for (auto& [n, path] : Anims()) {
+                if (filter[0] && !Contains(n, filter)) continue;
+                if (++shown > 400) { ImGui::TextDisabled("%s", T("…уточните поиск")); break; }
+                if (ImGui::Selectable(n.c_str())) { Copy(anim, size, n); ImGui::CloseCurrentPopup(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+}
+
 // The selected NPC's settings (World > Selected).
 char actorIdEdit[48] = "";
 std::string actorIdFor;  // the NPC actorIdEdit belongs to
@@ -1592,56 +1934,8 @@ void DrawActorProps() {
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("logic.actors(\"группа\") в коде режима вернёт всех NPC этой группы"));
     ImGui::InputText(T("Имя над головой"), a->name, sizeof a->name);
-    // Look: a skin of the mode or a look of the game.
-    static char filter[64] = "";
-    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
-    ImGui::InputTextWithHint("##look", T("облик (пусто — Дикон)"), a->look, sizeof a->look);
-    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-    if (ImGui::ArrowButton("##lookpick", ImGuiDir_Down)) { filter[0] = 0; ImGui::OpenPopup("lookpick"); }
-    ImGui::SameLine(); ImGui::TextUnformatted(T("Облик"));
-    if (ImGui::BeginPopup("lookpick")) {
-        ImGui::SetNextItemWidth(300);
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        ImGui::InputTextWithHint("##f", T("Поиск"), filter, sizeof filter);
-        if (ImGui::BeginChild("##looks", ImVec2(360, 320))) {
-            for (auto& [id, label] : ModeSkinChoices()) {
-                if (filter[0] && !Contains(label, filter)) continue;
-                if (ImGui::Selectable(label.c_str())) { Copy(a->look, sizeof a->look, id); ImGui::CloseCurrentPopup(); }
-            }
-            static const std::vector<std::string> names = skins::LookNames();
-            int shown = 0;
-            for (auto& n : names) {
-                if (filter[0] && !Contains(n, filter)) continue;
-                if (++shown > 400) { ImGui::TextDisabled("%s", T("…уточните поиск")); break; }
-                if (ImGui::Selectable(n.c_str())) { Copy(a->look, sizeof a->look, n); ImGui::CloseCurrentPopup(); }
-            }
-        }
-        ImGui::EndChild();
-        ImGui::EndPopup();
-    }
-    // Animation: a short name or any of data/anims.txt.
-    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x);
-    ImGui::InputText("##anim", a->anim, sizeof a->anim);
-    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-    if (ImGui::ArrowButton("##animpick", ImGuiDir_Down)) { filter[0] = 0; ImGui::OpenPopup("animpick"); }
-    ImGui::SameLine(); ImGui::TextUnformatted(T("Анимация"));
-    if (a->anim[0] && AnimPath(a->anim).empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", T("нет такой анимации"));
-    if (ImGui::BeginPopup("animpick")) {
-        ImGui::SetNextItemWidth(300);
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        ImGui::InputTextWithHint("##f", T("Поиск"), filter, sizeof filter);
-        if (ImGui::BeginChild("##anims", ImVec2(420, 320))) {
-            int shown = 0;
-            for (auto& [n, path] : Anims()) {
-                if (filter[0] && !Contains(n, filter)) continue;
-                if (++shown > 400) { ImGui::TextDisabled("%s", T("…уточните поиск")); break; }
-                if (ImGui::Selectable(n.c_str())) { Copy(a->anim, sizeof a->anim, n); ImGui::CloseCurrentPopup(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
-            }
-        }
-        ImGui::EndChild();
-        ImGui::EndPopup();
-    }
+    LookField(T("Облик"), a->look, sizeof a->look);
+    AnimField(T("Анимация"), a->anim, sizeof a->anim);
     ImGui::Checkbox(T("Твёрдый (в него упираются)"), &a->solid);
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt(T("Мир (-1 — во всех)"), &a->world)) a->world = std::max(-1, a->world);
@@ -1671,7 +1965,7 @@ void DrawWorld() {
         const char* label = std::strcmp(kind, "light:spot") == 0 ? T("Прожектор") : T("Точечный свет");
         if (std::strcmp(kind, "light:spot") == 0) ImGui::SameLine();
         if (ImGui::Button(armed ? (std::string(T("отмена")) + "##" + kind).c_str() : (std::string("+ ") + label).c_str())) {
-            placeProp = armed ? "" : kind; placeLogic.clear(); placeZone = 0;
+            placeProp = armed ? "" : kind; placeLogic.clear(); placeZone = 0; placeCarry = false;
             if (!armed) Toast(T("ЛКМ в мире ставит: ") + std::string(label));
         }
     }
@@ -1681,7 +1975,7 @@ void DrawWorld() {
     {
         const bool armed = placeActor == "*";
         if (ImGui::Button(armed ? T("отмена##npc") : "+ NPC")) {
-            placeActor = armed ? "" : "*"; placeProp.clear(); placeLogic.clear(); placeZone = 0;
+            placeActor = armed ? "" : "*"; placeProp.clear(); placeLogic.clear(); placeZone = 0; placeCarry = false;
             if (!armed) Toast(T("ЛКМ в мире ставит NPC"));
         }
         ImGui::SameLine(); ImGui::TextDisabled("(?)");
@@ -1697,10 +1991,27 @@ void DrawWorld() {
         ImGui::TextWrapped("%s", T("NPC, созданные кодом режима (createActor), здесь не видны. Ставьте их здесь, а в коде берите через logic.actor(\"id\") / logic.actors(\"группа\")."));
         ImGui::PopStyleColor();
     }
+    ImGui::SeparatorText(T("Переноска"));
+    {
+        if (ImGui::Button(placeCarry ? T("отмена##carry") : T("+ Ящик"))) {
+            placeCarry = !placeCarry; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeZone = 0;
+            if (placeCarry) Toast(T("ЛКМ в мире ставит ящик"));
+        }
+        ImGui::SameLine(); ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Ящики, которые игроки носят двумя руками (зажать F). Сервер кладёт их при запуске режима; код режима находит их по ключу: getCarry(\"ключ\"), по метке: carries(\"метка\"). Новый ящик берёт модель, метку и мир выделенного."));
+        if (!world.carries.empty()) {
+            ImGui::SameLine();
+            if (ImGui::TreeNode(T("Поставленные ящики"))) {
+                for (auto& c : world.carries) if (ImGui::Selectable((std::string(c.key) + "  —  " + CarryModelName(c.model) + (c.tag[0] ? std::string("  [") + c.tag + "]" : std::string()) + "##carry").c_str(), wsel.kind == 6 && wsel.id == c.key)) SelectCarry(c.key);
+                ImGui::TreePop();
+            }
+        }
+    }
     ImGui::SeparatorText(T("Выделено"));
     if (wsel.kind == 0) ImGui::TextDisabled(placeProp.empty() ? T("Кликните по объекту в мире") : T("Кликните в мире, чтобы поставить проп"));
     else if (wsel.kind == 4) DrawActorProps();
     else if (wsel.kind == 5) DrawZoneProps();
+    else if (wsel.kind == 6) DrawCarryProps();
     else {
         ImGui::TextWrapped("%s", wsel.kind == 2 ? (T("Проп ") + wsel.id).c_str() : wsel.id.c_str());
         if (!wsel.cls.empty()) ImGui::TextDisabled("%s", wsel.cls.c_str());
@@ -1818,9 +2129,66 @@ void DrawLibrary() {
     ImGui::End();
 }
 
+// A button that arms what the next left click into the world places (orange while armed).
+void ClickModeButton(const char* label, int m) {
+    const bool on = clickMode == m;
+    if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.55f, 0.15f, 1));
+    if (ImGui::Button(label)) clickMode = on ? kSelect : m;
+    if (on) ImGui::PopStyleColor();
+}
+// Boxes to carry from the pick-up area to the drop-off area (docs/quests.md "deliver").
+void DrawDeliver(Step& s, int index) {
+    ImGui::TextWrapped("%s", T("Засчитывается ящик, поставленный (зажать F) в зоне разгрузки. Брать эти ящики может только тот, кто на этом этапе (у работы — кто на работе)."));
+    ImGui::SeparatorText(T("Погрузка: где лежат ящики"));
+    ImGui::PushID("pick");
+    if (s.hasPickup) {
+        char line[120]; snprintf(line, sizeof(line), T("Погрузка: %.0f  %.0f  %.0f"), s.px, s.py, s.pz);
+        if (ImGui::Selectable(line, picked.step == index && picked.kind == 3)) picked = {index, 3, 0};
+    } else ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "%s", T("Не задано — кнопка ниже, потом ЛКМ в мире"));
+    ClickModeButton(clickMode == kPickup ? T("Кликните в мире…") : T("Поставить погрузку"), kPickup);
+    if (ImGui::SliderFloat(T("Радиус погрузки, м"), &s.pr, 1, 20, "%.0f")) previewDirty = true;
+    ImGui::InputTextWithHint(T("Название на карте"), T("Погрузка"), Cur(s.pickName), sizeof(s.pickName.en));
+    // Boxes placed in the world (World > Carrying) by tag, else new ones around the point.
+    ImGui::InputText(T("Ящики мира (метка)"), s.tag, sizeof(s.tag));
+    std::vector<std::string> tags;
+    for (auto& c : world.carries) if (c.tag[0] && std::find(tags.begin(), tags.end(), c.tag) == tags.end()) tags.emplace_back(c.tag);
+    for (size_t i = 0; i < tags.size(); ++i) {
+        if (i) ImGui::SameLine();
+        if (ImGui::SmallButton(tags[i].c_str())) Copy(s.tag, sizeof(s.tag), tags[i]);
+    }
+    const auto tagged = s.tag[0] ? std::count_if(world.carries.begin(), world.carries.end(), [&](const WCarry& c) { return std::strcmp(c.tag, s.tag) == 0; }) : 0;
+    if (tagged > 0) ImGui::TextWrapped(T("В режиме «%s» с этой меткой ящиков: %d — берутся они и возвращаются на свои места"), worldMode.c_str(), int(tagged));
+    else ImGui::TextDisabled("%s", T("Ящики кладутся вокруг точки погрузки"));
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt(T("Ящиков на погрузке"), &s.boxes)) s.boxes = std::clamp(s.boxes, 1, 24);
+    if (ImGui::BeginCombo(T("Модель"), CarryModelName(s.model))) {
+        int n = 0; const carry::ModelInfo* m = carry::Models(n);
+        for (int i = 0; i < n; ++i) if (ImGui::Selectable(english ? m[i].en : m[i].ru, std::strcmp(m[i].name, s.model) == 0)) Copy(s.model, sizeof(s.model), m[i].name);
+        ImGui::EndCombo();
+    }
+    static const char* const rolls[] = {"Ничего", "Падает", "Ломается"};
+    ImGui::Combo(T("Перекат с ящиком"), &s.roll, TArr(rolls, 3), 3);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Что будет, если игрок сделает перекат с ящиком в руках: ничего, ящик падает на землю, ящик ломается (исчезает)"));
+    ImGui::PopID();
+    ImGui::SeparatorText(T("Разгрузка: куда их отнести"));
+    ImGui::PushID("drop");
+    if (s.hasDrop) {
+        char line[120]; snprintf(line, sizeof(line), T("Разгрузка: %.0f  %.0f  %.0f"), s.dx, s.dy, s.dz);
+        if (ImGui::Selectable(line, picked.step == index && picked.kind == 4)) picked = {index, 4, 0};
+    } else ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "%s", T("Не задано — кнопка ниже, потом ЛКМ в мире"));
+    ClickModeButton(clickMode == kDropoff ? T("Кликните в мире…") : T("Поставить разгрузку"), kDropoff);
+    if (ImGui::SliderFloat(T("Радиус разгрузки, м"), &s.dr, 1, 20, "%.0f")) previewDirty = true;
+    ImGui::InputTextWithHint(T("Название на карте"), T("Разгрузка"), Cur(s.dropName), sizeof(s.dropName.en));
+    ImGui::PopID();
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt(T("Сколько ящиков отнести"), &s.count)) s.count = std::max(1, s.count);
+    ImGui::Checkbox(T("Маршрут к разгрузке"), &s.route);
+}
+
 void DrawStepEditor(Step& s, int index) {
     ImGui::SeparatorText((T("Этап ") + std::to_string(index + 1)).c_str());
-    if (ImGui::Combo(T("Тип"), &s.type, TArr(kStepTypes, 3), 3)) previewDirty = true;
+    if (ImGui::Combo(T("Тип"), &s.type, TArr(kStepTypes, kStepCount), kStepCount)) { if (s.type == 3 && s.count < 1) s.count = 1; previewDirty = true; }
     if (ImGui::InputText(T("Текст"), Cur(s.text), sizeof(s.text.en))) previewDirty = true;
     if (s.type == 0 || s.type == 1) {
         if (s.hasPoint) {
@@ -1834,6 +2202,7 @@ void DrawStepEditor(Step& s, int index) {
         if (ImGui::Button(clickMode == kPoint ? T("Кликните в мире…") : T("Поставить точку"))) clickMode = clickMode == kPoint ? kSelect : kPoint;
         return;
     }
+    if (s.type == 3) { DrawDeliver(s, index); return; }
     ImGui::TextUnformatted(T("Что засчитывать:"));
     for (int i = 0; i < 8; ++i) {
         bool on = (s.events & (1u << i)) != 0;
@@ -1847,15 +2216,9 @@ void DrawStepEditor(Step& s, int index) {
     ImGui::InputText(T("Класс объекта содержит"), s.cls, sizeof(s.cls));
 
     ImGui::SeparatorText(T("Поставить кликом в мире"));
-    auto modeButton = [](const char* label, int m) {
-        const bool on = clickMode == m;
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.55f, 0.15f, 1));
-        if (ImGui::Button(label)) clickMode = on ? kSelect : m;
-        if (on) ImGui::PopStyleColor();
-    };
-    modeButton(T("Зону"), kPoint); ImGui::SameLine();
-    modeButton(T("Объект"), kObject); ImGui::SameLine();
-    modeButton(T("Предмет"), kItem); ImGui::SameLine();
+    ClickModeButton(T("Зону"), kPoint); ImGui::SameLine();
+    ClickModeButton(T("Объект"), kObject); ImGui::SameLine();
+    ClickModeButton(T("Предмет"), kItem); ImGui::SameLine();
     ImGui::Checkbox(T("Повторять"), &repeatPlace);
     if (clickMode == kItem) ImGui::TextDisabled(T("Предмет: %s"), placeItem[0] ? ItemName(placeItem) : T("выберите в библиотеке"));
 
@@ -1887,6 +2250,51 @@ void DrawStepEditor(Step& s, int index) {
             ImGui::PopID();
         }
     }
+}
+
+// The job's giver, uniform and pay ("kind": "job", docs/quests.md).
+void DrawJob() {
+    ImGui::PushID("job");
+    ImGui::TextWrapped("%s", T("Этапы ниже повторяются по кругу, пока игрок на работе. Раз = все этапы по одному разу."));
+    ImGui::SeparatorText(T("Кто даёт работу"));
+    const std::string own = T("свой NPC (ниже)");
+    if (ImGui::BeginCombo(T("NPC из мира"), quest.giverActor[0] ? quest.giverActor : own.c_str())) {
+        if (ImGui::Selectable(own.c_str(), !quest.giverActor[0])) { quest.giverActor[0] = 0; previewDirty = true; }
+        for (auto& a : world.actors) {
+            const std::string label = std::string(a.id) + (a.name[0] ? std::string("  ") + a.name : std::string());
+            if (ImGui::Selectable(label.c_str(), std::strcmp(a.id, quest.giverActor) == 0)) {
+                Copy(quest.giverActor, sizeof(quest.giverActor), a.id);
+                // The same NPC of the job's own, for modes without this one (questtest).
+                quest.giverHasPoint = true; quest.gx = a.t.x; quest.gy = a.t.y; quest.gz = a.t.z; quest.gyaw = a.t.yaw;
+                const std::string look = ModeSkinLook(a.look);
+                Copy(quest.giverLook, sizeof(quest.giverLook), look.empty() ? std::string(a.look) : look);
+                Copy(quest.giverAnim, sizeof(quest.giverAnim), a.anim[0] ? std::string(a.anim) : std::string("idle"));
+                LFrom(json::Value(std::string(a.name)), quest.giverName);
+                previewDirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (worldMode.empty()) ImGui::TextDisabled("%s", T("NPC мира — из режима, открытого во вкладке «Мир»"));
+    else if (quest.giverActor[0]) ImGui::TextWrapped(T("В режиме «%s» работу даёт этот NPC. В других режимах (и в «Проверить») на его месте встаёт такой же NPC работы."), worldMode.c_str());
+    if (quest.giverHasPoint) {
+        char line[120]; snprintf(line, sizeof(line), T("Место NPC: %.0f  %.0f  %.0f"), quest.gx, quest.gy, quest.gz);
+        if (ImGui::Selectable(line, picked.kind == 5, 0, ImVec2(ImGui::CalcTextSize(line).x, 0))) picked = {-1, 5, 0};
+    } else ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "%s", T("Место NPC не задано — ЛКМ в мире"));
+    ClickModeButton(clickMode == kGiver ? T("Кликните в мире…") : T("Поставить NPC"), kGiver);
+    ImGui::InputTextWithHint(T("Имя NPC"), contentLang ? "Бригадир" : "Foreman", Cur(quest.giverName), sizeof(quest.giverName.en));
+    LookField(T("Облик"), quest.giverLook, sizeof(quest.giverLook));
+    AnimField(T("Анимация"), quest.giverAnim, sizeof(quest.giverAnim));
+    ImGui::Checkbox(T("Метка на карте"), &quest.giverMarker);
+    ImGui::SeparatorText(T("Форма и оплата"));
+    LookField(T("Форма на работе"), quest.uniform, sizeof(quest.uniform), T("без формы"));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Облик на время работы: id формы режима или облик игры (пусто — без формы)"));
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt(T("Оплата, $ за раз"), &quest.pay);
+    ImGui::Combo(T("Когда платить"), &quest.payout, TArr(kPayouts, 2), 2);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt(T("Раз за смену (0 — без ограничения)"), &quest.cycles)) quest.cycles = std::max(0, quest.cycles);
+    ImGui::PopID();
 }
 
 void DrawQuest() {
@@ -1922,12 +2330,14 @@ void DrawQuest() {
 
     if (ImGui::CollapsingHeader(T("Общее"), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::InputText(T("Файл (id)"), quest.id, sizeof(quest.id));
+        int kind = quest.job ? 1 : 0;
+        if (ImGui::Combo(T("Вид"), &kind, TArr(kKinds, 2), 2)) { quest.job = kind == 1; previewDirty = true; }
         ImGui::InputText(T("Название"), Cur(quest.title), sizeof(quest.title.en));
         ImGui::Combo(T("Категория"), &quest.category, TArr(kCategories, 8), 8);
         ImGui::Combo(T("Вид маркеров"), &quest.style, TArr(kStyles, 8), 8);
         ImGui::InputTextMultiline(T("Вступление"), Cur(quest.text), sizeof(quest.text.en), ImVec2(-1, 50));
-        ImGui::InputInt(T("Опыт"), &quest.xp);
-        if (ImGui::TreeNode(T("Награда"))) {
+        ImGui::InputInt(quest.job ? T("Опыт при сдаче работы") : T("Опыт"), &quest.xp);
+        if (!quest.job && ImGui::TreeNode(T("Награда"))) {
             for (size_t i = 0; i < quest.reward.size(); ++i) {
                 ImGui::PushID(2000 + int(i));
                 ImGui::SetNextItemWidth(220); ImGui::InputText("##item", quest.reward[i].item, sizeof(quest.reward[i].item));
@@ -1939,16 +2349,22 @@ void DrawQuest() {
             ImGui::TreePop();
         }
     }
+    if (quest.job && ImGui::CollapsingHeader(T("Работа"), ImGuiTreeNodeFlags_DefaultOpen)) DrawJob();
     ImGui::SeparatorText(T("Этапы"));
     for (size_t i = 0; i < quest.steps.size(); ++i) {
         const Step& s = quest.steps[i];
         const std::string label = std::to_string(i + 1) + ". " + T(kStepTypes[s.type]) + ": " + Shown(s.text) + "##step" + std::to_string(i);
         if (ImGui::Selectable(label.c_str(), selected == int(i))) { selected = int(i); previewDirty = true; }
     }
-    const char* adds[] = {T("+ Дойти"), T("+ Удерживать"), T("+ Сделать N раз")};
-    for (int t = 0; t < 3; ++t) {
+    const char* adds[] = {T("+ Дойти"), T("+ Удерживать"), T("+ Сделать N раз"), T("+ Перенести ящики")};
+    for (int t = 0; t < kStepCount; ++t) {
         if (t) ImGui::SameLine();
-        if (ImGui::Button(adds[t])) { Step s; s.type = t; if (t == 2) s.events = 1; quest.steps.push_back(s); selected = int(quest.steps.size()) - 1; previewDirty = true; }
+        if (ImGui::Button(adds[t])) {
+            Step s; s.type = t;
+            if (t == 2) s.events = 1;
+            if (t == 3) s.count = 1;
+            quest.steps.push_back(s); selected = int(quest.steps.size()) - 1; previewDirty = true;
+        }
     }
     if (selected >= 0 && selected < int(quest.steps.size())) {
         ImGui::SameLine(); if (ImGui::Button("↑") && selected > 0) { std::swap(quest.steps[selected], quest.steps[selected - 1]); --selected; previewDirty = true; }
@@ -2067,19 +2483,25 @@ bool Project(const float* view, const float* proj, float width, float height, fl
 // Position (and yaw) of a selectable thing; null when it no longer exists.
 float* RefPosition(const Ref& ref, float** yaw) {
     *yaw = nullptr;
+    if (ref.kind == 5) { if (quest.job && quest.giverHasPoint) { *yaw = &quest.gyaw; return &quest.gx; } return nullptr; }
     if (ref.step < 0 || ref.step >= int(quest.steps.size())) return nullptr;
     Step& s = quest.steps[ref.step];
-    if (ref.kind == 0 && s.type != 2 && s.hasPoint) return &s.x;
+    if (ref.kind == 0 && (s.type == 0 || s.type == 1) && s.hasPoint) return &s.x;
+    if (ref.kind == 3 && s.type == 3 && s.hasPickup) return &s.px;
+    if (ref.kind == 4 && s.type == 3 && s.hasDrop) return &s.dx;
     if (ref.kind == 1 && s.type == 2 && s.hasArea) return &s.ax;
     if (ref.kind == 2 && s.type == 2 && ref.index < int(s.spawn.size())) { *yaw = &s.spawn[ref.index].yaw; return &s.spawn[ref.index].x; }
     return nullptr;
 }
 std::vector<std::pair<Ref, std::string>> Selectables() {
     std::vector<std::pair<Ref, std::string>> out;
+    if (quest.job && quest.giverHasPoint) out.push_back({{-1, 5, 0}, T("Выдаёт работу")});
     for (int i = 0; i < int(quest.steps.size()); ++i) {
         const Step& s = quest.steps[i];
         const std::string n = std::to_string(i + 1);
-        if (s.type != 2 && s.hasPoint) out.push_back({{i, 0, 0}, T("Этап ") + n});
+        if ((s.type == 0 || s.type == 1) && s.hasPoint) out.push_back({{i, 0, 0}, T("Этап ") + n});
+        if (s.type == 3 && s.hasPickup) out.push_back({{i, 3, 0}, T("Этап ") + n + T(": погрузка")});
+        if (s.type == 3 && s.hasDrop) out.push_back({{i, 4, 0}, T("Этап ") + n + T(": разгрузка")});
         if (s.type == 2 && s.hasArea) out.push_back({{i, 1, 0}, T("Этап ") + n + T(": зона")});
         if (s.type == 2) for (int k = 0; k < int(s.spawn.size()); ++k) out.push_back({{i, 2, k}, T("Этап ") + n + ": " + ItemName(s.spawn[k].item)});
     }
@@ -2135,6 +2557,7 @@ void DrawWorldTools() {
             else if (wsel.kind == 3) { if (LItem* li = LogicOf(wsel.id)) li->t = wsel.t; }
             else if (wsel.kind == 4) { if (WActor* a = ActorById(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; a->t = wsel.t; } }
             else if (wsel.kind == 5) { if (WZone* z = ZoneOf(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; z->t = wsel.t; } }
+            else if (wsel.kind == 6) { if (WCarry* c = CarryByKey(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; c->t = wsel.t; } }
             else for (auto& a : world.add) if (a.uid == wsel.id) a.t = wsel.t;
             worldDirty = true;
         }
@@ -2184,9 +2607,18 @@ void DrawWorldTools() {
         const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
         if (dx * dx + dy * dy < std::max(hoverBest, 30.f * 30.f)) { hoverBest = dx * dx + dy * dy; hoverActor = i; hoverIndex = -1; hoverZone = -1; }
     }
+    int hoverCarry = -1;  // boxes: a click on the box selects it
+    for (int i = 0; i < int(world.carries.size()); ++i) {
+        ImVec2 c;
+        const WCarry& b = world.carries[size_t(i)];
+        if (!Project(view, proj, w, h, b.t.x, b.t.y, b.t.z + 25, c)) continue;
+        const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
+        if (dx * dx + dy * dy < std::max(hoverBest, 25.f * 25.f)) { hoverBest = dx * dx + dy * dy; hoverCarry = i; hoverActor = -1; hoverIndex = -1; hoverZone = -1; }
+    }
     if (overlay::CursorMode() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse && !busy) {
-        const bool placing = !placeLogic.empty() || !placeProp.empty() || !placeActor.empty() || placeZone;
-        if (hoverActor >= 0 && !placing) SelectActor(world.actors[size_t(hoverActor)].id);
+        const bool placing = !placeLogic.empty() || !placeProp.empty() || !placeActor.empty() || placeZone || placeCarry;
+        if (hoverCarry >= 0 && !placing) SelectCarry(world.carries[size_t(hoverCarry)].key);
+        else if (hoverActor >= 0 && !placing) SelectActor(world.actors[size_t(hoverActor)].id);
         else if (hoverZone >= 0 && !placing) SelectZone(hoverZone);
         else if (hoverIndex >= 0 && !placing) SelectLogic(hoverName, hoverIndex);
         else actions.push_back({Action::WorldClick, ""});
@@ -2255,7 +2687,7 @@ void DrawSceneTools() {
     }
     // Click selection: in the world (not on a window or the gizmo) and only when nothing is being placed.
     if (clickMode == kSelect && overlay::CursorMode() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse && !gizmoBusy) {
-        if (hover >= 0) { picked = items[hover].first; selected = picked.step; previewDirty = true; }
+        if (hover >= 0) { picked = items[hover].first; if (picked.step >= 0) selected = picked.step; previewDirty = true; }
         else picked = {};
     }
 }
@@ -2657,6 +3089,7 @@ void Update(double now, UObject* pawn, UObject* controller) {
     worldedit::Update(pawn);
     UpdateLogicVisuals(pawn);
     UpdateActorPreviews(pawn);
+    UpdateCarryPreviews(pawn);
     UpdateSelectionOutline(controller);
     UpdateWardrobe(pawn, controller);
     // Left click into the world (not on a window) while the cursor belongs to the editor.

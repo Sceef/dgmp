@@ -119,6 +119,22 @@ struct Zone {
     bool Contains(float px, float py, float pz) const;
 };
 
+// A box the players carry in both hands (docs/API.md "Переноска"): it lies somewhere, or a player
+// holds it. Each client shows its own copy on the ground; the one who carries it holds the game's
+// own carried item, the others see it in that player's hands (its gear).
+struct Carry {
+    uint16_t id = 0;
+    std::string model = "crate";              // what it is (Carry::Models)
+    float x = 0, y = 0, z = 0, yaw = 0;       // where it lies (z: on the ground); carried: where it was last put
+    int32_t world = -1;                       // virtual world (-1: every)
+    uint16_t carrier = 0xFFFF;                // the player holding it (0xFFFF: it lies)
+    std::string tag;                          // the mode's own label ("cargo", an order id...)
+    net::CarryRoll roll = net::CarryRoll::Keep;  // a dodge roll with it: nothing, it falls, it breaks
+    std::string key;                          // placed in the editor (world.json "carries"): its id; getCarry("key")
+    static bool KnownModel(const std::string& m);
+    static const char* ModelList();           // the known models, for messages: "crate, ..."
+};
+
 // Something a player did in the world, as reported by its client (Msg::GameEvent).
 struct GameEvent {
     uint8_t type = 0;               // net::GameEventType
@@ -173,6 +189,8 @@ struct Player {
     int8_t pvp = -1;                               // player:setPvp: -1 the rules decide, 0 never hurts / is hurt by players, 1 always (both need it)
     std::vector<std::string> zones;                // names of the enabled zones it stands in
     std::string zoneHud;                           // the zone line on its screen now ("": none)
+    uint16_t carrying = 0;                         // the box (Carry) in its hands (0: none)
+    int64_t money = 0;                             // the mode's money (docs/API.md "Деньги"); not kept by the server
 };
 
 class Script;
@@ -239,6 +257,9 @@ public:
                         const std::string& button2, const std::string& defaultText, const std::string& headers, const std::vector<std::string>& items);
     void CloseDialog(Player* p);
     void SetHud(Player* p, const std::string& id, const std::string& json);  // json "": remove; id and json "": all
+    // Money (docs/API.md "Деньги"): the player's amount, shown at the top right of its screen while it is not 0.
+    void SetMoney(Player* p, int64_t amount);
+    void ShowMoney(Player* p);                    // (again: after the HUD was cleared)
     uint16_t AddInteraction(Interaction i);
     bool RemoveInteraction(uint16_t id);
     void WatchKey(uint8_t key, bool on);
@@ -286,6 +307,16 @@ public:
     // A zone as JSON (world.json and Lua: sizes in metres) and back; FromJson changes only the fields given.
     static json::Value ZoneJson(const Zone& z);
     static bool ZoneFromJson(const json::Value& v, Zone& z, std::string& error);
+    // Boxes to carry (docs/API.md "Переноска"). Give: into the player's hands (false: it holds one, or
+    // no such box); Drop: out of its hands onto that spot (null: where the player stands).
+    uint16_t AddCarry(Carry c);
+    bool UpdateCarry(const Carry& c);             // where it lies, its world and tag (a carried one: taken out of the hands)
+    bool RemoveCarry(uint16_t id);                // also out of the hands
+    Carry* FindCarry(uint16_t id) { auto it = carries_.find(id); return it == carries_.end() ? nullptr : &it->second; }
+    Carry* FindCarry(const std::string& key) { for (auto& [id, c] : carries_) if (!key.empty() && c.key == key) return &c; return nullptr; }
+    const std::map<uint16_t, Carry>& Carries() const { return carries_; }
+    bool GiveCarry(Player* p, uint16_t id);
+    uint16_t DropCarry(Player* p, const float* xyzYaw = nullptr);  // the box it held (0: none)
     uint16_t AddWorldItem(WorldItem item);
     bool RemoveWorldItem(uint16_t id);
     // Clears the backpack and gives `inv` back, skipping keys that start with one of `drop`.
@@ -339,6 +370,12 @@ private:
     void SendRoute(Player* to, const Vehicle& v);     // its NPC's way (none: stopped)
     void TickVehicles();                              // where the driven ones are; the ones that arrived
     void LeaveVehicle(Player* p, const net::VehicleState* where);  // p no longer drives (or rides on) its vehicle
+    std::map<uint16_t, Carry> carries_;
+    uint16_t nextCarry_ = 1;
+    void SendCarry(Player* to, const Carry& c);       // to null: everyone
+    void OnCarryAction(Player& p, net::Reader& r);
+    // The box leaves the player's hands at that spot; the mode hears it (carryDrop, reason "lost", "death", "quit").
+    void LoseCarry(Player& p, float x, float y, float z, float yaw, const char* reason);
     uint16_t nextActor_ = 1;
     void SendActor(_ENetPeer* peer, const Actor& a);
     std::map<std::string, std::string> anims_;  // lower-case name -> asset path (data/anims.txt)
@@ -353,6 +390,7 @@ private:
     std::map<std::string, std::vector<SkinChoice>> modeSkins_;  // "skins", "uniforms" -> list
     void LoadModeSkins(const std::string& mode);
     void LoadWorldActors(const std::string& mode);  // world.json "actors": the mode's NPCs placed in the editor
+    void LoadCarries(const std::string& mode);      // world.json "carries": boxes placed in the editor
     Spot wardrobe_;  // world.json logic "wardrobe": where players choose skins
     // Time of day and weather saved with the mode in the editor (world.json "environment"); applied
     // before the mode's code runs, which may still change them.

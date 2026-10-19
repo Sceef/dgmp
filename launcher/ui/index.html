@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DGMP</title>
-<link rel="stylesheet" href="app.css?v=0.6.2">
+<link rel="stylesheet" href="app.css?v=0.6.3">
 </head>
 <body>
 <div class="app">
@@ -26,7 +26,6 @@
     <nav class="nav" role="tablist">
       <button class="nav-item active" data-page="servers" role="tab"><span class="ico">◉</span><span data-i18n="nav.servers">Серверы</span></button>
       <button class="nav-item" data-page="host" role="tab"><span class="ico">▲</span><span data-i18n="nav.host">Создать сервер</span><span class="dot" id="server-dot" hidden></span></button>
-      <!-- Quests are edited in the quest window that opens with the editor (index.html?view=quests). -->
       <button class="nav-item" data-page="editor" role="tab"><span class="ico">✎</span><span data-i18n="nav.editor">Редактор</span></button>
     </nav>
 
@@ -130,99 +129,16 @@
       </div>
     </section>
 
-    <!-- QUESTS -->
-    <section class="page" id="page-quests">
-      <header class="page-head">
-        <h1 data-i18n="quests.title">Квесты</h1>
-        <div class="pick-hint" data-i18n="quests.pickHint">В игре: F6 — точка, F7 — объект, F9 — предмет для шага</div>
-        <div class="tele" id="q-tele" data-i18n="tele.off">игра не запущена</div>
-      </header>
-      <div class="arm-wait" id="q-arm" hidden>
-        <span class="spinner"></span>
-        <span class="grow" id="q-arm-text" data-i18n="arm.text">Кликните ЛКМ в игре…</span>
-        <label class="check inline"><input type="checkbox" id="q-arm-repeat"> <span data-i18n="arm.repeat">Повторять</span></label>
-        <button type="button" class="btn small" id="q-arm-cancel" data-i18n="cancel">Отмена</button>
-      </div>
-      <div class="quest-grid">
-        <div class="card quest-side">
-          <button class="btn primary" id="q-new" data-i18n="q.new">Новый квест</button>
-          <div class="quest-list" id="q-list"></div>
-          <div class="empty-note" id="q-list-empty" hidden data-i18n-html="q.listEmpty">Квестов пока нет.<br>Файлы лежат в папке quests.</div>
-        </div>
-
-        <div class="card quest-edit">
-          <div class="empty-note" id="q-none" data-i18n="q.none">Выберите квест слева или создайте новый.</div>
-          <form class="quest-form" id="q-form" autocomplete="off" spellcheck="false" hidden>
-            <div class="quest-actions">
-              <div class="quest-file" id="q-file"></div>
-              <button type="button" class="btn danger" id="q-delete" data-i18n="delete">Удалить</button>
-              <button type="submit" class="btn" id="q-save" data-i18n="save">Сохранить</button>
-              <button type="button" class="btn primary" id="q-test" title="Сохранить, запустить сервер с режимом questtest и войти в игру" data-i18n="q.test" data-i18n-title="q.testHint">Проверить</button>
-            </div>
-
-            <div class="row">
-              <div class="field">
-                <label for="q-id">Id <span class="muted" data-i18n="q.idHint">(имя файла: a-z, 0-9, _ и -)</span></label>
-                <input id="q-id" data-q="id" maxlength="64">
-              </div>
-              <div class="field">
-                <label for="q-title" data-i18n="q.title">Название</label>
-                <input id="q-title" data-q="title" maxlength="120">
-              </div>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label for="q-category" data-i18n="q.category">Категория</label>
-                <select id="q-category" data-q="category"></select>
-              </div>
-              <div class="field">
-                <label for="q-style" data-i18n="q.style">Вид маркеров</label>
-                <select id="q-style" data-q="style"></select>
-              </div>
-            </div>
-            <div class="field">
-              <label for="q-text" data-i18n="q.text">Текст «Новое задание»</label>
-              <textarea id="q-text" data-q="text" rows="2" maxlength="500"></textarea>
-            </div>
-
-            <div class="field">
-              <label data-i18n="q.reward">Награда</label>
-              <div class="row narrow">
-                <div class="field">
-                  <span class="sub-label" data-i18n="q.xp">Опыт</span>
-                  <input id="q-xp" data-q="xp" type="number" min="0" step="10" placeholder="0">
-                </div>
-              </div>
-              <div class="rows" id="q-reward"></div>
-              <button type="button" class="btn small" id="q-reward-add" data-i18n="q.addItem">+ Предмет</button>
-            </div>
-
-            <div class="field">
-              <label data-i18n="q.steps">Шаги</label>
-              <div class="steps" id="q-steps"></div>
-              <div class="actions">
-                <button type="button" class="btn small" data-add-step="goto" data-i18n="addStep.goto">+ Дойти до точки</button>
-                <button type="button" class="btn small" data-add-step="hold" data-i18n="addStep.hold">+ Удерживать зону</button>
-                <button type="button" class="btn small" data-add-step="collect" data-i18n="addStep.collect">+ Сделать N раз</button>
-              </div>
-            </div>
-          </form>
-        </div>
-      </div>
-      <datalist id="item-keys"></datalist>
-    </section>
-
     <!-- EDITOR -->
     <section class="page" id="page-editor">
       <header class="page-head"><h1 data-i18n="nav.editor">Редактор</h1></header>
       <div class="card editor-card">
-        <p data-i18n="editor.desc">Одиночный режим для создания карт, режимов и квестов: полёт (F2), дев-меню (F3), сохранение точки старта (F5). Вместе с игрой открывается окно квестов. Сюжет, сохранения и фоторежим отключены.</p>
+        <p data-i18n="editor.desc">Одиночный режим для создания карт, режимов и квестов: полёт (F2), дев-меню (F3), сохранение точки старта (F5). Квесты и работы создаются в окнах редактора внутри игры. Сюжет, сохранения и фоторежим отключены.</p>
         <label class="check"><input type="checkbox" id="e-refresh"> <span data-i18n="editor.refresh">Восстановить исходный шаблон мира перед запуском</span></label>
         <div class="actions"><button class="btn primary big" id="e-run" data-i18n="editor.run">Открыть редактор</button></div>
       </div>
     </section>
 
-    <div class="toast" id="toast" hidden></div>
     <div class="statusbar" id="statusbar">
       <span class="spinner" id="spinner" hidden></span>
       <span id="status-text" data-i18n="status.ready">Готово</span>
@@ -243,6 +159,6 @@
   </form>
 </div>
 
-<script src="app.js?v=0.6.2"></script>
+<script src="app.js?v=0.6.3"></script>
 </body>
 </html>

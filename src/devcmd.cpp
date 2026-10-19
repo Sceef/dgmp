@@ -4,6 +4,7 @@
 #include "policy.h"
 #include "worldedit.h"
 #include "mp.h"
+#include "gameevents.h"
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,7 @@ namespace fs = std::filesystem;
 //   props <obj> [filter]               properties with current values
 //   array <obj> <ArrayProperty> [max]  elements of an array property
 //   set <obj> <Property> <value>
+//   spawn <classPath|-> <itemKey> [count] [dist]   a pickup in front of the pawn, taken the game's way
 //   trace [seconds]                   log distinct events of the local pawn/controller and their components
 //   refs <obj> [bytes]                 raw scan: offsets holding pointers to live objects (unreflected fields)
 //   call <obj> <Function> [Param=value ...]   values: numbers, true/false, enum short names,
@@ -416,6 +418,16 @@ std::string Run(const std::string& line) {
     if (cmd == "load" && a.size() > 1) {  // load </Game/Path.Asset_C>: loads an asset (a class to spawn)
         UObject* x = FindObject(a[1].c_str()); if (!x) x = LoadAsset(a[1].c_str());
         return x ? "loaded " + FullName(x) : std::string("not found");
+    }
+    if (cmd == "spawn" && a.size() > 2) {  // spawn <classPath|-> <itemKey> [count] [dist]: a pickup the game's interaction takes, in front of the pawn
+        if (!IsValid(ctxPawn)) return "no pawn";
+        Params l(Fn(ctxPawn, "K2_GetActorLocation")); Call(ctxPawn, "K2_GetActorLocation", &l);
+        Params r(Fn(ctxPawn, "K2_GetActorRotation")); Call(ctxPawn, "K2_GetActorRotation", &r);
+        FVector at = l.Get<FVector>("ReturnValue"); const float yaw = r.Get<FRotator>("ReturnValue").Yaw;
+        const float dist = a.size() > 4 ? std::stof(a[4]) : 200.f;
+        at.X += std::cos(yaw * 0.0174533f) * dist; at.Y += std::sin(yaw * 0.0174533f) * dist;
+        UObject* x = gameevents::SpawnResearchPickup(a[2], a.size() > 3 ? std::stoi(a[3]) : 1, at, yaw, ctxPawn, a[1] == "-" ? nullptr : a[1].c_str());
+        return x ? "spawned " + FullName(x) : std::string("spawn failed");
     }
     if (a.size() < 2) return "missing object";
     UObject* o = Resolve(a[1]);

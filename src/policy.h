@@ -65,6 +65,11 @@ void WatchDamage(ue::UObject* actor);
 int TraceEvents(double seconds, const std::vector<ue::UObject*>& extra = {});
 // Game events (gameevents.cpp): every event of an observed object is passed to the observer.
 void SetObserver(void(*observer)(ue::UObject* object,const std::string& name));
+// Carrying a box (src/carry.cpp): the player's input actions that would put the item in the hands away
+// (aiming, weapon selection and wheel, binoculars, quick heal, reload) do nothing; the game would throw it.
+void SetCarryInputBlock(bool on);
+// No dodge roll (a carried item the game would drop in one, kept by the box's roll = "keep").
+void SetCarryRollBlock(bool on);
 void Observe(ue::UObject* object);
 // Shows the game's own tutorial popup (title, text, optional Texture2D asset path) for a mode/server hint.
 // Empty title = survival-tip line at the bottom, closed automatically after `seconds` (default 5).

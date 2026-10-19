@@ -342,6 +342,15 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         } else if (r.ok() && on.actor) on.actor(id, nullptr);
         break;
     }
+    case Msg::Carry: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::CarryInfo c;
+            c.model = r.Str(64); c.x = r.F32(); c.y = r.F32(); c.z = r.F32(); c.yaw = r.F32(); c.world = r.I32(); c.carrier = r.U16(); c.roll = r.U8();
+            if (r.ok() && on.carry) on.carry(id, &c);
+        } else if (r.ok() && on.carry) on.carry(id, nullptr);
+        break;
+    }
     case Msg::WatchKeys: {
         std::vector<uint8_t> keys;
         const int n = r.U8();
@@ -432,6 +441,11 @@ void Client::SendVehicle(Msg op, uint16_t id, const VehicleState* state) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(op); w.U16(id);
     if (state) w.Vehicle(*state);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendCarry(uint16_t id, CarryOp op, float x, float y, float z, float yaw) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::CarryAction); w.U16(id); w.U8(uint8_t(op)); w.F32(x); w.F32(y); w.F32(z); w.F32(yaw);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendImageRequest(const std::string& name) {

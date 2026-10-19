@@ -20,6 +20,10 @@ void Reset();  // the connection is gone: nothing of the server stays on screen
 void SetWorld(int world);  // interactions of other virtual worlds are not there
 // A server vehicle the player stands at: "[E] text"; E asks the server to get on it (id 0: none).
 void SetVehiclePrompt(uint16_t id, const std::string& text);
+// The box to carry the player stands at, or holds (src/carry.cpp): "[F] text" with the hold progress (0..1);
+// shown only when no interaction of the mode takes F (CarryPromptShown: it was on screen last frame).
+void SetCarryPrompt(const std::string& text, float progress);
+bool CarryPromptShown();
 // The mode's icons in the world where they are on screen this frame (game thread): the bottom centre of
 // the picture at x, y; scale shrinks it with distance.
 struct WorldIcon { float x, y, size, scale; unsigned color; std::string image, text; };

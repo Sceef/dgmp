@@ -1,9 +1,11 @@
 #include "hud.h"
 #include "overlay.h"
+#include "lang.h"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <mutex>
 
@@ -17,6 +19,12 @@ std::wstring status, bannerTitle, bannerText, hintTitle, hintText, input;
 ULONGLONG hintUntil = 0;
 std::vector<std::wstring> submitted, history;
 int historyPos = -1;
+size_t caret = 0;                 // the text cursor in `input` (UTF-16 units)
+// The input field as last drawn (overlay thread), for placing the cursor with a click: the text's left
+// edge and scroll (window pixels), the field's rows, and the x of every cursor position in the text.
+float fieldX = 0, fieldScroll = 0, fieldTop = 0, fieldBottom = 0;
+std::vector<float> caretXs;
+std::wstring measured;            // the input caretXs were measured for
 bool visible = false, allowed = false, open = false, skipChar = false;
 HWND overlay = nullptr, game = nullptr;
 WNDPROC gameProc = nullptr;
@@ -35,7 +43,39 @@ HWND FindGameWindow() {
     return ctx.found;
 }
 
-void CloseChat() { open = false; input.clear(); historyPos = -1; dirty = true; }
+void CloseChat() { open = false; input.clear(); caret = 0; historyPos = -1; dirty = true; }
+
+// Text editing at the cursor: whole characters (surrogate pairs stay together), words for Ctrl.
+bool Space(wchar_t c) { return c == L' ' || c == L'\t'; }
+size_t PrevChar(size_t at) { if (at && --at && IS_LOW_SURROGATE(input[at]) && IS_HIGH_SURROGATE(input[at - 1])) --at; return at; }
+size_t NextChar(size_t at) { if (at < input.size() && ++at < input.size() && IS_LOW_SURROGATE(input[at]) && IS_HIGH_SURROGATE(input[at - 1])) ++at; return at; }
+size_t PrevWord(size_t at) { while (at && Space(input[at - 1])) --at; while (at && !Space(input[at - 1])) --at; return at; }
+size_t NextWord(size_t at) { while (at < input.size() && !Space(input[at])) ++at; while (at < input.size() && Space(input[at])) ++at; return at; }
+void Insert(const std::wstring& text) {
+    std::wstring clean;
+    for (wchar_t c : text) clean += c < 32 || c == 127 ? L' ' : c;  // line breaks and tabs of a paste: spaces
+    size_t room = kInputMax > input.size() ? kInputMax - input.size() : 0;
+    if (clean.size() > room) { clean.resize(room); if (!clean.empty() && IS_HIGH_SURROGATE(clean.back())) clean.pop_back(); }
+    input.insert(caret, clean); caret += clean.size(); dirty = true;
+}
+std::wstring Clipboard(HWND h) {
+    std::wstring out;
+    if (!OpenClipboard(h)) return out;
+    if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
+        if (auto text = static_cast<const wchar_t*>(GlobalLock(data))) { out = text; GlobalUnlock(data); }
+    CloseClipboard();
+    return out;
+}
+// The game hides the system cursor; while the chat is open it is shown (a click places the text cursor),
+// and the game gets back what was raised once it closes. Window thread only.
+int cursorCalls = 0;
+void ShowMouse(bool on) {
+    if (on && !cursorCalls) {
+        int count; do { count = ShowCursor(TRUE); ++cursorCalls; } while (count < 0 && cursorCalls < 64);
+        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+    }
+    else if (!on) for (; cursorCalls > 0; --cursorCalls) ShowCursor(FALSE);
+}
 
 // Runs on the game thread (the game's own window procedure). While the chat is open, key presses,
 // characters, mouse buttons and raw mouse input never reach the game; key releases still do, so
@@ -43,20 +83,22 @@ void CloseChat() { open = false; input.clear(); historyPos = -1; dirty = true; }
 LRESULT CALLBACK GameProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     {
         std::lock_guard g(lock);
+        ShowMouse(open);
         if (!open) {
             const bool fresh = !(l & (1 << 30));
             // Not while a DGMP window holds the cursor (its text fields take the keys).
             if (msg == WM_KEYDOWN && fresh && allowed && visible && !overlay::CursorMode() && (w == 'T' || w == VK_OEM_2) && !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
-                open = true; skipChar = true; input = w == VK_OEM_2 ? L"/" : L""; historyPos = -1; dirty = true;
+                open = true; skipChar = true; input = w == VK_OEM_2 ? L"/" : L""; caret = input.size(); historyPos = -1; dirty = true;
                 return 0;
             }
         } else {
             switch (msg) {
             case WM_CHAR:
                 if (skipChar) { skipChar = false; return 0; }
-                if (w >= 32 && w != 127 && input.size() < kInputMax) { input += static_cast<wchar_t>(w); dirty = true; }
+                if (w >= 32 && w != 127) Insert(std::wstring(1, static_cast<wchar_t>(w)));
                 return 0;
-            case WM_KEYDOWN:
+            case WM_KEYDOWN: {
+                const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
                 if (w == VK_RETURN) {
                     if (!input.empty() && input != L"/") {
                         submitted.push_back(input);
@@ -67,25 +109,54 @@ LRESULT CALLBACK GameProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
                 } else if (w == VK_ESCAPE) {
                     CloseChat();
                 } else if (w == VK_BACK) {
-                    if (!input.empty()) {
-                        input.pop_back();
-                        if (!input.empty() && IS_HIGH_SURROGATE(input.back())) input.pop_back();
-                        dirty = true;
-                    }
+                    const size_t from = ctrl ? PrevWord(caret) : PrevChar(caret);
+                    if (from < caret) { input.erase(from, caret - from); caret = from; dirty = true; }
+                } else if (w == VK_DELETE) {
+                    const size_t to = ctrl ? NextWord(caret) : NextChar(caret);
+                    if (to > caret) { input.erase(caret, to - caret); dirty = true; }
+                } else if (w == VK_LEFT) { caret = ctrl ? PrevWord(caret) : PrevChar(caret); dirty = true;
+                } else if (w == VK_RIGHT) { caret = ctrl ? NextWord(caret) : NextChar(caret); dirty = true;
+                } else if (w == VK_HOME) { caret = 0; dirty = true;
+                } else if (w == VK_END) { caret = input.size(); dirty = true;
+                } else if ((w == 'V' && ctrl) || (w == VK_INSERT && (GetKeyState(VK_SHIFT) & 0x8000))) {
+                    Insert(Clipboard(h));
                 } else if (w == VK_UP || w == VK_DOWN) {
                     const int next = std::clamp(historyPos + (w == VK_UP ? 1 : -1), -1, static_cast<int>(history.size()) - 1);
-                    historyPos = next; input = next < 0 ? L"" : history[next]; dirty = true;
+                    historyPos = next; input = next < 0 ? L"" : history[next]; caret = input.size(); dirty = true;
                 }
                 return 0;
+            }
+            case WM_SETCURSOR:
+                if (LOWORD(l) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512))); return TRUE; }
+                break;
+            case WM_MOUSEMOVE: case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: case WM_XBUTTONUP:
+                // The game would hide the cursor again on every move (it flickered): mouse moves are the chat's.
+                SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+                return 0;
+            case WM_LBUTTONDOWN: {
+                // A click on the input field puts the text cursor at the nearest character boundary.
+                const float x = float(short(LOWORD(l))), y = float(short(HIWORD(l)));
+                if (y >= fieldTop && y <= fieldBottom && measured == input && caretXs.size() == input.size() + 1) {
+                    size_t best = 0; float bestD = 1e9f;
+                    for (size_t i = 0; i < caretXs.size(); ++i) {
+                        if (i && i < input.size() && IS_LOW_SURROGATE(input[i])) continue;
+                        const float d = std::fabs(fieldX + caretXs[i] - fieldScroll - x);
+                        if (d < bestD) { bestD = d; best = i; }
+                    }
+                    caret = best; dirty = true;
+                }
+                return 0;
+            }
             case WM_SYSCHAR: case WM_KEYUP: case WM_SYSKEYUP: case WM_SYSKEYDOWN:
                 break;  // releases and Alt+Tab keep working
-            case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN:
+            case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN:
             case WM_LBUTTONDBLCLK: case WM_RBUTTONDBLCLK: case WM_MOUSEWHEEL:
                 return 0;
             case WM_INPUT:
                 return DefWindowProcW(h, msg, w, l);  // swallow raw mouse look, but let Windows clean up
             case WM_ACTIVATEAPP: case WM_KILLFOCUS:
                 CloseChat();
+                ShowMouse(false);
                 break;
             }
         }
@@ -149,8 +220,36 @@ void Render(int w, int h) {
             Gdiplus::Pen edge(Gdiplus::Color(255, 210, 101, 45), 1.5f);
             const Gdiplus::RectF r(left - unit * 0.6f, y + unit * 0.3f, width + unit * 1.2f, lineH + unit * 0.4f);
             g.FillRectangle(&box, r); g.DrawRectangle(&edge, r);
-            const bool caret = (now / 500) % 2 == 0;
-            ShadowText(g, L"Сказать: " + input + (caret ? L"|" : L""), chatFont, {left, y + unit * 0.45f, width, lineH}, Col(0xF2EADF));
+            // "Say: " and the text after it, scrolled sideways so that the cursor stays in the field.
+            Gdiplus::StringFormat tight(Gdiplus::StringFormat::GenericTypographic());
+            tight.SetFormatFlags(tight.GetFormatFlags() | Gdiplus::StringFormatFlagsMeasureTrailingSpaces | Gdiplus::StringFormatFlagsNoWrap);
+            auto widthOf = [&](const std::wstring& s) { Gdiplus::RectF out; g.MeasureString(s.c_str(), int(s.size()), &chatFont, Gdiplus::PointF(0, 0), &tight, &out); return out.Width; };
+            const std::wstring label = lang::Pick(L"Сказать: ", L"Say: ");
+            const float labelW = widthOf(label), textY = y + unit * 0.55f;
+            if (measured != input || caretXs.size() != input.size() + 1) {
+                caretXs.assign(input.size() + 1, 0.f);
+                for (size_t i = 1; i <= input.size(); ++i) caretXs[i] = widthOf(input.substr(0, i));
+                measured = input;
+            }
+            const float avail = width - labelW, at = caretXs[std::min(caret, input.size())];
+            if (at - fieldScroll > avail - unit * 0.5f) fieldScroll = at - avail + unit * 0.5f;
+            if (at < fieldScroll) fieldScroll = at;
+            if (caretXs.back() <= avail) fieldScroll = 0;
+            fieldX = left + labelW; fieldTop = r.Y; fieldBottom = r.Y + r.Height;
+            Gdiplus::SolidBrush shadow(Gdiplus::Color(216, 0, 0, 0)), brush(Col(0xF2EADF));
+            auto draw = [&](const std::wstring& s, float x) {
+                g.DrawString(s.c_str(), int(s.size()), &chatFont, Gdiplus::PointF(x + 1.5f, textY + 1.5f), &tight, &shadow);
+                g.DrawString(s.c_str(), int(s.size()), &chatFont, Gdiplus::PointF(x, textY), &tight, &brush);
+            };
+            draw(label, left);
+            g.SetClip(Gdiplus::RectF(fieldX, r.Y, avail, r.Height));
+            draw(input, fieldX - fieldScroll);
+            if ((now / 500) % 2 == 0) {
+                Gdiplus::Pen bar(Col(0xF2EADF), 1.5f);
+                const float cx = fieldX + at - fieldScroll;
+                g.DrawLine(&bar, cx, textY + unit * 0.1f, cx, textY + unit * 1.25f);
+            }
+            g.ResetClip();
         }
         // Status, top-right.
         if (!status.empty()) ShadowText(g, status, smallFont, {w - unit * 30.f, unit * 0.8f, unit * 29.f, lineH}, Col(0xD8D0C4, 220), Gdiplus::StringAlignmentFar);

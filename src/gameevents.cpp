@@ -3,6 +3,7 @@
 #include "policy.h"
 #include "inventory.h"
 #include "hud.h"
+#include "carry.h"
 #include <windows.h>
 #include "log.h"
 #include <cmath>
@@ -34,11 +35,15 @@ std::vector<Event> pending;
 struct Placed { std::string key; int count = 1; FVector pos{}; float yaw = 0; UObject* actor = nullptr; bool taken = false, inRange = false; };
 std::map<uint16_t, Placed> placed;  // server world items
 
-UObject* SpawnPickup(const Placed& p, UObject* context) {
+// classPath: a pickup class to spawn instead of the generic one (loaded when needed); interact: the
+// game's own interaction stays on (the player takes it the native way).
+UObject* SpawnPickup(const Placed& p, UObject* context, const char* classPath = nullptr, bool interact = false) {
     UObject* item = inventory::FindItem(p.key);
     static UObject* statics = nullptr;
     if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
-    UObject* cls = FindClass(p.key == "kWeaponID_Gas_Can" ? "BP_BendInventoryPickup_GasCan_C" : "BP_BendInventoryPickup_C");
+    UObject* cls = nullptr;
+    if (classPath) { cls = FindObject(classPath); if (!cls) cls = LoadAsset(classPath); }
+    else cls = FindClass(p.key == "kWeaponID_Gas_Can" ? "BP_BendInventoryPickup_GasCan_C" : "BP_BendInventoryPickup_C");
     if (!item || !statics || !cls) return nullptr;
     FTransform t; t.Translation = p.pos; t.Rotation = FQuat{0, 0, std::sin(p.yaw * 0.00872664626f), std::cos(p.yaw * 0.00872664626f)};
     Params begin(Fn(statics, "BeginSpawningActorFromClass"));
@@ -62,7 +67,7 @@ UObject* SpawnPickup(const Placed& p, UObject* context) {
     if (Fn(actor, "BeginAsyncItemAssetCache")) Call(actor, "BeginAsyncItemAssetCache");
     if (auto f = Fn(actor, "SnapToGround")) { Params snap(f); snap.Set("ActorToIgnore", context); Call(actor, "SnapToGround", &snap); }
     // Quest items have their own pickup (E, works with a full backpack): the game's interaction is off.
-    if (auto f = Fn(actor, "EnableDisableInteract")) { Params e(f); e.SetBool("enable", false); e.SetBool("HideItem", false); Call(actor, "EnableDisableInteract", &e); }
+    if (auto f = Fn(actor, "EnableDisableInteract"); f && !interact) { Params e(f); e.SetBool("enable", false); e.SetBool("HideItem", false); Call(actor, "EnableDisableInteract", &e); }
     policy::Observe(actor);
     dg::Log("World item spawned: %s x%d at %.0f %.0f %.0f", p.key.c_str(), p.count, p.pos.X, p.pos.Y, p.pos.Z);
     return actor;
@@ -95,6 +100,8 @@ void Push(UObject* object, net::GameEventType type, std::string detail = {}) {
 void Observe(UObject* object, const std::string& name) {
     if (!IsValid(object)) return;
     const std::string cls = GetName(object->Class);
+    carry::OnPawnEvent(object, name);
+    if (carry::IsBoxActor(object)) return;  // the server's boxes report themselves (carryPick / carryDrop)
     if (name == "OnPickupAccepted") {
         auto key = ItemKey(object);
         bool carried = false; for (const char* k : kCarried) carried |= key == k;
@@ -180,6 +187,16 @@ void Reset() { cursor = 0; fires.clear(); lastSent.clear(); pending.clear(); for
 UObject* SpawnPreviewItem(const std::string& key, const FVector& pos, float yaw, UObject* context) {
     Placed p; p.key = key; p.pos = pos; p.yaw = yaw;
     return SpawnPickup(p, context);
+}
+
+UObject* SpawnCarryPickup(const std::string& key, const FVector& pos, float yaw, UObject* context, const char* classPath) {
+    Placed p; p.key = key; p.pos = pos; p.yaw = yaw;
+    return SpawnPickup(p, context, classPath, false);
+}
+
+UObject* SpawnResearchPickup(const std::string& key, int count, const FVector& pos, float yaw, UObject* context, const char* classPath) {
+    Placed p; p.key = key; p.count = count; p.pos = pos; p.yaw = yaw;
+    return SpawnPickup(p, context, classPath, true);
 }
 
 void SetWorldItem(uint16_t id, const std::string* key, int count, const FVector& pos, float yaw) {

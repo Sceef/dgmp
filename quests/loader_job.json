@@ -1,0 +1,16 @@
+{
+  "id": "loader_job",
+  "kind": "job",
+  "title": { "en": "Loader", "ru": "Грузчик" },
+  "category": "task",
+  "text": { "en": "Carry crates from the warehouse to the truck. Roll with a crate and it breaks.", "ru": "Перенесите ящики со склада к грузовику. Уроните ящик в перекате — разобьётся." },
+  "giver": { "x": -85300, "y": -301500, "z": -5340, "yaw": 180, "look": "m_mil_diamondlake_worker_003", "anim": "idle", "name": { "en": "Foreman", "ru": "Бригадир" } },
+  "uniform": "m_mil_diamondlake_worker_001",
+  "pay": 5,
+  "payout": "end",
+  "steps": [
+    { "type": "deliver", "text": { "en": "Carry a crate from the warehouse to the truck", "ru": "Отнесите ящик со склада к грузовику" }, "count": 1,
+      "pickup": { "x": -85450, "y": -302250, "z": -5348, "radius": 3, "boxes": 4, "model": "crate", "roll": "break", "name": { "en": "Warehouse", "ru": "Склад" } },
+      "dropoff": { "x": -84900, "y": -301700, "z": -5340, "radius": 4, "name": { "en": "Truck", "ru": "Грузовик" } } }
+  ]
+}

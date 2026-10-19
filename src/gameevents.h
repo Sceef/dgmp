@@ -23,4 +23,8 @@ void Reset();
 void SetWorldItem(uint16_t id, const std::string* key, int count, const ue::FVector& pos, float yaw = 0);
 // The editor's preview of a quest item: the same pickup actor, not takeable. Null if the key is unknown.
 ue::UObject* SpawnPreviewItem(const std::string& key, const ue::FVector& pos, float yaw, ue::UObject* context);
+// A box to carry (src/carry.cpp): a pickup of that class whose own interaction is off.
+ue::UObject* SpawnCarryPickup(const std::string& key, const ue::FVector& pos, float yaw, ue::UObject* context, const char* classPath);
+// Research (dev console): a pickup of that class (null: the generic one) that the game's own interaction takes.
+ue::UObject* SpawnResearchPickup(const std::string& key, int count, const ue::FVector& pos, float yaw, ue::UObject* context, const char* classPath);
 }

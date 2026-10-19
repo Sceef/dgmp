@@ -9,7 +9,7 @@
 
 namespace net {
 
-constexpr uint16_t kProtocolVersion = 6;
+constexpr uint16_t kProtocolVersion = 7;
 constexpr uint16_t kDefaultPort = 7777;
 constexpr int kLanPortSpan = 10;        // LAN discovery probes kDefaultPort .. kDefaultPort+span-1
 constexpr int kChannels = 3;
@@ -38,6 +38,7 @@ enum class Msg : uint8_t {
     VehicleExit = 15,  // u16 vehicleId, VehicleState: the player got off it, here (a passenger: the state is ignored)
     VehicleState = 16, // u16 vehicleId, VehicleState: where the vehicle it drives is now (about every second)
     ImageRequest = 17, // str name: send me this image of the mode (ImageList: not in my cache)
+    CarryAction = 18,  // u16 carryId, u8 CarryOp, f32 x,y,z,yaw: pick it up / put it down there / the game dropped it there
     CustomizeDone = 10, // u8 ok, str skin: the player closed the character creator (or picked one of the offered looks)
     Gear = 9,         // GearList payload: what the player carries (weapons in hand, on the back, holstered)
     Hit = 8,          // u16 victimId, f32 damage, u8 HitZone, str weapon: this player hit another one
@@ -77,6 +78,8 @@ enum class Msg : uint8_t {
     ImageList = 100,  // u16 n, n x (str name, str sha256): the mode's images (modes/<mode>/images); fetch the ones not cached
     ImageData = 101,  // str name, u16 part, u16 parts, str bytes: an image's file, in parts
     VehicleRoute = 103, // u16 vehicleId, f32 speed (units/s), f32 elapsed (s since it set off), u8 loop, u16 n, n x f32 x,y,z: the way its NPC drives it (n 0: it stopped)
+    Carry = 104,      // u16 id, u8 op (1 add/update: str model, f32 x,y,z,yaw, i32 world (-1 every), u16 carrier (0xFFFF: it lies there), u8 CarryRoll; 2 remove):
+                      // a box the players carry in both hands (docs/API.md "Переноска"); carrier = your id: hold it, else let it go
     Icon = 102,       // u16 id, u8 op (1 add/update: f32 x,y,z, f32 size (pixels), f32 distance (units), i32 world (-1 every), u32 rgba, str image, str text, u8 throughWalls; 2 remove)
     WatchKeys = 94,   // u8 n, n x u8 virtualKey: keys whose presses the client reports (Msg::Key)
     Spectate = 89,    // u8 on, u8 count, count x u16 playerId: watch other players (count 0: anyone)
@@ -94,6 +97,12 @@ enum class GameEventType : uint8_t { Pickup = 1, Search = 2, Body = 3, Interact 
                                     Respawned = 9, Died = 10 };  // the player died and the game gave it a new body (it reloads a checkpoint)
 enum class ItemAction : uint8_t { Give = 1, Take = 2, SetAmmo = 3, TakeWeapons = 4, Clear = 5, TakeTools = 6, GiveReplace = 7 };  // GiveReplace: the weapon it displaces vanishes instead of dropping
 enum ToolMask : uint8_t { ToolKnife = 1, ToolRock = 2, ToolTaser = 4 };  // amount of TakeWeapons / TakeTools
+// CarryAction: Pick asks for it (hold F at it), Put asks to set it down (hold F with it), Lost reports
+// that the game took it out of the hands (a hit, the bike, parkour) and where it fell; Roll: it fell in a
+// dodge roll (CarryRoll::Drop); Break: it broke in one (CarryRoll::Break).
+enum class CarryOp : uint8_t { Pick = 1, Put = 2, Lost = 3, Roll = 4, Break = 5 };
+// What a dodge roll does to a carried box: nothing, it falls, it breaks (the server removes it).
+enum class CarryRoll : uint8_t { Keep = 0, Drop = 1, Break = 2 };
 enum class BikeAction : uint8_t { Give = 1, Take = 2, Mount = 3 };  // Mount: the bike to x,y,z,yaw and the player onto it
 // A server vehicle where it stands: position and heading, fuel and health (0..1).
 struct VehicleState { float x = 0, y = 0, z = 0, yaw = 0, fuel = 1, health = 1; };

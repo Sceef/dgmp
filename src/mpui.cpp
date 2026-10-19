@@ -230,7 +230,8 @@ struct Spot { net::Client::Events::InteractionInfo info; };
 std::map<uint16_t, Spot> spots;
 std::set<uint8_t> watched;
 int world = 0;
-struct Prompt { uint16_t id = 0; uint8_t key = 0; std::string text; bool vehicle = false; } prompt;  // id 0: none
+struct Prompt { uint16_t id = 0; uint8_t key = 0; std::string text; bool vehicle = false, carry = false; float progress = 0; } prompt;  // id 0: none
+struct CarryPrompt { std::string text; float progress = 0; } carryPrompt;  // text "": none
 struct VehiclePrompt { uint16_t id = 0; std::string text; } vehiclePrompt;
 bool owned = false;  // the overlay is shown for a dialog
 
@@ -284,11 +285,13 @@ void Reset() {
     overlay::SetBlockedKey(0);
     std::lock_guard g(lock);
     icons.clear();
-    dialog = Dialog{}; answer = Answer{}; hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{}; world = 0; vehiclePrompt = VehiclePrompt{};
+    dialog = Dialog{}; answer = Answer{}; hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{}; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
 }
 bool DialogOpen() { std::lock_guard g(lock); return dialog.open; }
 void SetWorld(int w) { std::lock_guard g(lock); world = w; }
 void SetIcons(std::vector<WorldIcon> list) { std::lock_guard g(lock); icons = std::move(list); }
+void SetCarryPrompt(const std::string& text, float progress) { std::lock_guard g(lock); carryPrompt = {text, progress}; }
+bool CarryPromptShown() { std::lock_guard g(lock); return prompt.carry; }
 void SetVehiclePrompt(uint16_t id, const std::string& text) { std::lock_guard g(lock); vehiclePrompt = {id, text}; }
 
 void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
@@ -310,6 +313,7 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
                 best = d2; prompt = {id, s.info.key, s.info.text};
             }
             if (!prompt.id && vehiclePrompt.id) prompt = {vehiclePrompt.id, 'E', vehiclePrompt.text, true};
+            if (!prompt.id && !carryPrompt.text.empty()) prompt = {0xFFFF, 'F', carryPrompt.text, false, true, carryPrompt.progress};
         }
         // Every key that may act is followed (also while it may not, so that a key still held
         // when a dialog closes is no new press).
@@ -334,7 +338,7 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
         const bool now = focused && want.count(uint8_t(vk)) && (GetAsyncKeyState(vk) & 0x8000);
         if (now && !down[vk] && actNow) {
             uint16_t use = 0; bool watchedKey, vehicle = false;
-            { std::lock_guard g(lock); if (prompt.id && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; } watchedKey = watched.count(uint8_t(vk)) != 0; }
+            { std::lock_guard g(lock); if (prompt.id && !prompt.carry && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; } watchedKey = watched.count(uint8_t(vk)) != 0; }
             if (use && vehicle) client.SendVehicle(net::Msg::VehicleEnter, use);
             else if (use) client.SendUse(use);
             else if (watchedKey) client.SendKey(uint8_t(vk));
@@ -430,6 +434,9 @@ void DrawHud() {
         const float kw = font->CalcTextSizeA(size, FLT_MAX, 0, key.c_str()).x;
         dl->AddText(font, size, ImVec2(x + (keyW - kw) / 2, y + 4), IM_COL32(20, 20, 20, 255), key.c_str());
         DrawLine(dl, font, size, ImVec2(x + keyW + 10, y + 4), lines[0], true);
+        // A key held down (carrying): how long it still has to be held.
+        if (prompt.carry && prompt.progress > 0)
+            dl->AddRectFilled(ImVec2(x - 12, y + 30 + 5), ImVec2(x - 12 + (total + 24) * prompt.progress, y + 30 + 8), IM_COL32(235, 235, 235, 230), 2);
     }
 }
 

@@ -152,6 +152,8 @@ struct Api {
         if (std::strcmp(key, "spectating") == 0) { lua_pushboolean(L, p && p->spectating); return 1; }
         if (std::strcmp(key, "world") == 0) { lua_pushinteger(L, p ? p->world : 0); return 1; }
         if (std::strcmp(key, "vehicle") == 0) { if (p && (p->vehicle || p->passengerOf)) lua_pushinteger(L, p->vehicle ? p->vehicle : p->passengerOf); else lua_pushnil(L); return 1; }
+        if (std::strcmp(key, "money") == 0) { lua_pushinteger(L, p ? lua_Integer(p->money) : 0); return 1; }
+        if (std::strcmp(key, "carrying") == 0) { if (p && p->carrying) lua_pushinteger(L, p->carrying); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "passenger") == 0) { lua_pushboolean(L, p && p->passengerOf); return 1; }
         if (std::strcmp(key, "skin") == 0) { if (p && !p->skin.empty()) lua_pushstring(L, p->skin.c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "uniform") == 0) { if (p && !p->uniform.empty()) lua_pushstring(L, p->uniform.c_str()); else lua_pushnil(L); return 1; }
@@ -465,7 +467,7 @@ struct Api {
         Srv(L).SetHud(&p, id, json);
         return 0;
     }
-    static int PClearHud(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHud(&p, "", ""); return 0; }
+    static int PClearHud(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHud(&p, "", ""); Srv(L).ShowMoney(&p); return 0; }  // (the money stays)
     // Key names: "A".."Z", "0".."9", "F1".."F12".
     static int KeyCode(const std::string& name) {
         std::string k; for (char c : name) k += char(std::toupper(static_cast<unsigned char>(c)));
@@ -847,6 +849,113 @@ struct Api {
         lua_getfield(L, 1, "player"); if (!lua_isnil(L, -1)) item.only = CheckPlayer(L, -1).id; lua_pop(L, 1);
         lua_pushinteger(L, Srv(L).AddWorldItem(item)); return 1;
     }
+    // ---------------------------------------------------------------- boxes to carry
+    // Fields of createCarry / setCarry, read before any C++ object exists (Lua errors jump over destructors).
+    struct CarryArgs { bool pos = false, yaw = false, world = false; float x = 0, y = 0, z = 0, a = 0; int world_ = -1; const char *model = nullptr, *tag = nullptr, *key = nullptr; int roll = -1; };
+    static void ReadCarryArgs(lua_State* L, int idx, CarryArgs& c, const char* fn) {
+        if (lua_getfield(L, idx, "model") != LUA_TNIL) {
+            c.model = luaL_checkstring(L, -1);
+            const bool known = Carry::KnownModel(c.model);
+            if (!known) luaL_error(L, "%s: unknown model \"%s\" (%s)", fn, c.model, Carry::ModelList());
+        }
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "x") != LUA_TNIL) {
+            c.pos = true; c.x = float(luaL_checknumber(L, -1));
+            lua_getfield(L, idx, "y"); c.y = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
+            lua_getfield(L, idx, "z"); c.z = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "yaw") != LUA_TNIL) { c.yaw = true; c.a = float(luaL_checknumber(L, -1)); }
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "world") != LUA_TNIL) { c.world = true; c.world_ = int(luaL_checkinteger(L, -1)); }
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "tag") != LUA_TNIL) c.tag = luaL_checkstring(L, -1);  // the table keeps the string alive
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "key") != LUA_TNIL) c.key = luaL_checkstring(L, -1);
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "roll") != LUA_TNIL) {  // a dodge roll with it: "keep", "drop", "break"
+            const char* r = luaL_checkstring(L, -1);
+            c.roll = std::strcmp(r, "keep") == 0 ? 0 : std::strcmp(r, "drop") == 0 ? 1 : std::strcmp(r, "break") == 0 ? 2 : -1;
+            if (c.roll < 0) luaL_error(L, "%s: roll must be \"keep\", \"drop\" or \"break\"", fn);
+        }
+        lua_pop(L, 1);
+    }
+    static void ApplyCarryArgs(const CarryArgs& a, Carry& c) {
+        if (a.model) c.model = a.model;
+        if (a.pos) { c.x = a.x; c.y = a.y; c.z = a.z; c.carrier = 0xFFFF; }  // placed: out of the hands
+        if (a.yaw) c.yaw = a.a;
+        if (a.world) c.world = a.world_;
+        if (a.tag) c.tag = a.tag;
+        if (a.key) c.key = a.key;
+        if (a.roll >= 0) c.roll = net::CarryRoll(a.roll);
+    }
+    static void PushCarry(lua_State* L, const Carry& c) {
+        lua_createtable(L, 0, 10);
+        Player* holder = c.carrier != 0xFFFF ? Srv(L).Find(c.carrier) : nullptr;
+        lua_pushinteger(L, c.id); lua_setfield(L, -2, "id");
+        lua_pushstring(L, c.model.c_str()); lua_setfield(L, -2, "model");
+        // Carried: where its player is (on the ground under it).
+        lua_pushnumber(L, holder ? holder->state.x : c.x); lua_setfield(L, -2, "x");
+        lua_pushnumber(L, holder ? holder->state.y : c.y); lua_setfield(L, -2, "y");
+        lua_pushnumber(L, holder ? holder->state.z - 90.f : c.z); lua_setfield(L, -2, "z");
+        lua_pushnumber(L, c.yaw); lua_setfield(L, -2, "yaw");
+        lua_pushinteger(L, c.world); lua_setfield(L, -2, "world");
+        lua_pushstring(L, c.tag.c_str()); lua_setfield(L, -2, "tag");
+        if (!c.key.empty()) { lua_pushstring(L, c.key.c_str()); lua_setfield(L, -2, "key"); }
+        lua_pushstring(L, c.roll == net::CarryRoll::Drop ? "drop" : c.roll == net::CarryRoll::Break ? "break" : "keep"); lua_setfield(L, -2, "roll");
+        if (holder) { PushPlayer(L, *holder); lua_setfield(L, -2, "carrier"); }
+    }
+    // createCarry{model="crate", x=, y=, z=, yaw=0, world=, tag=, key=, roll="keep"} -> id: a box on the ground there
+    static int CreateCarry(lua_State* L) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        CarryArgs a; ReadCarryArgs(L, 1, a, "createCarry");
+        if (!a.pos) luaL_error(L, "createCarry: x, y, z expected");
+        if (a.key && *a.key && Srv(L).FindCarry(std::string(a.key))) luaL_error(L, "createCarry: key \"%s\" is taken", a.key);
+        Carry c; ApplyCarryArgs(a, c);
+        lua_pushinteger(L, Srv(L).AddCarry(c)); return 1;
+    }
+    // setCarry(id, {x=, y=, z=, yaw=, world=, tag=, model=}) -> ok: a position takes it out of the hands
+    static int SetCarry(lua_State* L) {
+        const auto id = uint16_t(luaL_checkinteger(L, 1));
+        luaL_checktype(L, 2, LUA_TTABLE);
+        CarryArgs a; ReadCarryArgs(L, 2, a, "setCarry");
+        const Carry* old = Srv(L).FindCarry(id);
+        if (!old) { lua_pushboolean(L, 0); return 1; }
+        if (a.key && *a.key && Srv(L).FindCarry(std::string(a.key)) && Srv(L).FindCarry(std::string(a.key)) != old) luaL_error(L, "setCarry: key \"%s\" is taken", a.key);
+        Carry c = *old; ApplyCarryArgs(a, c);
+        lua_pushboolean(L, Srv(L).UpdateCarry(c)); return 1;
+    }
+    static int RemoveCarry(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveCarry(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
+    // getCarry(id or "key") -> {id, key, model, x, y, z, yaw, world, tag, carrier} or nil
+    static int GetCarry(lua_State* L) {
+        const Carry* c = lua_type(L, 1) == LUA_TSTRING ? Srv(L).FindCarry(std::string(lua_tostring(L, 1))) : Srv(L).FindCarry(uint16_t(luaL_checkinteger(L, 1)));
+        if (c) PushCarry(L, *c); else lua_pushnil(L);
+        return 1;
+    }
+    // carries([tag]) -> every box (of that tag), by id
+    static int Carries(lua_State* L) {
+        const char* tag = luaL_optstring(L, 1, nullptr);
+        lua_newtable(L);
+        int n = 0;
+        for (auto& [id, c] : Srv(L).Carries()) if (!tag || c.tag == tag) { PushCarry(L, c); lua_rawseti(L, -2, ++n); }
+        return 1;
+    }
+    // ---------------------------------------------------------------- money
+    // player:giveMoney(amount) -> the new amount (negative: takes); player:setMoney(amount)
+    static int PGiveMoney(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetMoney(&p, p.money + luaL_checkinteger(L, 2)); lua_pushinteger(L, lua_Integer(p.money)); return 1; }
+    static int PSetMoney(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetMoney(&p, luaL_checkinteger(L, 2)); return 0; }
+    // player:giveCarry(id) -> ok: into its hands (from wherever it is; false: it holds another one)
+    static int PGiveCarry(lua_State* L) { auto& p = CheckPlayer(L, 1); lua_pushboolean(L, Srv(L).GiveCarry(&p, uint16_t(luaL_checkinteger(L, 2)))); return 1; }
+    // player:dropCarry([x, y, z, yaw]) -> id or nil: out of its hands, onto that spot or where it stands
+    static int PDropCarry(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        float at[4] = {};
+        const bool spot = !lua_isnoneornil(L, 2);
+        if (spot) { at[0] = float(luaL_checknumber(L, 2)); at[1] = float(luaL_checknumber(L, 3)); at[2] = float(luaL_checknumber(L, 4)); at[3] = float(luaL_optnumber(L, 5, p.state.yaw)); }
+        const uint16_t id = Srv(L).DropCarry(&p, spot ? at : nullptr);
+        if (id) lua_pushinteger(L, id); else lua_pushnil(L);
+        return 1;
+    }
     static int DespawnItem(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveWorldItem(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
     static int RemoveMarker(lua_State* L) {
         const auto id = uint16_t(luaL_checkinteger(L, 1));
@@ -1048,7 +1157,7 @@ struct Api {
         }
         }
     }
-    // ---- quests (quests/<id>.json, written by the launcher's quest editor) ----
+    // ---- quests (quests/<id>.json, written by the in-game quest editor) ----
     static bool QuestId(const std::string& id) {
         if (id.empty() || id.size() > 64) return false;
         for (char c : id) if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')) return false;
@@ -1075,6 +1184,12 @@ struct Api {
         PushJson(L, v);
         lua_pushstring(L, id.c_str()); lua_setfield(L, -2, "id");
         return 1;
+    }
+    // quests.watch(): from now on a change of quests/*.json reloads the mode (jobs read their files once).
+    static int QuestsWatch(lua_State* L) {
+        auto& s = Self(L);
+        if (!s.watchQuests_) { s.watchQuests_ = true; s.loadedWrite_ = s.NewestWrite(); }
+        return 0;
     }
     static int QuestsList(lua_State* L) {
         lua_newtable(L);
@@ -1112,6 +1227,11 @@ std::filesystem::file_time_type Script::NewestWrite() const {
             if (ext == ".lua" || ext == ".ini" || ext == ".json") newest = std::max(newest, it->last_write_time(ec));  // world.json: the editor saved
         }
     }
+    if (watchQuests_) {
+        ec.clear();
+        for (auto it = std::filesystem::directory_iterator(server_.root() / "quests", ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+            if (it->path().extension() == ".json") newest = std::max(newest, it->last_write_time(ec));
+    }
     return newest;
 }
 
@@ -1122,7 +1242,7 @@ bool Script::ChangedOnDisk() const {
 
 bool Script::Load(const std::string& modeId) {
     Unload();
-    mode_ = modeId; title_ = modeId;
+    mode_ = modeId; title_ = modeId; watchQuests_ = false;
     const bool safeId = !modeId.empty() && std::all_of(modeId.begin(), modeId.end(), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '-'; });
     dir_ = server_.root() / "modes" / modeId;
     if (!safeId || !std::filesystem::exists(dir_ / "main.lua")) {
@@ -1174,7 +1294,8 @@ bool Script::Load(const std::string& modeId) {
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
                                 {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
                                 {"setAdmin", &Api::PSetAdmin}, {"objective", &Api::PObjective}, {"objectiveMeter", &Api::PObjectiveMeter}, {"setLook", &Api::PSetLook}, {"tip", &Api::PTip}, {"restoreInventory", &Api::PRestoreInventory},
-                                {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone}, {nullptr, nullptr}};
+                                {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
+                                {"giveCarry", &Api::PGiveCarry}, {"dropCarry", &Api::PDropCarry}, {"giveMoney", &Api::PGiveMoney}, {"setMoney", &Api::PSetMoney}, {nullptr, nullptr}};
     luaL_newlib(L_, methods); lua_setfield(L_, -2, "methods");
     lua_pop(L_, 1);
 
@@ -1183,11 +1304,12 @@ bool Script::Load(const std::string& modeId) {
                                 {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
                                 {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
-                                {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt}, {nullptr, nullptr}};
+                                {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
+                                {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries}, {nullptr, nullptr}};
     lua_pushglobaltable(L_); luaL_setfuncs(L_, globals, 0); lua_pop(L_, 1);
     const luaL_Reg storage[] = {{"get", &Api::StorageGet}, {"set", &Api::StorageSet}, {"keys", &Api::StorageKeys}, {"save", &Api::StorageSave}, {nullptr, nullptr}};
     luaL_newlib(L_, storage); lua_setglobal(L_, "storage");
-    const luaL_Reg quests[] = {{"load", &Api::QuestsLoad}, {"list", &Api::QuestsList}, {nullptr, nullptr}};
+    const luaL_Reg quests[] = {{"load", &Api::QuestsLoad}, {"list", &Api::QuestsList}, {"watch", &Api::QuestsWatch}, {nullptr, nullptr}};
     luaL_newlib(L_, quests); lua_setglobal(L_, "quests");
 
     // Persistent storage survives reloads and restarts: data/<mode>/storage.json
@@ -1223,10 +1345,36 @@ bool Script::Load(const std::string& modeId) {
         return false;
     }
     server_.Log("Mode \"%s\" (%s) loaded", title_.c_str(), mode_.c_str());
+    if (auto jobs = IniValue(dir_ / "meta.ini", "Mode", "Jobs"); !jobs.empty()) StartJobs(jobs);
     Fire("start", 0);
     // Players already on the server (after a reload) are announced again so the mode can rebuild state.
     for (auto p : server_.Players()) PlayerJoin(*p);
     return true;
+}
+
+// meta.ini [Mode] Jobs=all starts every job file of quests/ (modes/_lib/jobs.lua), Jobs=a,b only those:
+// the same as require("jobs") / Quest.runJob(id) in main.lua, for modes without code for it.
+void Script::StartJobs(const std::string& list) {
+    std::string chunk;
+    if (list == "all" || list == "*" || list == "1") chunk = "require(\"jobs\")";
+    else {
+        chunk = "local Quest = require(\"quest\") for _, id in ipairs({";
+        for (size_t start = 0; start <= list.size();) {
+            const size_t end = std::min(list.find(',', start), list.size());
+            std::string id = list.substr(start, end - start);
+            id.erase(0, id.find_first_not_of(" \t")); id.erase(id.find_last_not_of(" \t") + 1);
+            if (Api::QuestId(id)) chunk += "\"" + id + "\",";
+            else if (!id.empty()) server_.Log("[%s] meta.ini Jobs: bad job id \"%s\"", mode_.c_str(), id.c_str());
+            start = end + 1;
+        }
+        chunk += "}) do if not Quest.runJob(id) then log(\"meta.ini Jobs: no quests/\" .. id .. \".json\") end end";
+    }
+    g_deadline = Clock() + kCallBudget;
+    if (luaL_loadbufferx(L_, chunk.data(), chunk.size(), "=meta.ini Jobs", "t") != LUA_OK || lua_pcall(L_, 0, 0, 0) != LUA_OK) {
+        server_.Log("[%s] meta.ini Jobs: %s", mode_.c_str(), lua_tostring(L_, -1));
+        lua_pop(L_, 1);
+    }
+    g_deadline = 0;
 }
 
 void Script::SaveStorage() {
@@ -1275,6 +1423,25 @@ int Script::VehicleEnter(Player& p, uint16_t vehicle, bool allowedByLock, bool p
     int result = 0;
     Fire("vehicleEnter", 4, &result);
     return (result & 1) ? 1 : (result & 2) ? 2 : 0;
+}
+bool Script::CarryPick(Player& p, uint16_t carry) {
+    if (!L_) return true;
+    Api::PushPlayer(L_, p); lua_pushinteger(L_, carry);
+    int result = 0;
+    Fire("carryPick", 2, &result);
+    return !(result & 1);
+}
+bool Script::CarryDrop(Player& p, uint16_t carry, float x, float y, float z, const char* reason) {
+    if (!L_) return true;
+    Api::PushPlayer(L_, p); lua_pushinteger(L_, carry);
+    lua_createtable(L_, 0, 4);
+    lua_pushnumber(L_, x); lua_setfield(L_, -2, "x");
+    lua_pushnumber(L_, y); lua_setfield(L_, -2, "y");
+    lua_pushnumber(L_, z); lua_setfield(L_, -2, "z");
+    lua_pushstring(L_, reason); lua_setfield(L_, -2, "reason");
+    int result = 0;
+    Fire("carryDrop", 3, &result);
+    return !(result & 1);
 }
 void Script::VehicleExit(Player& p, uint16_t vehicle) {
     if (!L_) return;

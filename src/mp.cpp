@@ -6,6 +6,7 @@
 #include "skins.h"
 #include "mpui.h"
 #include "vehicles.h"
+#include "carry.h"
 #include "images.h"
 #include "overlay.h"
 #include "imgui.h"
@@ -1483,6 +1484,7 @@ void HookClient() {
         dg::Log("MP disconnected: %s", reason.c_str());
         mpui::Reset();
         vehicles::Reset();
+        carry::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1545,7 +1547,8 @@ void HookClient() {
     client.on.hud = [](const std::string& id, const std::string& json) { mpui::OnHud(id, json); };
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
     client.on.watchKeys = [](const std::vector<uint8_t>& keys) { mpui::OnWatchKeys(keys); };
-    client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); dg::Log("MP: virtual world %d", world); };
+    client.on.carry = [](uint16_t id, const net::Client::Events::CarryInfo* info) { carry::OnCarry(id, info); };
+    client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); carry::SetWorld(world); dg::Log("MP: virtual world %d", world); };
     client.on.vehicle = [](uint16_t id, const net::Client::Events::VehicleInfo* info) { vehicles::OnVehicle(id, info); };
     client.on.vehicleAllow = [](uint16_t id, int seat) { vehicles::OnAllow(id, seat); };
     client.on.vehicleEject = [](uint16_t id) { vehicles::OnEject(id); };
@@ -1658,7 +1661,7 @@ void StartConnect() {
     if (!client.Connect(host, port, nick, password)) { phase = Phase::Failed; if (failReason.empty()) failReason = lang::Pick(L"Не удалось начать подключение",L"Could not start connecting"); }
 }
 // ---------------------------------------------------------------- editor: quest preview
-// The launcher's quest window writes the quest being edited to quest_preview.json; its points are
+// The in-game quest editor (editorui) writes the quest being edited to quest_preview.json; its points are
 // shown with the same quest markers a server would send (ids from 50000 up). Selected step: gold.
 constexpr uint16_t kPreviewBase = 50000;
 // Quest items of the previewed quest, as the real pickup models (moved/turned in place when edited).
@@ -1715,12 +1718,20 @@ void LoadPreview(const std::filesystem::path& file) {
         const std::string title = lang::Pick("Этап ", "Step ") + std::to_string(i + 1);
         if (type == "goto") add(st, int(i), 0, title, text);
         else if (type == "hold") add(st, int(i), 5, title, text);                     // search
+        else if (type == "deliver") {                                                  // boxes: pick-up (search look) and drop-off
+            if (st["pickup"].isObject()) add(st["pickup"], int(i), 5, title, text);
+            if (st["dropoff"].isObject()) add(st["dropoff"], int(i), 0, title, text);
+        }
         else if (type == "collect") {
             if (st["area"].isObject()) add(st["area"], int(i), 2, title, text);        // area look for zones
             for (const auto& item : st["spawn"].elements()) {
                 items.push_back({item["item"].asString(), {float(item["x"].asNumber()), float(item["y"].asNumber()), float(item["z"].asNumber())}, float(item["yaw"].asNumber())});
             }
         }
+    }
+    if (quest["kind"].asString() == "job" && quest["giver"].isObject()) {                 // the NPC who gives the job
+        const json::Value& name = quest["giver"]["name"];
+        add(quest["giver"], -2, 0, lang::Pick("Выдаёт работу", "Gives the job"), name.isObject() ? name["en"].asString() : name.asString());
     }
     UpdatePreviewItems(items);
     unsigned changed = 0;
@@ -2044,6 +2055,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning();
         mpui::Update(client, at, canAct, playing && !spec.on);
         vehicles::Update(now, pawn, controller, client);
+        carry::Update(now, pawn, client, canAct && !mpui::DialogOpen());
         UpdateHeliView(pawn);  // after the helicopter moved this frame (else the view lags a frame and shakes)
         // The UI took or gave back the keyboard: nothing the game saw pressed stays held (a W let go
         // under a dialog kept the character running after it).

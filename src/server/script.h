@@ -45,6 +45,10 @@ public:
     // The player wants on a vehicle: 0 no say (the lock decides), 1 refused, 2 allowed (handlers of vehicleEnter).
     int VehicleEnter(Player& p, uint16_t vehicle, bool allowedByLock, bool passenger);
     void VehicleExit(Player& p, uint16_t vehicle);
+    // Boxes (docs/API.md "Переноска"): the player asks to pick one up (false: a handler refused), or it left
+    // its hands at x, y, z (reason "put": it asks to set it down, false refuses; "lost", "death", "quit": told after).
+    bool CarryPick(Player& p, uint16_t carry);
+    bool CarryDrop(Player& p, uint16_t carry, float x, float y, float z, const char* reason);
     void VehicleArrive(uint16_t vehicle);  // its NPC got to the end of the way (driveVehicle onArrive, vehicleArrive)
     void SaveStorage();  // flushes the mode's persistent storage (also done every few seconds)
     bool ChangedOnDisk() const;
@@ -53,12 +57,14 @@ private:
     friend struct Api;
     void Fire(const char* event, int nargs, int* cancelResult = nullptr);
     std::filesystem::file_time_type NewestWrite() const;
+    void StartJobs(const std::string& list);  // meta.ini [Mode] Jobs=all / Jobs=id,id
 
     Server& server_;
     lua_State* L_ = nullptr;
     std::string mode_, title_;
     std::filesystem::path dir_;
     std::filesystem::file_time_type loadedWrite_{};
+    bool watchQuests_ = false;  // quests.watch(): quests/*.json count as the mode's files (a saved job reloads it)
     struct Timer { int id; int ref; double due; double every; };
     std::vector<Timer> timers_;
     int nextTimer_ = 1;

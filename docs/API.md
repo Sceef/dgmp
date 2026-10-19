@@ -4,6 +4,18 @@
 
 Готовый пример — [`modes/freeroam/main.lua`](../modes/freeroam/main.lua). Список ключей предметов — [`docs/items.md`](items.md), обликов персонажей — [`docs/looks.md`](looks.md).
 
+### Примеры режимов
+
+| Режим | Что показывает |
+|---|---|
+| [`freeroam`](../modes/freeroam/main.lua) | основа: чат и команды, скины, телепорты, время и погода, инвентарь, админ-команды |
+| [`race`](../modes/race/main.lua) | гонки на мотоциклах по чекпоинтам из редактора (точки логики) |
+| [`loader`](../modes/loader/main.lua) | **работа грузчиком**: NPC-бригадир, форма, личные маркеры и строка на экране, ящики для переноски, сдача груза, оплата деньгами при сдаче смены (см. «Переноска» → «Работа: пример») |
+| [`carrytest`](../modes/carrytest/main.lua) | переноска по командам: `/crate [keep\|drop\|break]`, `/depot`, `/give`, `/drop` (тестовый) |
+| [`questtest`](../modes/questtest/main.lua) | запуск квеста из `quests/<id>.json` (кнопка «Проверить» в редакторе квестов) |
+
+Запуск любого: `dgmp-server.exe --mode <id>` или «Создать сервер» в лаунчере.
+
 ## Быстрый старт
 
 ```
@@ -67,7 +79,10 @@ end)
 | `playerDamage` | `victim, attacker, damage, info` | игрок попал в другого (`info.zone`: `"body"`, `"head"`, `"arm"`, `"leg"`; `info.weapon`). Вызывается, только если урон разрешён правилами PvP (см. «PvP и зоны»). Вернуть число — новый урон, `false` — отменить |
 | `vehicleEnter` | `player, vehicleId, allowed, passenger` | игрок нажал E у транспорта режима. `allowed` — что решил замок; `passenger` — садится сзади (за рулём уже кто-то есть). `return false` — не пускать, `return true` — пустить даже в запертый (см. «Транспорт») |
 | `vehicleExit` | `player, vehicleId` | игрок слез с транспорта режима (водитель или пассажир) |
+| `vehicleArrive` | `vehicleId` | вертолёт долетел до последней точки и сел (см. «Вертолёт») |
 | `zoneEnter` / `zoneLeave` | `player, zone` | игрок вошёл в зону / вышел (в том числе когда зону выключили или убрали). `zone` — таблица зоны (см. «PvP и зоны») |
+| `carryPick` | `player, carryId` | игрок зажал F у ящика и хочет его поднять. `return false` — не давать (см. «Переноска») |
+| `carryDrop` | `player, carryId, info` | ящик покинул руки игрока. `info`: `x, y, z`, `reason`: `"put"` — игрок сам кладёт его сюда (`return false` — не класть, ящик остаётся в руках); `"lost"` — игра выбила его из рук (удар, мотоцикл, паркур), `"roll"` — выпал при перекате, `"death"`, `"quit"` — сообщается уже после, ящик лежит там; `"break"` — разбился при перекате: после обработчика ящик удаляется (если обработчик не переставил его через `setCarry`) |
 
 ## Команды чата — `command(name, fn)`
 
@@ -105,6 +120,7 @@ end)
 | `createVehicle(opts)` → id | транспорт режима (см. «Транспорт») |
 | `setVehicle(id, opts)` / `removeVehicle(id)` | изменить / убрать транспорт |
 | `vehicleInfo(id)` / `vehicles()` | транспорт / все транспорты режима |
+| `driveVehicle(id, opts)` / `stopVehicle(id)` | полёт вертолёта по точкам / посадка там, где он сейчас (см. «Вертолёт») |
 | `createIcon(opts)` → id | картинка над точкой мира (см. «Картинки») |
 | `setIcon(id, opts)` / `removeIcon(id)` | изменить / убрать картинку |
 | `looks([filter])` | имена обликов из каталога; фильтр по пути, например `looks("npc_female")` или `looks("boozer")` |
@@ -134,6 +150,8 @@ end)
 | `data` | таблица | хранилище режима для этого игрока; очищается при выходе |
 | `world` | число | виртуальный мир (см. «Виртуальные миры») |
 | `vehicle` | число | транспорт режима, на котором игрок сидит (за рулём или сзади), или `nil` |
+| `carrying` | число | ящик в руках (см. «Переноска») или `nil` |
+| `money` | число | деньги игрока (см. «Деньги») |
 | `passenger` | bool | игрок сидит сзади, а не за рулём |
 
 ### Методы
@@ -152,6 +170,8 @@ end)
 | `objective(opts)` | панель задания игры у этого игрока (см. «Задания») |
 | `objectiveMeter(title, percent)` | шкала под заданием, `percent` 0..1; без аргументов — скрыть |
 | `setLook(name)` | надеть облик: имя из [`docs/looks.md`](looks.md) или путь `/Game/...`. Все игроки видят его сразу, вошедшие позже — тоже |
+| `giveMoney(amount)` → сумма / `setMoney(amount)` | деньги игрока (см. «Деньги») |
+| `giveCarry(id)` / `dropCarry([x, y, z, yaw])` | ящик в руки / из рук (см. «Переноска») |
 
 ### Инвентарь
 
@@ -290,9 +310,9 @@ player:closeDialog()
 Свои надписи и полоски на экране игрока, как textdraw в SA-MP. Элемент задаётся id и таблицей; повторный вызов с тем же id меняет его, без таблицы — убирает.
 
 ```lua
-player:hud("money", { text = "{7CD67C}$ 500", x = 0.97, y = 0.08, align = "right", size = 1.6 })
+player:hud("score", { text = "{F2D16B}Очки: 500", x = 0.97, y = 0.16, align = "right", size = 1.3 })
 player:hud("hunger", { bar = 0.6, x = 0.02, y = 0.7, w = 0.12, h = 0.012, barColor = "#E07070", text = "Голод" })
-player:hud("money")      -- убрать
+player:hud("score")      -- убрать
 player:clearHud()        -- убрать все
 ```
 
@@ -404,7 +424,7 @@ player:setWorld(0)          -- обратно
 local id = createVehicle({
     x = 1000, y = 2000, z = -5300,   -- z — земля
     yaw = 90,
-    model = "bike",                  -- "bike" (по умолчанию), "golfcart"; "dumptruck", "militarytruck" — экспериментально
+    model = "bike",                  -- "bike" (по умолчанию), "golfcart", "helicopter" (см. «Вертолёт»); "dumptruck", "militarytruck" — экспериментально
     owner = player,                  -- игрок или ник; без владельца — ничей
     locked = true,                   -- запертый: садится только владелец
     fuel = 1, health = 1,            -- 0..1
@@ -448,6 +468,61 @@ on("vehicleExit", function(player, id) local v = vehicleInfo(id); print("left at
 У всех моделей есть задний ход.
 
 **Пассажир.** Если за рулём уже сидит игрок, другой игрок у транспорта видит «[E] Сесть сзади». На мотоцикле — на заднее сиденье, в гольф-каре — рядом. Сидя сзади, ударить нельзя. Если водитель слезает, пассажир слезает тоже.
+
+## Вертолёт
+
+Вертолёт NERO для быстрого перемещения по карте: такси между площадками, доставка на задание, эвакуация. Им управляет не игрок, а режим. Пилот — NPC, вертолёт взлетает, летит по точкам маршрута и садится. У всех игроков он летит одинаково, потому что сервер раздаёт маршрут и время вылета. Экспериментально.
+
+```lua
+local heli = createVehicle({
+    x = pad.x, y = pad.y, z = pad.z,  -- z — земля площадки
+    yaw = pad.yaw,
+    model = "helicopter",
+    npc = { look = "m_sur_copeland_guard_08", name = "Pilot" },   -- пилот (облик — как у NPC; без облика — Дикон)
+})
+
+driveVehicle(heli, {
+    points = { { x = 1000, y = 2000, z = -5300 }, { 5000, 9000, -5100 } },   -- точки на земле; последняя — где сесть
+    speed = 25,        -- м/с
+    altitude = 40,     -- м над точками: взлёт, полёт на этой высоте, посадка в последней
+    onArrive = function(id) end,   -- сел
+})
+stopVehicle(heli)      -- прервать полёт: сядет там, где сейчас
+```
+
+Как летит:
+- **Взлёт и посадка** — вертикальные, медленнее полёта. Анимация винтов и корпуса (взлёт, полёт, посадка, на земле) включается сама.
+- **Высота.** Держится заданная `altitude`, но не ниже 25 м над рельефом под вертолётом и в нескольких секундах впереди: перед горой он заранее набирает высоту.
+- **Посадка** — на землю под последней точкой, даже если её `z` задан неточно.
+- **Маршрут** — каждый новый `driveVehicle` заменяет старый, полёт начинается оттуда, где вертолёт сейчас.
+
+**Пассажиры.** В салоне 4 места. Игрок у стоящего вертолёта видит «[E] Сесть»; внутри — вид снаружи на вертолёт, камеру крутит мышь, самого игрока не видно. Выйти («[E] Выйти») можно только когда вертолёт стоит на земле; в полёте не выпускает ни клиент, ни сервер. Сидящих в нём отдаёт `vehicleInfo(heli).passengers`, высадить можно `player:exitVehicle()`, посадить — `player:putInVehicle(heli)`. Запретить посадку можно в `vehicleEnter`, как для другого транспорта (`passenger` будет `true`).
+
+Такси между двумя площадками из редактора (точки логики `heli_a` и `heli_b`): первый севший запускает отсчёт, через 20 секунд вертолёт улетает на другую площадку, садится, через 15 секунд высаживает всех и ждёт там следующих пассажиров.
+
+```lua
+local logic = require("logic")
+local a, b = logic.point("heli_a"), logic.point("heli_b")
+local heli = createVehicle({ x = a.x, y = a.y, z = a.z, yaw = a.yaw, model = "helicopter", npc = { name = "Pilot" } })
+local atA, departing = true, false
+
+on("vehicleEnter", function(player, id)
+    if id ~= heli or departing then return end
+    departing = true
+    broadcast("Вертолёт вылетает через 20 секунд", "#F2D16B")
+    after(20000, function()
+        local to = atA and b or a
+        driveVehicle(heli, { points = { { to.x, to.y, to.z } }, speed = 30, altitude = 60, onArrive = function(vid)
+            atA = not atA
+            for _, p in ipairs(vehicleInfo(vid).passengers) do p:message("Прилетели", "#7CD67C") end
+            after(15000, function()
+                for _, p in ipairs(vehicleInfo(vid).passengers) do p:exitVehicle() end
+                departing = false
+            end)
+        end })
+    end)
+end)
+```
 
 ## Картинки
 
@@ -602,6 +677,149 @@ local id = spawnItem({ item = "kWeaponID_Molotov_Small", count = 1, x = .., y = 
 
 Предмет появляется у клиента, когда игрок ближе 200 м, и ставится на землю. Берётся клавишей E (подсказка появляется рядом), **даже при полном рюкзаке**: в инвентарь попадает, только если есть место, но событие `gameEvent` с `type = "pickup"` и `id = "dgmp_item_<id>"` приходит всегда. Игровое «взять/МАКС.» у таких предметов отключено. `despawnItem(id)` убирает предмет. Предметы и маркеры режима убираются при его перезагрузке.
 
+## Деньги
+
+Деньги игрока, как `GivePlayerMoney` в SA-MP (пример — режим [`loader`](../modes/loader/main.lua): оплата за смену). Пока сумма не 0, она видна справа вверху экрана (`$ 120`, долг — красным).
+
+```lua
+player:giveMoney(5)          -- добавить; вернёт новую сумму
+player:giveMoney(-20)        -- забрать (сумма может уйти в минус — проверяйте сами)
+player:setMoney(0)
+if player.money >= 100 then ... end
+```
+
+Сервер деньги не хранит: при выходе игрока и при перезагрузке режима они пропадают. Чтобы они сохранялись, режим кладёт их в `storage` по нику:
+
+```lua
+on("playerJoin", function(p) p:setMoney(storage.get("money:" .. p.name:lower()) or 0) end)
+on("playerQuit", function(p) storage.set("money:" .. p.name:lower(), p.money) end)
+```
+
+`player:clearHud()` строку денег не убирает.
+
+## Переноска
+
+Ящики, которые носят перед собой двумя руками, как ящик динамита в сюжете: родная анимация подъёма, ходьба с ящиком, игрок с ящиком не бьёт. Что делает с ящиком перекат, решает режим (`roll`). Основа для работы на складе, доставки грузов и т. п.
+
+- Ящик лежит на земле у всех игроков (появляется ближе 200 м). Подсказка «[F] Поднять (удерживать)»: игрок зажимает F, сервер проверяет, что он рядом, режим может отказать (`carryPick`), и ящик оказывается в руках.
+- С ящиком в руках: «[F] Положить (удерживать)» — ящик ставится перед игроком (`carryDrop`, `reason = "put"`; режим может отказать или забрать ящик — так делается сдача груза).
+- Если игра выбила ящик из рук (удар, сел на мотоцикл, паркур), игрок погиб или вышел, ящик остаётся лежать там, где упал (`carryDrop` с `reason` `"lost"`, `"death"`, `"quit"`).
+- Перекат (`roll`): `"keep"` — ящик остаётся в руках (по умолчанию); `"drop"` — выпадает и лежит там (`reason = "roll"`); `"break"` — разбивается (`reason = "break"`), после обработчика ящик пропадает: так работа начинается заново (поставьте новый на складе).
+- Другие игроки видят ящик в руках несущего. Подсказка точки действия режима на F важнее подсказки ящика.
+
+Обычно ящики расставляют в редакторе: «Мир» → «Переноска» → «+ Ящик», клик в мире, потом гизмо (двигать, вращать). У выделенного ящика задаются ключ, модель, метка, мир и что делает перекат; новый ящик берёт модель, метку, мир и перекат выделенного. В редакторе ящик сразу лежит в своей модели, над ним ключ и метка. Хранятся в `world.json`:
+
+```json
+"carries": [
+    { "key": "box1", "model": "crate", "x": 1234, "y": -5678, "z": 90, "yaw": 45, "tag": "cargo" },
+    { "key": "box2", "model": "crate", "x": 1300, "y": -5600, "z": 90, "yaw": 0, "world": 2, "roll": "break" }
+]
+```
+
+Сервер кладёт их при запуске (и перезагрузке) режима, до кода режима; код находит их по ключу — `getCarry("box1")` — или по метке — `carries("cargo")`. Ящик из редактора ничем не отличается от созданного `createCarry`: его можно переставить, убрать, отдать в руки.
+
+```lua
+local id = createCarry({
+    model = "crate",            -- модель: "crate", "cooler", "medcase", "centrifuge" (см. таблицу ниже)
+    x = .., y = .., z = ..,     -- z — земля
+    yaw = 0,
+    world = 0,                  -- виртуальный мир; не задано — во всех
+    tag = "cargo",              -- своя метка режима
+    key = "box7",               -- свой ключ для getCarry("box7"); необязательно, должен быть свободен
+    roll = "keep",              -- перекат с ним: "keep", "drop", "break"
+})
+setCarry(id, { x = .., y = .., z = .. })  -- переставить (из рук тоже), поменять world/tag/roll
+removeCarry(id)                           -- убрать (и из рук)
+getCarry(id)    -- {id, key, model, x, y, z, yaw, world, tag, roll, carrier} или nil; carrier — игрок, который несёт
+getCarry("box1")  -- то же по ключу (ящики из редактора)
+carries("cargo")  -- все ящики (с этой меткой)
+
+player.carrying             -- id ящика в руках или nil
+player:giveCarry(id)        -- сразу в руки (с анимацией подъёма); false — руки заняты
+player:dropCarry()          -- положить у ног; player:dropCarry(x, y, z, yaw) — в точку. Возвращает id
+
+-- Склад: ящик, поставленный у точки сдачи, засчитывается.
+on("carryDrop", function(player, id, info)
+    if info.reason == "put" and near(info, depot, 4) then
+        removeCarry(id)
+        player:message("Ящик сдан")
+    end
+end)
+```
+
+| Модель | Что это |
+|---|---|
+| `crate` | ящик динамита (сюжет), двумя руками |
+| `cooler` | переносной холодильник (сюжет: NBE) |
+| `medcase` | кейс с антибиотиками (сюжет: NFS) |
+| `centrifuge` | микроцентрифуга (сюжет: RFS4) |
+
+У всех родные анимации подъёма и переноски из сюжета.
+
+### Работа: пример (грузчик)
+
+Повторяющаяся работа целиком на Lua: взять у бригадира, носить ящики со склада к грузовику ($5 за ящик), сдать работу. Готовый режим — `modes/loader` (запуск: `dgmp-server --mode loader`). Места ставятся в редакторе: точки логики `loader_boss`, `loader_pickup`, `loader_depot`; ящики могут лежать в `world.json` или создаваться кодом.
+
+Цикл:
+1. **Взять работу.** NPC-бригадир (`createActor`) и точка действия рядом (`createInteraction`). По F — диалог «Взять работу». Режим надевает форму (`setUniform`), ставит маркеры склада и грузовика только этому игроку (`createMarker{player = ...}`) и строку на экране (`player:hud`).
+2. **Работать.** На складе лежат общие ящики с меткой `"loader"`. Взять их может только тот, кто на работе: `carryPick` возвращает `false` остальным. Ящик, поставленный у грузовика (`carryDrop`, `reason == "put"`, в радиусе точки сдачи), режим убирает (`removeCarry`), засчитывает и кладёт на склад новый. Разбитый в перекате (`roll = "break"`) тоже заменяется новым.
+3. **Сдать работу.** Снова F у бригадира — диалог «Сдать»: выплата (`giveMoney`), форма снимается (`setUniform(nil)`), маркеры и строка на экране убираются. Ушёл с сервера — смена кончается без оплаты, а ящик из рук возвращается на склад.
+
+```lua
+local logic = require("logic")
+local boss, pickup, depot = logic.point("loader_boss"), logic.point("loader_pickup"), logic.point("loader_depot")
+local PAY, shifts = 5, {}
+
+local function newCrate()
+    local a = math.random() * 6.28
+    createCarry({ model = "crate", x = pickup.x + math.cos(a) * 150, y = pickup.y + math.sin(a) * 150, z = pickup.z,
+                  tag = "loader", roll = "break" })
+end
+on("start", function() for i = 1, 4 do newCrate() end end)
+
+local function startShift(p)
+    local s = { delivered = 0, earned = 0 }
+    s.markers = { createMarker({ x = depot.x, y = depot.y, z = depot.z, radius = 4, category = "task", route = true, player = p, track = false, title = "Грузовик" }) }
+    shifts[p.id] = s
+    p:setUniform("m_mil_diamondlake_worker_001")
+    p:hud("job", { text = "Грузчик: 0 · $0", x = 0.985, y = 0.11, align = "right" })
+end
+local function endShift(p, pay)
+    local s = shifts[p.id]; if not s then return end
+    shifts[p.id] = nil
+    for _, m in ipairs(s.markers) do removeMarker(m) end
+    if p.carrying then setCarry(p.carrying, { x = pickup.x, y = pickup.y, z = pickup.z }) end
+    p:hud("job"); p:setUniform(nil)
+    if pay then p:giveMoney(s.earned) end
+end
+
+createActor({ x = boss.x, y = boss.y, z = boss.z, yaw = boss.yaw, look = "m_mil_diamondlake_worker_003", name = "Бригадир" })
+createInteraction({ x = boss.x, y = boss.y, z = boss.z, radius = 2.5, text = "Бригадир", onUse = function(p)
+    local s = shifts[p.id]
+    p:dialog({ title = s and "Сдать работу" or "Работа грузчиком",
+               text = s and ("К выплате: $" .. s.earned) or ("$" .. PAY .. " за ящик"),
+               button1 = s and "Сдать" or "Взять работу", button2 = "Нет",
+               onResponse = function(p, ok) if ok then if s then endShift(p, true) else startShift(p) end end end })
+end })
+
+on("carryPick", function(p, id) if getCarry(id).tag == "loader" and not shifts[p.id] then return false end end)
+on("carryDrop", function(p, id, info)
+    local s = shifts[p.id]
+    if info.reason == "put" and s and (info.x - depot.x) ^ 2 + (info.y - depot.y) ^ 2 < 400 ^ 2 then
+        removeCarry(id); newCrate()
+        s.delivered, s.earned = s.delivered + 1, s.earned + PAY
+        p:hud("job", { text = "Грузчик: " .. s.delivered .. " · $" .. s.earned, x = 0.985, y = 0.11, align = "right" })
+    elseif info.reason == "break" then newCrate() end
+end)
+on("playerQuit", function(p) endShift(p, false) end)
+```
+
+Так же строятся другие работы: шахтёр, уборка сорняков, доставка — меняется только то, что засчитывается (поставленный ящик, `gameEvent`, зона `q:hold`), и чем платят.
+
+**Без кода.** Ту же работу можно собрать в редакторе квестов: файл `quests/<id>.json` с `"kind": "job"` — NPC, форма, оплата за круг и шаги, которые идут по кругу, в том числе шаг `deliver` (перенести ящики). Формат — [`docs/quests.md`](quests.md), «Работа». Готовый файл — `quests/loader_job.json` (грузчик, как `modes/loader`). В режиме работы запускаются через `require("jobs")` или `Jobs=all` в `meta.ini` (см. «Квесты — библиотека `quest`»).
+
+Ящики режима убираются при его перезагрузке (ящики из `world.json` кладутся заново на свои места). Примеры — режим [`loader`](../modes/loader/main.lua) (работа целиком) и [`carrytest`](../modes/carrytest/main.lua) (`/crate [keep|drop|break]`, `/depot`, `/give`, `/drop`).
+
 ## Квесты — библиотека `quest`
 
 ```lua
@@ -620,10 +838,26 @@ q:step("Доберитесь до заправки", { x = .., y = .., z = .., r
 | `q:step(text, target)` | дойти до точки: квестовый маркер с маршрутом (`route = false` — без), `onEnter(quest, player)` |
 | `q:hold(text, {x, y, z, radius, seconds, meter, leaveTip, onDone})` | находиться в зоне: шкала растёт только внутри, при выходе — совет «вернитесь» |
 | `q:collect(text, spec)` | сделать что-то `count` раз, в строке задания счётчик «(1/3)» |
+| `q:deliver(text, spec)` | перенести ящики: `count` ящиков поставить в зоне разгрузки, в строке задания счётчик «(1/3)» (ниже) |
 | `q:progress(title, percent)` | своя шкала |
 | `q:complete([xp])`, `q:fail()` | завершить; панель убирается через 6 с (после закрытия экрана награды) |
 
+Поля `spec` у `deliver`: `pickup = {x, y, z, radius = 3, boxes = 4, model = "crate", roll = "keep", tag, name}` — погрузка (с `tag` берутся ящики мира с этой меткой, иначе шаг кладёт `boxes` своих вокруг точки), `dropoff = {x, y, z, radius = 4, name}` — разгрузка, `count = 1`, `route = true` (маршрут к разгрузке), `onBox(quest, player, done)`, `onDone(quest, player)`. Засчитывается ящик, поставленный игроком (`carryDrop`, `reason = "put"`) в радиусе разгрузки; он возвращается на погрузку. Брать свои ящики шага может только этот игрок, а когда шаг кончается, они убираются. Общие ящики для нескольких игроков — `Quest.pool(pickup, allowed(player), denyTip)`, переданный как `spec.pool`.
+
 Поля `spec` у `collect`: `event` (тип или список типов событий), `item` (ключ или список), `class` (часть имени класса), `ids` (список конкретных объектов мира), `area = {x, y, z, radius}` (засчитывается только там: «взорвите гнездо», «сожгите бумаги»), `marker = true` (маркер над зоной, `route = true` — с маршрутом), `spawn = {{item, count, x, y, z}, ...}` (шаг раскладывает свои предметы с маркерами над ними; засчитываются только они; не взятые исчезают по окончании шага), `count`, `onDone(quest, player)`. Один и тот же объект засчитывается один раз.
+
+Квесты и работы из файлов (`quests/<id>.json`, формат — [`docs/quests.md`](quests.md)):
+
+| | |
+|---|---|
+| `Quest.load(id)`, `Quest.list()` | файл квеста (таблица) / список id |
+| `Quest.run(player, def, onDone)` | квест для игрока: шаги по порядку, награда, экран завершения |
+| `Quest.runJob(def or id)` → `job` | работа (`"kind": "job"`) в мире режима: NPC с [F] «Взять работу» / «Сдать работу», ящики шагов `deliver`; `job:stop()` убирает её. Повторный вызов с тем же id заменяет работу |
+| `require("jobs")` | все работы из `quests/` (`modes/_lib/jobs.lua`); `.running[id]` — запущенные |
+| `Quest.jobs()`, `Quest.shift(player)` | запущенные работы по id; на какой работе игрок: `id, {cycles, earned, finished}` или `nil` |
+| `quests.watch()` | с этого момента изменение `quests/*.json` перезагружает режим (вызывают `runJob` и `jobs`) |
+
+Без кода работы запускает `meta.ini` режима: `Jobs=all` (или список id через запятую: `Jobs=loader_job,miner`).
 
 ## Постоянное хранилище — `storage`
 
