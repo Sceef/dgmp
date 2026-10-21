@@ -1476,7 +1476,7 @@ struct Api {
             if (depth > 32) luaL_error(L, "storage: table nesting too deep");
             const auto n = lua_rawlen(L, idx);
             bool array = n > 0;
-            lua_pushnil(L);
+            if (array) lua_pushnil(L);  // (only then: a nil left on the stack broke the caller's lua_next for nested tables)
             while (array && lua_next(L, idx)) {
                 if (!lua_isinteger(L, -2) || lua_tointeger(L, -2) < 1 || lua_Unsigned(lua_tointeger(L, -2)) > n) array = false;
                 lua_pop(L, 1);
