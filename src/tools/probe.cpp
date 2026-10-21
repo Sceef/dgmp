@@ -4,12 +4,17 @@
 //   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text] [--auto]
 //       stays connected, walks a small circle, prints server events; stdin lines are sent as chat, except:
 //       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
-//       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll).
+//       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll),
+//       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
+//       !pickup <key> [x y z] [object id] (the game says we picked it up). Item orders change a simulated backpack.
+//       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 #include "../shared/netclient.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <chrono>
+#include <algorithm>
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -57,12 +62,17 @@ int main() {
         if (!net::ParseAddress(argv[2], host, port)) return 2;
         std::string nick = argv[3], password;
         double seconds = 0; std::vector<std::string> says; bool sendPose = false, autoUi = false; int posesIn = 0;
+        uint64_t steamId = 0; std::string ticket;
         for (int i = 4; i < argc; ++i) {
             const std::string a = argv[i];
             if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
             else if (a == "--say" && i + 1 < argc) says.push_back(argv[++i]);
             else if (a == "--pose") sendPose = true;
             else if (a == "--auto") autoUi = true;
+            else if (a == "--steam" && i + 1 < argc) {
+                steamId = std::strtoull(argv[++i], nullptr, 10);
+                if (i + 1 < argc && argv[i + 1][0] != '-') ticket = argv[++i];
+            }
             else password = a;
         }
         net::Client c;
@@ -115,6 +125,27 @@ int main() {
             std::printf("* WATCH KEYS"); for (auto k : keys) std::printf(" %u", k); std::printf("\n");
             if (autoUi) for (auto k : keys) c.SendKey(k);
         };
+        // A backpack like the game's: the server's item orders change it, the snapshot goes back.
+        std::map<std::string, int> backpack;
+        bool dead = false;
+        auto report = [&] {
+            std::vector<std::pair<std::string, int>> snap;
+            for (auto& [k, v] : backpack) if (v > 0) snap.emplace_back(k, v);
+            c.SendInventory(snap);
+        };
+        c.on.item = [&](net::ItemAction action, const std::string& key, int amount) {
+            std::printf("* ITEM %d %s %d\n", int(action), key.c_str(), amount);
+            switch (action) {
+            case net::ItemAction::Give: case net::ItemAction::GiveReplace: backpack[key] += amount; break;
+            case net::ItemAction::Take: backpack[key] = std::max(0, backpack[key] - amount); break;
+            case net::ItemAction::SetAmmo: if (key.rfind("kAmmoID_", 0) == 0) backpack[key] = amount; else backpack["kAmmoID_Pistol"] = amount; break;
+            case net::ItemAction::TakeWeapons: for (auto& [k, v] : backpack) if (k.rfind("kWeaponID_", 0) == 0 && k.find("Knife") == std::string::npos) v = 0; break;
+            case net::ItemAction::Clear: backpack.clear(); break;
+            default: break;
+            }
+            report();
+        };
+        c.SetIdentity(steamId, ticket);
         if (!c.Connect(host, port, nick, password)) return 1;
 
         std::mutex lock; std::vector<std::string> input;
@@ -136,6 +167,23 @@ int main() {
                     else if (std::sscanf(s.c_str(), "!pick %u", &id) == 1) c.SendCarry(uint16_t(id), net::CarryOp::Pick);
                     else if (std::sscanf(s.c_str(), "!put %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Put, x, y, z, 0);
                     else if (std::sscanf(s.c_str(), "!break %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Break, x, y, z, 0);
+                    else if (s.rfind("!hit ", 0) == 0) {
+                        unsigned zone = 0; float dmg = 0; char weapon[128] = "";
+                        if (std::sscanf(s.c_str(), "!hit %u %f %u %127s", &id, &dmg, &zone, weapon) >= 2) c.SendHit(uint16_t(id), dmg, net::HitZone(zone), weapon);
+                    }
+                    else if (s == "!dead") { dead = true; nextState = 0; }
+                    else if (s == "!alive") { dead = false; nextState = 0; }
+                    else if (s.rfind("!inv", 0) == 0) {
+                        backpack.clear();
+                        char key[128]; int n = 0, used = 0; const char* at = s.c_str() + 4;
+                        while (std::sscanf(at, " %127[^=]=%d%n", key, &n, &used) == 2) { backpack[key] = n; at += used; }
+                        report();
+                    }
+                    else if (s.rfind("!pickup ", 0) == 0) {
+                        char key[128] = "", object[128] = "probe_pickup"; float ex = px, ey = py, ez = pz;
+                        const int got = std::sscanf(s.c_str(), "!pickup %127s %f %f %f %127s", key, &ex, &ey, &ez, object);
+                        if (got >= 1) { c.SendGameEvent(net::GameEventType::Pickup, "BendInventoryPickup", key, object, ex, ey, ez); backpack[key] += 1; report(); }
+                    }
                     else c.SendChat(s);
                 }
                 input.clear();
@@ -144,6 +192,7 @@ int main() {
                 nextState = now + 0.05;
                 const float a = static_cast<float>(now - start) * 0.5f;
                 net::PlayerState s; s.x = px + (still ? 0 : std::cos(a) * 300); s.y = py + (still ? 0 : std::sin(a) * 300); s.z = pz; s.yaw = still ? 0 : a * 57.3f;
+                if (dead) s.flags |= net::StateDead;
                 c.SendState(s);
                 if (sendPose) {  // synthetic 224-bone body pose, the size of a real one
                     net::Writer w; w.U8(0); w.U16(0); w.U32(0x1234); w.U16(224); w.Put(now);

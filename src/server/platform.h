@@ -19,6 +19,10 @@ int StrICmp(const char* a, const char* b);                  // ASCII case-insens
 std::string IniValue(const std::filesystem::path& file, const char* section, const char* key, const char* fallback = "");
 std::string IniParse(std::string text, const char* section, const char* key, const char* fallback = "");
 std::string Sha256Hex(const void* data, size_t size);       // lowercase hex digest
+// HTTPS (or HTTP) GET; blocks up to `timeoutSec`, so call it off the server thread. True: status 200.
+// `body` holds the answer also for other statuses; `error` says what went wrong. WinHTTP on Windows,
+// libcurl (loaded at run time: libcurl.so.4) elsewhere.
+bool HttpGet(const std::string& url, std::string& body, std::string& error, int timeoutSec);
 #ifdef _WIN32
 std::string Utf8(const std::wstring& w);
 #endif

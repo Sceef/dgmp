@@ -28,6 +28,19 @@ std::string Address(const ENetAddress& a) {
     char ip[64] = {}; enet_address_get_host_ip(&a, ip, sizeof(ip));
     return std::string(ip) + ":" + std::to_string(a.port);
 }
+std::string Ip(const ENetAddress& a) { char ip[64] = {}; enet_address_get_host_ip(&a, ip, sizeof(ip)); return ip; }
+std::string Lower(std::string s) { for (auto& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch))); return s; }
+bool StartsWith(const std::string& s, const char* prefix) { return s.rfind(prefix, 0) == 0; }
+// Deacon's knife, rock and taser: every player has them (TakeWeapons keeps them unless asked).
+bool IsTool(const std::string& lowerKey) {
+    return !StartsWith(lowerKey, "krecipeid_") && (lowerKey.find("knife") != std::string::npos || lowerKey.find("rock") != std::string::npos || lowerKey.find("taser") != std::string::npos);
+}
+int64_t UnixNow() { return static_cast<int64_t>(std::time(nullptr)); }
+std::string FormatUntil(int64_t until) {
+    if (!until) return "permanent";
+    const std::tm tm = LocalTime(static_cast<std::time_t>(until));
+    char b[32]; std::strftime(b, sizeof(b), "until %Y-%m-%d %H:%M", &tm); return b;
+}
 }  // namespace
 
 // Status queries are raw datagrams; answer them before ENet sees them.
@@ -58,6 +71,7 @@ void Server::Log(const char* fmt, ...) {
     char stamp[16]; std::strftime(stamp, sizeof(stamp), "%H:%M:%S", &tm);
     std::printf("[%s] %s\n", stamp, text); std::fflush(stdout);
     if (log_) { std::fprintf(log_, "[%s] %s\n", stamp, text); std::fflush(log_); }
+    if (echo_ && echo_->peer) Message(echo_, kSystemColor, text);
 }
 
 bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
@@ -75,6 +89,16 @@ bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
     LoadLooks();
     LoadAnims();
     LoadSkins();
+    bans_.Load(root_ / "data" / "bans.json");
+    names_.Load(root_ / "data" / "names.json");
+    if (!bans_.All().empty()) Log("Bans: %zu", bans_.All().size());
+    using Auth = Config::SteamAuth;
+    if (cfg_.steamAuth == Auth::Off) Log("Steam accounts are not checked (SteamAuth=off): admins and bans go by nickname and address");
+    else if (cfg_.steamApiKey.empty() && cfg_.steamAuth == Auth::Required) Log("SteamAuth=required needs SteamApiKey in server.ini: nobody can join until it is set");
+    else if (cfg_.steamApiKey.empty()) Log("Steam accounts are not checked: no SteamApiKey in server.ini (players join unconfirmed; admins by SteamID need it)");
+    else Log("Steam accounts are checked with the Steam Web API (SteamAuth=%s)", cfg_.steamAuth == Auth::Required ? "required" : "optional");
+    if (cfg_.steamAuth != Auth::Off)
+        for (auto& a : cfg_.admins) if (uint64_t id; !ParseSteamId(a, id)) Log("Admins: \"%s\" is not a SteamID and is ignored (nicknames count only with SteamAuth=off)", a.c_str());
     script_ = std::make_unique<Script>(*this);
     LoadEnvironment(cfg_.mode);
     if (script_->Load(cfg_.mode)) LoadWorldEdits();
@@ -99,6 +123,7 @@ void Server::Run() {
             default: break;
             }
         }
+        TickAuth();
         std::vector<std::string> lines;
         { std::lock_guard<std::mutex> g(consoleLock_); lines.swap(consoleQueue_); }
         for (auto& l : lines) HandleConsole(l);
@@ -108,6 +133,8 @@ void Server::Run() {
         if (dt < 1.0f / 30) continue;
         last = now;
         TickBots(dt);
+        for (auto& [id, p] : players_)
+            if (p->inventoryRecheckAt && now >= p->inventoryRecheckAt) { CheckInventory(*p); break; }  // (it may kick: one a tick)
         TickMarkers();
         TickVehicles();
         if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); }
@@ -135,6 +162,7 @@ void Server::OnConnect(ENetPeer* peer) {
 
 void Server::OnDisconnect(ENetPeer* peer, uint8_t reason) {
     auto p = static_cast<Player*>(peer->data);
+    for (auto it = pending_.begin(); it != pending_.end();) it = it->second.peer == peer ? pending_.erase(it) : std::next(it);
     if (!p) return;
     peer->data = nullptr; p->peer = nullptr;
     RemovePlayer(p, reason);
@@ -142,6 +170,7 @@ void Server::OnDisconnect(ENetPeer* peer, uint8_t reason) {
 
 void Server::RemovePlayer(Player* p, uint8_t reason) {
     const uint16_t id = p->id;
+    if (echo_ == p) echo_ = nullptr;
     if (p->ready) {
         static const char* why[] = {"left", "timed out", "kicked"};
         Log("%s (id %u) %s", p->nick.c_str(), id, why[std::min<uint8_t>(reason, 2)]);
@@ -206,9 +235,12 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
             // The game reloaded a checkpoint somewhere (the client keeps it covered): the mode picks the
             // place (playerRespawn returning true), otherwise the server spawn.
             Log("%s respawned", p->nick.c_str());
+            p->inventoryGraceUntil = now + 8;  // the game reloaded the save's backpack: what the server did not give is taken again
+            p->inventorySettling = true;
             if (!script_->PlayerRespawn(*p)) Teleport(p, cfg_.spawnX, cfg_.spawnY, cfg_.spawnZ, cfg_.spawnYaw);
             break;
         }
+        if (e.type == uint8_t(net::GameEventType::Pickup)) PickedUp(*p, e);
         script_->GameEvent(*p, e);
         break;
     }
@@ -335,13 +367,41 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         // The shooter's client saw its bullet hit another player's body; the victim's client applies it.
         const auto victimId = r.U16(); float damage = r.F32(); const auto zone = r.U8(); const auto weapon = r.Str(net::kItemKeyMax);
         Player* victim = Find(victimId);
-        if (!r.ok() || !victim || victim == p || zone > 3 || !std::isfinite(damage) || damage <= 0 || damage > 1000) break;
+        if (!r.ok() || !victim || victim == p || zone > 3 || !std::isfinite(damage) || damage <= 0) break;
         if (Apart(*victim, *p)) break;  // another virtual world or choosing a skin: not there
+        if (victim->state.flags & net::StateDead) break;  // already down (a late bullet)
+        // What the shooter's client claims has to be possible (docs/API.md "Античит").
+        if ((p->state.flags & (net::StateDead | net::StateHidden)) || p->spectating) { Strike(*p, "hitWhileDead", "hit " + victim->nick + " while dead or spectating"); break; }
+        if (p->passengerOf && FindVehicle(p->passengerOf) && FindVehicle(p->passengerOf)->Helicopter()) { Strike(*p, "hitFromHelicopter", "hit " + victim->nick); break; }
         const double now = Now();
         if (now - p->hitWindow >= 1.0) { p->hitWindow = now; p->hitCount = 0; }
-        if (++p->hitCount > 30) break;
+        if (++p->hitCount > cfg_.maxHitsPerSecond) {
+            if (p->hitCount == cfg_.maxHitsPerSecond + 1) Strike(*p, "hitRate", std::to_string(p->hitCount) + " hits in a second");
+            break;
+        }
+        if (damage > cfg_.maxHitDamage) {
+            char detail[96]; std::snprintf(detail, sizeof(detail), "%.0f damage with %s (limit %.0f)", damage, weapon.c_str(), cfg_.maxHitDamage);
+            Strike(*p, "hitDamage", detail);
+            break;
+        }
         const float dx = victim->state.x - p->state.x, dy = victim->state.y - p->state.y, dz = victim->state.z - p->state.z;
-        if (dx * dx + dy * dy + dz * dz > 400.f * 100 * 400.f * 100) break;  // further than 400 m: not a real hit
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance > 400.f * 100) { Strike(*p, "hitRange", "hit " + victim->nick + " from " + std::to_string(int(distance / 100)) + " m"); break; }
+        // Fists, feet and melee weapons reach a few metres; both may have moved during the pings.
+        const std::string cls = Lower(weapon);
+        const bool melee = cls.empty() || cls.find("melee") != std::string::npos || cls.find("fist") != std::string::npos || cls.find("foot") != std::string::npos ||
+                           cls.find("fullbody") != std::string::npos || cls.find("groundpound") != std::string::npos;
+        if (melee) {
+            const float speed = std::sqrt(p->state.vx * p->state.vx + p->state.vy * p->state.vy) + std::sqrt(victim->state.vx * victim->state.vx + victim->state.vy * victim->state.vy);
+            const float lag = float((p->peer ? p->peer->roundTripTime : 0) + (victim->peer ? victim->peer->roundTripTime : 0)) / 1000.f + 0.1f;
+            const float reach = cfg_.meleeRange + speed * lag;
+            if (distance > reach) {
+                char detail[128]; std::snprintf(detail, sizeof(detail), "melee hit on %s from %.1f m (reach %.1f m, %s)", victim->nick.c_str(), distance / 100, reach / 100, weapon.c_str());
+                Strike(*p, "hitRange", detail);
+                break;
+            }
+        }
+        { auto& st = hitStats_[weapon.empty() ? "(none)" : weapon]; st.max = std::max(st.max, damage); ++st.count; }
         static const char* zones[] = {"body", "head", "arm", "leg"};
         static const float scale[] = {1.f, 2.f, 0.75f, 0.75f};  // before the mode's playerDamage handlers
         // PvP switch, PvE/PvP zones, the players' overrides; then the mode's setPvpRule has the last word.
@@ -361,35 +421,132 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         for (int i = 0; i < count && r.ok(); ++i) { auto key = r.Str(net::kItemKeyMax); const auto amount = r.I32(); if (r.ok()) inv[key] = amount; }
         if (!r.ok() || inv == p->inventory) break;
         p->inventory = std::move(inv);
-        script_->InventoryChange(*p);
+        const uint16_t id = p->id; const double joinedAt = p->joinedAt;
+        CheckInventory(*p);
+        if (Player* still = Find(id); still && still->joinedAt == joinedAt) script_->InventoryChange(*still);  // (not kicked by the check)
         break;
     }
     default: break;
     }
 }
 
+void Server::RejectPeer(ENetPeer* peer, const std::string& nick, const std::string& why) {
+    net::Writer w; w.Op(net::Msg::Reject); w.Str(why); SendTo(peer, w, true);
+    enet_host_flush(host_);
+    enet_peer_disconnect_later(peer, QuitKicked);
+    Log("Rejected %s (%s): %s", Address(peer->address).c_str(), nick.c_str(), why.c_str());
+}
+
 void Server::OnHello(ENetPeer* peer, net::Reader& r) {
+    for (auto& [tag, j] : pending_) if (j.peer == peer) return;  // its account is being checked
     const uint16_t protocol = r.U16();
     const std::string nick = r.Str(96), password = r.Str(128);
     std::string lang = r.left() >= 2 ? r.Str(16) : std::string("en");
     if (lang.empty()) lang = "en";
-    auto reject = [&](const std::string& why) {
-        net::Writer w; w.Op(net::Msg::Reject); w.Str(why); SendTo(peer, w, true);
-        enet_host_flush(host_);
-        enet_peer_disconnect_later(peer, QuitKicked);
-        Log("Rejected %s (%s): %s", Address(peer->address).c_str(), nick.c_str(), why.c_str());
-    };
+    uint64_t claimed = 0; std::string ticket;
+    if (r.left() >= 8) { const uint64_t lo = r.U32(), hi = r.U32(); claimed = lo | hi << 32; }
+    if (r.left() >= 2) ticket = r.Str(net::kTicketMax);
+    auto reject = [&](const std::string& why) { RejectPeer(peer, nick, why); };
     if (!r.ok()) return reject("Malformed handshake");
     if (protocol != net::kProtocolVersion) return reject("Version mismatch: server protocol " + std::to_string(net::kProtocolVersion) + ", yours " + std::to_string(protocol) + ". Update DGMP.");
     if (!net::ValidNick(nick)) return reject("Invalid nickname");
     if (!cfg_.password.empty() && password != cfg_.password) return reject("Wrong password");
     if (FindByName(nick)) return reject("Nickname is already in use on this server");
     if (PlayerCount() >= cfg_.maxPlayers) return reject("Server is full");
+    const std::string ip = Ip(peer->address);
+    if (const Ban* b = bans_.Find(SteamIdText(claimed), ip, nick, UnixNow())) return reject("You are banned (" + FormatUntil(b->until) + ")" + (b->reason.empty() ? "" : ": " + b->reason));
+    if (uint64_t id; !ParseSteamId(SteamIdText(claimed), id)) claimed = 0;
+    if (!std::all_of(ticket.begin(), ticket.end(), [](unsigned char ch) { return std::isxdigit(ch); })) ticket.clear();
+
+    using Auth = Config::SteamAuth;
+    if (cfg_.steamAuth == Auth::Off) return Admit(peer, nick, lang, ip, claimed, 0);
+    if (cfg_.steamApiKey.empty()) {
+        if (cfg_.steamAuth == Auth::Required) return reject("This server checks Steam accounts but has no Steam Web API key yet (server.ini SteamApiKey)");
+        return Admit(peer, nick, lang, ip, claimed, 0);
+    }
+    if (!claimed || ticket.empty()) {
+        if (cfg_.steamAuth == Auth::Required) return reject("This server checks Steam accounts: start Days Gone through Steam");
+        return Admit(peer, nick, lang, ip, claimed, 0);
+    }
+    PendingJoin j;
+    j.peer = peer; j.connectId = peer->connectID; j.nick = nick; j.lang = lang; j.ip = ip; j.ticket = ticket; j.claimed = claimed;
+    j.attempts = 1; j.started = Now();
+    const uint64_t tag = nextPending_++;
+    pending_[tag] = j;
+    ticketCheck_.Start(tag, cfg_.steamApiKey, cfg_.steamAppId, ticket);
+    Log("Checking the Steam account of %s (%s)", nick.c_str(), SteamIdText(claimed).c_str());
+}
+
+// Answers from Steam for the players waiting to join; checks again a ticket Steam had not activated yet.
+void Server::TickAuth() {
+    const double now = Now();
+    for (auto& res : ticketCheck_.Poll()) {
+        auto it = pending_.find(res.tag);
+        if (it == pending_.end()) continue;  // it left meanwhile
+        PendingJoin& j = it->second;
+        using Kind = SteamTicketCheck::Result::Kind;
+        if (res.kind == Kind::Retry && j.attempts < 4) { j.retryAt = now + 1.5 * j.attempts; continue; }
+        const PendingJoin done = j;
+        pending_.erase(it);
+        if (done.peer->connectID != done.connectId || done.peer->state != ENET_PEER_STATE_CONNECTED) continue;
+        switch (res.kind) {
+        case Kind::Ok:
+            if (res.steamId != done.claimed) { RejectPeer(done.peer, done.nick, "Steam check failed: the ticket belongs to another account"); break; }
+            if (res.ownerId && res.ownerId != res.steamId)  // family sharing: the owner's bans count too
+                if (const Ban* b = bans_.Find(SteamIdText(res.ownerId), "", "", UnixNow())) { RejectPeer(done.peer, done.nick, "This game copy's owner is banned (" + FormatUntil(b->until) + ")"); break; }
+            Log("Steam confirmed %s: %s", done.nick.c_str(), SteamIdText(res.steamId).c_str());
+            Admit(done.peer, done.nick, done.lang, done.ip, done.claimed, res.steamId);
+            break;
+        case Kind::Retry:
+        case Kind::Invalid:
+            Log("Steam did not accept the ticket of %s: %s", done.nick.c_str(), res.error.c_str());
+            RejectPeer(done.peer, done.nick, "Steam did not confirm your account. Restart the game from Steam and try again.");
+            break;
+        case Kind::Unreachable:
+            Log("Steam check of %s failed: %s", done.nick.c_str(), res.error.c_str());
+            if (cfg_.steamAuth == Config::SteamAuth::Required) RejectPeer(done.peer, done.nick, "Steam cannot confirm your account right now; try again in a minute");
+            else Admit(done.peer, done.nick, done.lang, done.ip, done.claimed, 0);
+            break;
+        }
+    }
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        PendingJoin& j = it->second;
+        if (j.retryAt && now >= j.retryAt) { j.retryAt = 0; ++j.attempts; ticketCheck_.Start(it->first, cfg_.steamApiKey, cfg_.steamAppId, j.ticket); }
+        if (now - j.started > 40) { RejectPeer(j.peer, j.nick, "Steam check timed out"); it = pending_.erase(it); }
+        else ++it;
+    }
+}
+
+void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& lang, const std::string& ip, uint64_t claimed, uint64_t steamId) {
+    auto reject = [&](const std::string& why) { RejectPeer(peer, nick, why); };
+    // The same checks again: the Steam check took a while.
+    if (FindByName(nick)) return reject("Nickname is already in use on this server");
+    if (PlayerCount() >= cfg_.maxPlayers) return reject("Server is full");
+    if (steamId) for (auto p : Players()) if (p->steamId == steamId) return reject("This Steam account is already playing on this server");
+    if (const Ban* b = bans_.Find(SteamIdText(steamId ? steamId : claimed), ip, nick, UnixNow()))
+        return reject("You are banned (" + FormatUntil(b->until) + ")" + (b->reason.empty() ? "" : ": " + b->reason));
+    // A nickname belongs to the Steam account that played under it first.
+    if (cfg_.steamAuth != Config::SteamAuth::Off && cfg_.reserveNicks) {
+        const std::string owner = names_.Owner(NickKey(nick));
+        if (steamId) {
+            if (!owner.empty() && owner != SteamIdText(steamId)) return reject("This nickname belongs to another player. Choose another one.");
+            names_.Claim(NickKey(nick), SteamIdText(steamId));
+        } else if (!owner.empty() && !cfg_.steamApiKey.empty()) return reject("This nickname is protected: join through Steam to use it");
+    }
+    std::string why;
+    if (!script_->PlayerConnecting(nick, steamId, ip, why)) return reject(why.empty() ? "The server did not let you in" : why);
 
     auto owned = std::make_unique<Player>();
     auto p = owned.get();
     p->id = FreeId(); p->nick = nick; p->peer = peer; p->joinedAt = Now(); p->ready = true; p->lang = lang;
-    for (auto& a : cfg_.admins) if (StrICmp(a.c_str(), nick.c_str()) == 0) p->admin = true;
+    p->ip = ip; p->steamId = steamId; p->claimedSteamId = steamId ? steamId : claimed;
+    p->inventoryGraceUntil = p->joinedAt + 10;  // the save's weapons are taken first
+    p->inventorySettling = true;
+    for (auto& a : cfg_.admins) {
+        if (uint64_t id; ParseSteamId(a, id)) p->admin |= steamId && id == steamId;
+        else p->admin |= cfg_.steamAuth == Config::SteamAuth::Off && StrICmp(a.c_str(), nick.c_str()) == 0;
+    }
+    if (cfg_.localAdmin && (ip == "127.0.0.1" || ip == "::1")) p->admin = true;
     p->state.x = cfg_.spawnX; p->state.y = cfg_.spawnY; p->state.z = cfg_.spawnZ; p->state.yaw = cfg_.spawnYaw;
     players_[p->id] = std::move(owned);
     peer->data = p;
@@ -425,12 +582,14 @@ void Server::OnHello(ENetPeer* peer, net::Reader& r) {
     // The skin it made before, on this server.
     std::string key = nick; for (auto& ch : key) ch = char(std::tolower(static_cast<unsigned char>(ch)));
     if (auto s = skins_.find(key); s != skins_.end()) { p->skin = s->second; WearEffective(p); }
-    Log("%s (id %u) joined from %s", nick.c_str(), p->id, Address(peer->address).c_str());
+    Log("%s (id %u) joined from %s%s%s%s", nick.c_str(), p->id, Address(peer->address).c_str(), steamId ? ", Steam " : claimed ? ", unconfirmed Steam " : "",
+        SteamIdText(steamId ? steamId : claimed).c_str(), p->admin ? ", admin" : "");
     script_->PlayerJoin(*p);
 }
 
 void Server::OnChat(Player& p, const std::string& text) {
     if (text.empty()) return;
+    if (RconChat(p, text)) return;
     if (text[0] == '/') {
         const auto space = text.find(' ');
         const std::string name = text.substr(1, space == std::string::npos ? std::string::npos : space - 1);
@@ -578,6 +737,7 @@ uint16_t Server::AddWorldItem(WorldItem item) {
 }
 bool Server::RemoveWorldItem(uint16_t id) {
     if (!items_.erase(id)) return false;
+    itemTakers_.erase(id);
     net::Writer w; w.Op(net::Msg::WorldItem); w.U16(id); w.U8(2); Send(nullptr, w, true);
     return true;
 }
@@ -1366,6 +1526,16 @@ void Server::HurtBot(Player* bot, float amount, Player* attacker) {
     script_->PlayerDeath(*bot, attacker);
     Log("%s was killed by %s", bot->nick.c_str(), attacker ? attacker->nick.c_str() : "?");
 }
+void Server::SetHealth(Player* p, float percent) {
+    if (!p) return;
+    percent = std::clamp(percent, 0.f, 100.f);
+    if (p->bot) {
+        if (percent > 0) { p->state.health = uint8_t(std::lround(percent)); p->botDeadUntil = 0; }
+        else HurtBot(p, 1000.f, nullptr);
+        return;
+    }
+    net::Writer w; w.Op(net::Msg::SetHealth); w.F32(percent); Send(p, w, true);
+}
 void Server::Damage(Player* p, float amount, Player* attacker) {
     if (!p || !p->ready || !std::isfinite(amount) || amount <= 0) return;
     if (attacker) { p->lastAttacker = attacker->id; p->lastHitAt = Now(); }
@@ -1424,7 +1594,204 @@ void Server::Kick(Player* p, const std::string& reason) {
 }
 void Server::Item(Player* p, net::ItemAction action, const std::string& key, int amount) {
     if (!p || p->bot) return;
+    Ledger(*p, action, key, amount);
+    SendItem(p, action, key, amount);
+}
+void Server::SendItem(Player* p, net::ItemAction action, const std::string& key, int amount) {
     net::Writer w; w.Op(net::Msg::Item); w.U8(static_cast<uint8_t>(action)); w.Str(key.substr(0, net::kItemKeyMax)); w.I32(amount); Send(p, w, true);
+}
+
+// ---------------------------------------------------------------- protected items
+// The server keeps, per player, how many of each key it handed out; a snapshot with more of a
+// protected key than that is taken back (unless the mode accepts it: inventoryViolation).
+void Server::ProtectItems(std::vector<std::string> prefixes) {
+    for (auto& s : prefixes) s = Lower(s);
+    prefixes.erase(std::remove(prefixes.begin(), prefixes.end(), std::string()), prefixes.end());
+    protect_ = std::move(prefixes);
+    loose_.clear();
+}
+bool Server::Protected(const std::string& lowerKey) const {
+    if (protect_.empty() || IsTool(lowerKey)) return false;
+    for (auto& prefix : protect_) if (StartsWith(lowerKey, prefix.c_str())) return true;
+    return false;
+}
+void Server::Ledger(Player& p, net::ItemAction action, const std::string& key, int amount) {
+    // Snapshots come up to ~3 s late: the keys the server just changed are not judged for a while.
+    const double grace = Now() + 6;
+    const std::string k = Lower(key);
+    switch (action) {
+    case net::ItemAction::Give: case net::ItemAction::GiveReplace:
+        p.granted[k] += std::max(0, amount); p.itemGrace[k] = grace;
+        if (StartsWith(k, "kweaponid_")) p.ammoGraceUntil = grace;  // a weapon comes loaded
+        break;
+    case net::ItemAction::Take: { int& g = p.granted[k]; g = std::max(0, g - std::max(0, amount)); p.itemGrace[k] = grace; break; }
+    case net::ItemAction::SetAmmo:
+        if (StartsWith(k, "kammoid_")) { p.granted[k] = std::max(0, amount); p.itemGrace[k] = grace; }
+        else p.ammoGraceUntil = grace;  // by weapon key: its ammo type, which only the client knows
+        break;
+    case net::ItemAction::TakeWeapons:
+        for (auto& [gk, gv] : p.granted) if (StartsWith(gk, "kweaponid_")) { gv = 0; p.itemGrace[gk] = grace; }
+        break;
+    case net::ItemAction::Clear:
+        for (auto& [gk, gv] : p.granted) { gv = 0; p.itemGrace[gk] = grace; }
+        break;
+    case net::ItemAction::TakeTools: break;  // tools are never protected
+    }
+}
+void Server::PickedUp(Player& p, const GameEvent& e) {
+    const std::string k = Lower(e.detail);
+    if (k.empty()) return;
+    const double now = Now();
+    p.pickedUpAt[k] = now;
+    if (!Protected(k)) return;
+    auto within = [&](float x, float y, float z, float metres) { const float dx = x - p.state.x, dy = y - p.state.y, dz = z - p.state.z; return dx * dx + dy * dy + dz * dz <= metres * metres * 1e4f; };
+    // A mode item (spawnItem): once per player, standing at it.
+    if (StartsWith(e.id, "dgmp_item_")) {
+        const auto id = static_cast<uint16_t>(std::atoi(e.id.c_str() + 10));
+        auto it = items_.find(id);
+        if (it != items_.end() && Lower(it->second.key) == k && within(it->second.x, it->second.y, it->second.z, 10) && itemTakers_[id].insert(p.id).second) {
+            p.granted[k] += std::max(1, it->second.count); p.itemGrace[k] = now + 6;
+        }
+        return;
+    }
+    // A weapon someone dropped or gave away there.
+    for (auto it = loose_.begin(); it != loose_.end(); ++it) {
+        if (it->key != k || it->until < now || !within(it->x, it->y, it->z, 15)) continue;
+        p.granted[k] += 1; p.itemGrace[k] = now + 6;
+        loose_.erase(it);
+        return;
+    }
+}
+void Server::CheckInventory(Player& p) {
+    if (protect_.empty() || p.bot) return;
+    const double now = Now();
+    loose_.erase(std::remove_if(loose_.begin(), loose_.end(), [now](const Loose& l) { return l.until < now; }), loose_.end());
+    p.inventoryRecheckAt = 0;
+    if (now < p.inventoryGraceUntil) {
+        p.inventoryRecheckAt = p.inventoryGraceUntil;  // the client reports only changes: look at this one again then
+        // Joining or respawned: the save's weapons are being taken; with StartWeapons=save they are its own.
+        if (cfg_.saveWeapons) for (auto& [key, have] : p.inventory) if (const auto k = Lower(key); Protected(k)) p.granted[k] = std::max(p.granted[k], have);
+        return;
+    }
+    auto inGrace = [&](const std::string& k) {
+        auto g = p.itemGrace.find(k);
+        return (g != p.itemGrace.end() && g->second > now) || (StartsWith(k, "kammoid_") && p.ammoGraceUntil > now);
+    };
+    auto lost = [&](const std::string& k, int count) {  // left the backpack: a weapon can be picked up again there
+        if (StartsWith(k, "kweaponid_")) for (int i = 0; i < count && loose_.size() < 4096; ++i) loose_.push_back({k, p.state.x, p.state.y, p.state.z, now + 1800});
+    };
+    struct Over { std::string key, k; int have, allowed; };
+    std::vector<Over> over;
+    std::set<std::string> present;
+    for (auto& [key, have] : p.inventory) {
+        const std::string k = Lower(key);
+        if (!Protected(k)) continue;
+        present.insert(k);
+        int& g = p.granted[k];
+        if (have > g) {
+            if (!inGrace(k)) over.push_back({key, k, have, g});
+            else if (StartsWith(k, "kammoid_") && p.ammoGraceUntil > now) g = have;
+            else if (auto gr = p.itemGrace.find(k); gr != p.itemGrace.end()) p.inventoryRecheckAt = std::max(p.inventoryRecheckAt, gr->second + 0.1);
+        } else if (have < g && !inGrace(k)) { lost(k, g - have); g = have; }
+    }
+    for (auto& [k, g] : p.granted) if (g > 0 && Protected(k) && !present.count(k) && !inGrace(k)) { lost(k, g); g = 0; }
+    const bool settling = p.inventorySettling;
+    p.inventorySettling = false;
+    if (over.empty()) return;
+    if (settling) {  // the world save's own items, not given by the mode: removed quietly
+        std::string list;
+        for (auto& o : over) {
+            if (StartsWith(o.k, "kammoid_")) SendItem(&p, net::ItemAction::SetAmmo, o.key, o.allowed);
+            else SendItem(&p, net::ItemAction::Take, o.key, o.have - o.allowed);
+            p.itemGrace[o.k] = now + 6;
+            list += (list.empty() ? "" : ", ") + o.key + " x" + std::to_string(o.have - o.allowed);
+        }
+        Log("%s: protected items of the world save removed: %s", p.nick.c_str(), list.c_str());
+        return;
+    }
+    const uint16_t id = p.id; const double joinedAt = p.joinedAt;
+    std::string unexplained;
+    for (auto& o : over) {
+        auto pick = p.pickedUpAt.find(o.k);
+        const bool pickedUp = pick != p.pickedUpAt.end() && now - pick->second < 15;
+        const bool accepted = script_->InventoryViolation(p, o.key, o.have, o.allowed, pickedUp);
+        Player* still = Find(id);
+        if (!still || still->joinedAt != joinedAt) return;  // the mode kicked it
+        if (accepted) { p.granted[o.k] = o.have; continue; }
+        if (StartsWith(o.k, "kammoid_")) SendItem(&p, net::ItemAction::SetAmmo, o.key, o.allowed);
+        else SendItem(&p, net::ItemAction::Take, o.key, o.have - o.allowed);
+        p.itemGrace[o.k] = now + 6;
+        Log("%s had %d x %s, allowed %d: taken back%s", p.nick.c_str(), o.have, o.key.c_str(), o.allowed, pickedUp ? " (picked up in the world)" : "");
+        if (!pickedUp) unexplained += (unexplained.empty() ? "" : ", ") + o.key + " x" + std::to_string(o.have - o.allowed);
+    }
+    if (!unexplained.empty()) Strike(p, "item", unexplained);
+}
+
+// ---------------------------------------------------------------- bans, anti-cheat strikes, rcon
+void Server::AddBan(Ban b) {
+    if (!b.at) b.at = UnixNow();
+    Log("Banned %s%s%s (%s)%s%s", b.nick.c_str(), b.steamId.empty() ? "" : " Steam ", b.steamId.c_str(), FormatUntil(b.until).c_str(),
+        b.reason.empty() ? "" : ": ", b.reason.c_str());
+    bans_.Add(std::move(b));
+}
+void Server::BanPlayer(Player* p, const std::string& reason, int minutes, const std::string& by) {
+    if (!p || p->bot) { if (p) Kick(p, reason); return; }
+    Ban b;
+    // A confirmed Steam account is enough; the address only for the others (shared addresses: NAT, mobile networks).
+    b.steamId = SteamIdText(p->steamId ? p->steamId : p->claimedSteamId); b.ip = p->steamId ? "" : p->ip; b.nick = p->nick; b.reason = reason; b.by = by;
+    b.until = minutes > 0 ? UnixNow() + int64_t(minutes) * 60 : 0;
+    const std::string until = FormatUntil(b.until);
+    AddBan(std::move(b));
+    Kick(p, (p->lang == "ru" ? "Бан (" : "Banned (") + until + ")" + (reason.empty() ? "" : ": " + reason));
+}
+int Server::Unban(const std::string& what) {
+    const int n = bans_.Remove(what);
+    if (n) Log("Unbanned %s (%d)", what.c_str(), n);
+    return n;
+}
+void Server::Strike(Player& p, const char* kind, const std::string& detail) {
+    const double now = Now();
+    p.strikes.erase(std::remove_if(p.strikes.begin(), p.strikes.end(), [now](double t) { return now - t > 60; }), p.strikes.end());
+    p.strikes.push_back(now);
+    const int count = int(p.strikes.size());
+    Log("[anticheat] %s (id %u): %s - %s (%d in a minute)", p.nick.c_str(), p.id, kind, detail.c_str(), count);
+    const uint16_t id = p.id; const double joinedAt = p.joinedAt;
+    const bool handled = script_->Cheat(p, kind, detail, count);
+    Player* still = Find(id);
+    if (handled || !still || still->joinedAt != joinedAt) return;
+    if (cfg_.cheatKick > 0 && count >= cfg_.cheatKick) Kick(&p, std::string("Anti-cheat: ") + kind);
+}
+// SA-MP style: "/rcon login <password>" makes the player an admin for this session; an admin's
+// "/rcon <command>" runs a server console command and gets its output in the chat.
+bool Server::RconChat(Player& p, const std::string& text) {
+    if (text.size() < 5 || StrICmp(text.substr(0, 5).c_str(), "/rcon") != 0 || (text.size() > 5 && text[5] != ' ')) return false;
+    const std::string rest = Trim(text.substr(5));
+    const bool ru = p.lang == "ru";
+    if (rest.rfind("login", 0) == 0 && (rest.size() == 5 || rest[5] == ' ')) {
+        const std::string password = Trim(rest.substr(5));
+        if (cfg_.rconPassword.empty()) { Message(&p, kErrorColor, ru ? "RCON выключен на этом сервере" : "RCON is off on this server"); return true; }
+        if (p.admin) { Message(&p, kSystemColor, ru ? "Вы уже администратор" : "You are an admin already"); return true; }
+        bool same = password.size() == cfg_.rconPassword.size();
+        unsigned char diff = 0;
+        for (size_t i = 0; same && i < password.size(); ++i) diff |= static_cast<unsigned char>(password[i] ^ cfg_.rconPassword[i]);
+        if (same && !diff) {
+            p.admin = true; p.rconFails = 0;
+            Log("%s logged in to RCON", p.nick.c_str());
+            Message(&p, kSystemColor, ru ? "Вы вошли как администратор. /rcon help — команды сервера" : "You are an admin now. /rcon help - server commands");
+            return true;
+        }
+        Log("%s: wrong RCON password (%d)", p.nick.c_str(), p.rconFails + 1);
+        if (++p.rconFails >= 3) { BanPlayer(&p, "RCON password guessing", 10, "server"); return true; }
+        Message(&p, kErrorColor, ru ? "Неверный пароль RCON" : "Wrong RCON password");
+        return true;
+    }
+    if (!p.admin) { Message(&p, kErrorColor, ru ? "Только для администраторов: /rcon login <пароль>" : "Admins only: /rcon login <password>"); return true; }
+    if (rest.empty()) { Message(&p, kSystemColor, "/rcon <command>, /rcon help"); return true; }
+    Log("%s (RCON): %s", p.nick.c_str(), rest.c_str());
+    echo_ = &p;  // (RemovePlayer clears it if the command removes this player)
+    HandleConsole(rest);
+    echo_ = nullptr;
+    return true;
 }
 void Server::Bike(Player* p, net::BikeAction action, float x, float y, float z, float yaw) {
     if (!p || p->bot) return;
@@ -1533,12 +1900,14 @@ void Server::HandleConsole(const std::string& raw) {
     std::istringstream in(line); std::string cmd; in >> cmd;
     std::string rest; std::getline(in, rest); rest = Trim(rest);
     if (cmd == "help") {
-        Log("Commands: status | say <text> | kick <id|nick> [reason] | bot [count] | bots off | reload | mode <id> | time <hours> | weather <id|auto> | quit");
+        Log("Commands: status | say <text> | kick <id|nick> [reason] | ban <id|nick|steamid|ip> [minutes] [reason] | unban <steamid|ip|nick> | bans | admin <id|nick> [off] | hitstats | bot [count] | bots off | reload | mode <id> | time <hours> | weather <id|auto> | quit");
     } else if (cmd == "status" || cmd == "players") {
         Log("%s | mode %s | %d/%d players", cfg_.name.c_str(), script_->title().c_str(), PlayerCount(), cfg_.maxPlayers);
         for (auto p : Players()) {
             const int ping = p->peer ? static_cast<int>(p->peer->roundTripTime) : 0;
-            Log("  %3u  %-24s %s  ping %d  pos %.0f %.0f %.0f", p->id, p->nick.c_str(), p->bot ? "bot " : "    ", ping, p->state.x, p->state.y, p->state.z);
+            const std::string steam = p->steamId ? SteamIdText(p->steamId) : p->claimedSteamId ? SteamIdText(p->claimedSteamId) + "?" : "-";
+            Log("  %3u  %-24s %s%s  ping %d  %s  steam %s  pos %.0f %.0f %.0f", p->id, p->nick.c_str(), p->bot ? "bot " : "    ", p->admin ? "admin " : "      ", ping,
+                p->ip.c_str(), steam.c_str(), p->state.x, p->state.y, p->state.z);
         }
     } else if (cmd == "say") {
         Message(nullptr, kSystemColor, "[Server] " + rest); Log("[Server] %s", rest.c_str());
@@ -1547,6 +1916,39 @@ void Server::HandleConsole(const std::string& raw) {
         Player* p = FindByName(who);
         if (!p && !who.empty() && std::all_of(who.begin(), who.end(), ::isdigit)) p = Find(static_cast<uint16_t>(std::stoi(who)));
         if (!p) Log("No such player: %s", who.c_str()); else Kick(p, reason.empty() ? "Kicked by server" : reason);
+    } else if (cmd == "ban") {
+        // ban <id|nick|steamid|ip> [minutes] [reason]: an online player by its account and address, else that entry.
+        std::istringstream a(rest); std::string who, minutes; a >> who >> minutes;
+        std::string reason; std::getline(a, reason); reason = Trim(reason);
+        if (!minutes.empty() && !std::all_of(minutes.begin(), minutes.end(), ::isdigit)) { reason = Trim(minutes + " " + reason); minutes.clear(); }
+        const int mins = minutes.empty() ? 0 : std::atoi(minutes.c_str());
+        if (who.empty()) { Log("ban <id|nick|steamid|ip> [minutes] [reason]  (minutes 0 or none: for ever)"); return; }
+        uint64_t sid = 0;
+        Player* p = ParseSteamId(who, sid) || LooksLikeIp(who) ? nullptr : FindByName(who);
+        if (!p && !who.empty() && std::all_of(who.begin(), who.end(), ::isdigit) && who.size() < 6) p = Find(static_cast<uint16_t>(std::stoi(who)));
+        const std::string by = echo_ ? echo_->nick : "console";
+        if (p) { BanPlayer(p, reason, mins, by); return; }
+        Ban b; b.reason = reason; b.by = by; b.until = mins > 0 ? UnixNow() + int64_t(mins) * 60 : 0;
+        if (sid) b.steamId = who; else if (LooksLikeIp(who)) b.ip = who; else b.nick = who;
+        for (auto q : Players()) if ((sid && (q->steamId == sid || q->claimedSteamId == sid)) || (!b.ip.empty() && q->ip == b.ip)) { BanPlayer(q, reason, mins, by); return; }
+        AddBan(b);
+    } else if (cmd == "hitstats") {  // to tune MaxHitDamage: the largest damage seen per weapon class
+        if (hitStats_.empty()) Log("No hits yet");
+        for (auto& [w, st] : hitStats_) Log("  %-48s max %.1f  (%d hits)", w.c_str(), st.max, st.count);
+    } else if (cmd == "unban") {
+        if (rest.empty()) { Log("unban <steamid|ip|nick>"); return; }
+        if (!Unban(rest)) Log("No ban for %s", rest.c_str());
+    } else if (cmd == "bans") {
+        if (Bans().empty()) { Log("No bans"); return; }
+        for (auto& b : Bans()) Log("  %-24s steam %-17s ip %-15s %s by %s%s%s", b.nick.c_str(), b.steamId.empty() ? "-" : b.steamId.c_str(), b.ip.empty() ? "-" : b.ip.c_str(),
+                                  FormatUntil(b.until).c_str(), b.by.c_str(), b.reason.empty() ? "" : ": ", b.reason.c_str());
+    } else if (cmd == "admin") {
+        std::istringstream a(rest); std::string who, off; a >> who >> off;
+        Player* p = FindByName(who);
+        if (!p && !who.empty() && std::all_of(who.begin(), who.end(), ::isdigit)) p = Find(static_cast<uint16_t>(std::stoi(who)));
+        if (!p) { Log("No such player: %s", who.c_str()); return; }
+        p->admin = off != "off";
+        Log("%s is %san admin for this session", p->nick.c_str(), p->admin ? "" : "no longer ");
     } else if (cmd == "bot") {
         if (rest == "off") { RemoveBots(); return; }
         const int n = rest.empty() ? 1 : std::clamp(std::atoi(rest.c_str()), 1, 16);

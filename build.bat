@@ -27,10 +27,10 @@ if not exist build\imgui.lib (
 
 rem ---- game client DLL (version.dll proxy) ----
 if not exist build\dll mkdir build\dll
-cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\imgui /Ithird_party\imguizmo /Fo"build\dll\\" /DDGMP_BUILD src\client.cpp src\policy.cpp src\environment.cpp src\devmenu.cpp src\dllmain.cpp src\profile.cpp src\panel.cpp src\ue.cpp src\proxy.cpp src\mp.cpp src\hud.cpp src\devcmd.cpp src\inventory.cpp src\gameevents.cpp src\overlay.cpp src\editorui.cpp src\worldedit.cpp src\skins.cpp src\mpui.cpp src\vehicles.cpp src\carry.cpp src\images.cpp src\audio.cpp src\shared\netclient.cpp /LD /Fe"build\version.dll" /link /DEF:src\version.def /MAP:build\version.map build\enet.lib ws2_32.lib winmm.lib user32.lib gdi32.lib gdiplus.lib build\imgui.lib d3d11.lib dxgi.lib windowscodecs.lib ole32.lib || exit /b 1
+cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\imgui /Ithird_party\imguizmo /Fo"build\dll\\" /DDGMP_BUILD src\client.cpp src\policy.cpp src\environment.cpp src\devmenu.cpp src\dllmain.cpp src\profile.cpp src\panel.cpp src\ue.cpp src\proxy.cpp src\mp.cpp src\hud.cpp src\devcmd.cpp src\inventory.cpp src\gameevents.cpp src\overlay.cpp src\editorui.cpp src\worldedit.cpp src\skins.cpp src\mpui.cpp src\vehicles.cpp src\carry.cpp src\images.cpp src\audio.cpp src\steam.cpp src\shared\netclient.cpp /LD /Fe"build\version.dll" /link /DEF:src\version.def /MAP:build\version.map build\enet.lib ws2_32.lib winmm.lib user32.lib gdi32.lib gdiplus.lib build\imgui.lib d3d11.lib dxgi.lib windowscodecs.lib ole32.lib || exit /b 1
 
 rem ---- dedicated server ----
-cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\lua\src /Fo"build\server\\" src\server\main.cpp src\server\server.cpp src\server\script.cpp src\server\platform.cpp /Zi /Fd"build\server\\" /Fe"dgmp-server.exe" /link /DEBUG /OPT:REF /OPT:ICF build\lua.lib build\enet.lib ws2_32.lib winmm.lib dbghelp.lib || exit /b 1
+cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\lua\src /Fo"build\server\\" src\server\main.cpp src\server\server.cpp src\server\script.cpp src\server\platform.cpp src\server\security.cpp /Zi /Fd"build\server\\" /Fe"dgmp-server.exe" /link /DEBUG /OPT:REF /OPT:ICF build\lua.lib build\enet.lib ws2_32.lib winmm.lib dbghelp.lib winhttp.lib || exit /b 1
 
 rem ---- test client ----
 cl %CXXFLAGS% /Ithird_party\enet\include /Fo"build\probe\\" src\tools\probe.cpp src\shared\netclient.cpp /Fe"build\dgmp-probe.exe" /link build\enet.lib ws2_32.lib winmm.lib shell32.lib || exit /b 1

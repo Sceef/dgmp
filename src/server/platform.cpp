@@ -7,6 +7,10 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#include <winhttp.h>
+#else
+#include <dlfcn.h>
+#include <mutex>
 #endif
 
 namespace srv {
@@ -56,6 +60,43 @@ FILE* OpenAppend(const std::filesystem::path& file) {
 
 std::tm LocalTime(std::time_t t) { std::tm tm{}; localtime_s(&tm, &t); return tm; }
 
+bool HttpGet(const std::string& url, std::string& body, std::string& error, int timeoutSec) {
+    body.clear(); error.clear();
+    const int wn = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
+    std::wstring wurl(wn > 0 ? wn - 1 : 0, L'\0');
+    if (wn > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), wn);
+    URL_COMPONENTS parts{}; parts.dwStructSize = sizeof(parts);
+    wchar_t host[256] = {}, path[2048] = {};
+    parts.lpszHostName = host; parts.dwHostNameLength = 256; parts.lpszUrlPath = path; parts.dwUrlPathLength = 2048;
+    wchar_t extra[4096] = {}; parts.lpszExtraInfo = extra; parts.dwExtraInfoLength = 4096;
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &parts)) { error = "bad URL"; return false; }
+    HINTERNET session = WinHttpOpen(L"dgmp-server", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) { error = "WinHttpOpen failed"; return false; }
+    const int ms = timeoutSec * 1000;
+    WinHttpSetTimeouts(session, ms, ms, ms, ms);
+    HINTERNET connection = WinHttpConnect(session, host, parts.nPort, 0);
+    const std::wstring target = std::wstring(path) + extra;
+    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", target.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                                        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : nullptr;
+    DWORD status = 0, size = sizeof(status);
+    const bool sent = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                      WinHttpReceiveResponse(request, nullptr) &&
+                      WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
+    if (!sent) error = "request failed (" + std::to_string(GetLastError()) + ")";
+    else {
+        for (DWORD avail = 0; WinHttpQueryDataAvailable(request, &avail) && avail && body.size() < (8u << 20);) {
+            std::string chunk(avail, '\0'); DWORD got = 0;
+            if (!WinHttpReadData(request, chunk.data(), avail, &got) || !got) break;
+            body.append(chunk.data(), got);
+        }
+        if (status != 200) error = "HTTP " + std::to_string(status);
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    return sent && status == 200;
+}
+
 // The system parser, as before the port (a file without a BOM is read in the ANSI code page).
 std::string IniValue(const std::filesystem::path& file, const char* section, const char* key, const char* fallback) {
     auto wide = [](const char* s) { return std::wstring(s, s + std::strlen(s)); };  // names and defaults are ASCII
@@ -73,6 +114,65 @@ std::filesystem::path ExecutableDir() {
 FILE* OpenAppend(const std::filesystem::path& file) { return std::fopen(file.c_str(), "a"); }
 
 std::tm LocalTime(std::time_t t) { std::tm tm{}; localtime_r(&t, &tm); return tm; }
+
+// libcurl through dlopen: the server binary does not depend on it, only the features that use HTTP do.
+namespace {
+struct Curl {
+    void* (*init)() = nullptr;
+    int (*setopt)(void*, int, ...) = nullptr;
+    int (*perform)(void*) = nullptr;
+    int (*getinfo)(void*, int, ...) = nullptr;
+    void (*cleanup)(void*) = nullptr;
+    const char* (*strerror)(int) = nullptr;
+    bool ok = false;
+};
+const Curl& LoadCurl() {
+    static Curl c;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        void* lib = dlopen("libcurl.so.4", RTLD_NOW);
+        if (!lib) lib = dlopen("libcurl.so", RTLD_NOW);
+        if (!lib) return;
+        auto globalInit = reinterpret_cast<int (*)(long)>(dlsym(lib, "curl_global_init"));
+        c.init = reinterpret_cast<void* (*)()>(dlsym(lib, "curl_easy_init"));
+        c.setopt = reinterpret_cast<int (*)(void*, int, ...)>(dlsym(lib, "curl_easy_setopt"));
+        c.perform = reinterpret_cast<int (*)(void*)>(dlsym(lib, "curl_easy_perform"));
+        c.getinfo = reinterpret_cast<int (*)(void*, int, ...)>(dlsym(lib, "curl_easy_getinfo"));
+        c.cleanup = reinterpret_cast<void (*)(void*)>(dlsym(lib, "curl_easy_cleanup"));
+        c.strerror = reinterpret_cast<const char* (*)(int)>(dlsym(lib, "curl_easy_strerror"));
+        c.ok = globalInit && c.init && c.setopt && c.perform && c.getinfo && c.cleanup && c.strerror && globalInit(3) == 0;  // CURL_GLOBAL_DEFAULT
+    });
+    return c;
+}
+size_t CurlWrite(char* data, size_t size, size_t count, void* user) {
+    auto body = static_cast<std::string*>(user);
+    if (body->size() > (8u << 20)) return 0;
+    body->append(data, size * count);
+    return size * count;
+}
+}  // namespace
+
+bool HttpGet(const std::string& url, std::string& body, std::string& error, int timeoutSec) {
+    body.clear(); error.clear();
+    const Curl& c = LoadCurl();
+    if (!c.ok) { error = "libcurl not found (install libcurl4)"; return false; }
+    void* h = c.init();
+    if (!h) { error = "curl_easy_init failed"; return false; }
+    // CURLOPT_URL, _WRITEFUNCTION, _WRITEDATA, _TIMEOUT, _NOSIGNAL, _USERAGENT
+    c.setopt(h, 10002, url.c_str());
+    c.setopt(h, 20011, &CurlWrite);
+    c.setopt(h, 10001, &body);
+    c.setopt(h, 13, long(timeoutSec));
+    c.setopt(h, 99, 1L);
+    c.setopt(h, 10018, "dgmp-server");
+    const int rc = c.perform(h);
+    long status = 0;
+    if (rc == 0) c.getinfo(h, 0x200002, &status);  // CURLINFO_RESPONSE_CODE
+    c.cleanup(h);
+    if (rc != 0) { error = c.strerror(rc); return false; }
+    if (status != 200) { error = "HTTP " + std::to_string(status); return false; }
+    return true;
+}
 
 std::string IniValue(const std::filesystem::path& file, const char* section, const char* key, const char* fallback) {
     std::ifstream in(file, std::ios::binary);

@@ -19,6 +19,13 @@ public:
     const std::string& mode() const { return mode_; }
     const std::string& title() const { return title_; }
 
+    // Someone is about to join (after the password, bans and the Steam check): playerConnecting handlers
+    // may refuse (false, or a text: the reason shown to it). steamId 0: not confirmed by Steam.
+    bool PlayerConnecting(const std::string& nick, uint64_t steamId, const std::string& ip, std::string& reason);
+    // Anti-cheat strike (docs/API.md "Античит"): true when a handler returned true (the mode deals with it, no kick).
+    bool Cheat(Player& p, const char* kind, const std::string& detail, int strikes);
+    // The player has more of a protected item than the server gave: true when a handler accepts it.
+    bool InventoryViolation(Player& p, const std::string& key, int have, int allowed, bool pickedUp);
     void PlayerJoin(Player& p);
     void PlayerQuit(Player& p, uint8_t reason);
     bool PlayerChat(Player& p, const std::string& text);  // false = cancelled by the mode
@@ -55,7 +62,7 @@ public:
 
 private:
     friend struct Api;
-    void Fire(const char* event, int nargs, int* cancelResult = nullptr);
+    void Fire(const char* event, int nargs, int* cancelResult = nullptr, std::string* textResult = nullptr);
     std::filesystem::file_time_type NewestWrite() const;
     void StartJobs(const std::string& list);  // meta.ini [Mode] Jobs=all / Jobs=id,id
 

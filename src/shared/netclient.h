@@ -61,6 +61,7 @@ public:
         std::function<void(uint16_t playerId)> corpse;
         std::function<void(uint16_t attacker, float damage, HitZone zone)> damage;  // another player hurt you
         std::function<void(bool on)> freeze;
+        std::function<void(float percent)> setHealth;  // 0: die
         // choices: (name, look) to pick from; empty: the full character creator
         // place: x, y, z, yaw where the server put the player to choose (null: where it is)
         std::function<void(bool cancel, const std::string& title, const std::string& families, const std::string& current,
@@ -94,6 +95,8 @@ public:
 
     ~Client();
     bool Connect(const std::string& host, uint16_t port, const std::string& nick, const std::string& password);
+    // The Steam account and its auth ticket (hex) sent with the next Hello; 0 and "": none.
+    void SetIdentity(uint64_t steamId, const std::string& ticketHex) { steamId_ = steamId; ticket_ = ticketHex; }
     void Disconnect();
     void Service(double now);  // pump network; call every frame
     void SendState(const PlayerState& s);
@@ -125,6 +128,7 @@ private:
     _ENetPeer* peer_ = nullptr;
     Status status_ = Status::Idle;
     std::string nick_, password_, rejectReason_;
+    uint64_t steamId_ = 0; std::string ticket_;
     uint16_t localId_ = 0xFFFF;
     double connectStarted_ = 0;
     std::map<uint16_t, RemotePlayer> players_;

@@ -1,5 +1,6 @@
 #pragma once
 #include "../shared/protocol.h"
+#include "security.h"
 #include <atomic>
 #include <cstdarg>
 #include <mutex>
@@ -28,7 +29,21 @@ struct Config {
     net::NametagMode nametags = net::NametagMode::Visible;
     uint8_t collisions = 0;    // net::CollisionMask
     bool saveWeapons = false;  // keep the weapons of the world save on join (StartWeapons=save)
-    std::vector<std::string> admins;  // nicknames (case-insensitive)
+    // Who the players are (docs/API.md "Steam и баны"): Off - nicknames only; Optional - the Steam account
+    // is checked when the server has a Web API key, players without Steam get in unchecked; Required -
+    // only players whose Steam account Steam confirmed.
+    enum class SteamAuth : uint8_t { Off, Optional, Required } steamAuth = SteamAuth::Optional;
+    std::string steamApiKey;          // https://steamcommunity.com/dev/apikey
+    uint32_t steamAppId = 1259420;    // Days Gone
+    bool reserveNicks = true;         // a nickname belongs to the Steam account that used it first
+    bool localAdmin = true;           // a player joining from this computer (127.0.0.1) is an admin
+    std::string rconPassword;         // "/rcon login <password>" makes a player an admin ("": off)
+    std::vector<std::string> admins;  // SteamIDs; nicknames count only with SteamAuth=off
+    // Anti-cheat (docs/API.md "Античит"): limits of the hits a client reports, strikes before a kick.
+    float maxHitDamage = 500;         // one hit, before the hit zone multiplier
+    float meleeRange = 600;           // units
+    int maxHitsPerSecond = 30;
+    int cheatKick = 10;               // strikes within a minute that kick (0: never)
 };
 
 // A quest marker shown on the map, the minimap and in the world (the game's own waypoint actor).
@@ -191,7 +206,25 @@ struct Player {
     std::string zoneHud;                           // the zone line on its screen now ("": none)
     uint16_t carrying = 0;                         // the box (Carry) in its hands (0: none)
     int64_t money = 0;                             // the mode's money (docs/API.md "Деньги"); not kept by the server
+    std::string ip;                                // address it connects from (no port)
+    uint64_t steamId = 0;                          // its Steam account, confirmed by Steam (0: not confirmed)
+    uint64_t claimedSteamId = 0;                   // the account its client named (bans also match this one)
+    int rconFails = 0;                             // wrong "/rcon login" passwords
+    std::vector<double> strikes;                   // anti-cheat strikes of the last minute (times)
+    // Protected items (protectItems): how many of each key the server let it have (lower-case keys); a
+    // key the server just changed is not judged until its time here passes (the client reports late).
+    std::map<std::string, int> granted;
+    std::map<std::string, double> itemGrace;
+    double ammoGraceUntil = 0;                     // after giveWeapon / setAmmo by weapon: any ammo it gets is fine
+    double inventoryGraceUntil = 0;                // after joining or a respawn: the save's items are being taken
+    bool inventorySettling = false;                // the first check after that: the save's protected items go without a strike
+    std::map<std::string, double> pickedUpAt;      // the game said it picked up this key (lower-case) then
+    double inventoryRecheckAt = 0;                 // judge the last snapshot again then (it had keys still in grace)
 };
+
+// A point of the world (logic points: z on the ground). Outside Server: g++ cannot use a nested class
+// with member initialisers in a default argument of the same class (Customize's place = {}).
+struct Spot { bool set = false; float x = 0, y = 0, z = 0, yaw = 0; };
 
 class Script;
 
@@ -220,9 +253,22 @@ public:
     void Teleport(Player* p, float x, float y, float z, float yaw);
     void Hint(Player* to, const std::string& title, const std::string& text, const std::string& image, bool pause, float seconds = 0);
     void Kick(Player* p, const std::string& reason);
+    // Bans (data/bans.json): an online player by its nickname and Steam account (address too when Steam did
+    // not confirm it); minutes 0: for ever.
+    void BanPlayer(Player* p, const std::string& reason, int minutes, const std::string& by);
+    void AddBan(Ban b);
+    int Unban(const std::string& what);            // SteamID, address or nickname
+    const std::vector<Ban>& Bans() const { return bans_.All(); }
+    // Anti-cheat: something the client reported is impossible. The mode hears it (cheat); enough strikes kick.
+    void Strike(Player& p, const char* kind, const std::string& detail);
+    // Items only the server hands out (docs/API.md "Античит"): key prefixes, compared without case.
+    void ProtectItems(std::vector<std::string> prefixes);
+    const std::vector<std::string>& ProtectedItems() const { return protect_; }
     // Hurts the player through its game's own damage (hit reaction, death); `attacker` becomes the killer.
     void Damage(Player* p, float amount, Player* attacker);
     void Freeze(Player* p, bool on);
+    // Health in percent of the maximum; 0 kills (playerDeath, the respawn cover, as any other death).
+    void SetHealth(Player* p, float percent);
     // Skins (docs/API.md "Skins"): the player's own look, kept by nick in data/skins.json, and a uniform
     // over it. WearEffective puts on the uniform, else the skin.
     void SetSkin(Player* p, const std::string& skin);
@@ -230,8 +276,7 @@ public:
     void WearEffective(Player* p);
     // The mode's skins made in the editor (modes/<mode>/skins.json): "skins" to start with, "uniforms".
     struct SkinChoice { std::string id, en, ru, look; };
-    // A point of the world (logic points: z on the ground).
-    struct Spot { bool set = false; float x = 0, y = 0, z = 0, yaw = 0; };
+    using Spot = srv::Spot;
     const Spot& Wardrobe() const { return wardrobe_; }
     const std::vector<SkinChoice>& SkinList(const std::string& kind) const;
     const SkinChoice* FindSkin(const std::string& kind, const std::string& id) const;
@@ -336,6 +381,37 @@ private:
     void OnDisconnect(_ENetPeer* peer, uint8_t reason);
     void OnPacket(_ENetPeer* peer, const uint8_t* data, size_t size);
     void OnHello(_ENetPeer* peer, net::Reader& r);
+    // A Hello waiting for Steam to confirm the player's account.
+    struct PendingJoin {
+        _ENetPeer* peer = nullptr; uint32_t connectId = 0;
+        std::string nick, lang, ip, ticket;
+        uint64_t claimed = 0;
+        int attempts = 0; double started = 0, retryAt = 0;  // retryAt 0: a check is running
+    };
+    std::map<uint64_t, PendingJoin> pending_;
+    uint64_t nextPending_ = 1;
+    SteamTicketCheck ticketCheck_;
+    void TickAuth();
+    void RejectPeer(_ENetPeer* peer, const std::string& nick, const std::string& why);
+    // Lets the player in (bans, nicknames, the mode's playerConnecting); steamId 0: not confirmed by Steam.
+    void Admit(_ENetPeer* peer, const std::string& nick, const std::string& lang, const std::string& ip, uint64_t claimed, uint64_t steamId);
+    bool RconChat(Player& p, const std::string& text);  // "/rcon ...": true when handled
+    struct HitStat { float max = 0; int count = 0; };
+    std::map<std::string, HitStat> hitStats_;      // weapon class -> largest damage of an accepted hit (console: hitstats)
+    Player* echo_ = nullptr;                       // also gets what Log prints (an admin's /rcon command)
+    BanList bans_;
+    NameBook names_;
+    // Protected items: ledger updates for the server's own orders, the check of each snapshot.
+    std::vector<std::string> protect_;
+    bool Protected(const std::string& lowerKey) const;
+    void Ledger(Player& p, net::ItemAction action, const std::string& key, int amount);
+    void SendItem(Player* p, net::ItemAction action, const std::string& key, int amount);
+    void CheckInventory(Player& p);
+    void PickedUp(Player& p, const GameEvent& e);  // a pickup the game reported: credit for a dropped weapon or a mode item
+    // Protected weapons that left a player's backpack (dropped, given away): whoever picks one up there may have it.
+    struct Loose { std::string key; float x, y, z; double until; };
+    std::vector<Loose> loose_;
+    std::map<uint16_t, std::set<uint16_t>> itemTakers_;  // mode items (spawnItem): players already credited
     void OnChat(Player& p, const std::string& text);
     void Send(Player* to, const net::Writer& w, bool reliable);  // to=null: every ready client
     void SendTo(_ENetPeer* peer, const net::Writer& w, bool reliable);

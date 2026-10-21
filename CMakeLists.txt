@@ -68,7 +68,7 @@ endif()
 
 # ---- dedicated server ----
 find_package(Threads REQUIRED)
-add_executable(dgmp-server src/server/main.cpp src/server/server.cpp src/server/script.cpp src/server/platform.cpp)
+add_executable(dgmp-server src/server/main.cpp src/server/server.cpp src/server/script.cpp src/server/platform.cpp src/server/security.cpp)
 target_link_libraries(dgmp-server PRIVATE lua enet Threads::Threads)
 if(NOT WIN32)  # on Windows build.bat owns dgmp-server.exe in the project folder
   set_target_properties(dgmp-server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -76,10 +76,11 @@ endif()
 if(MSVC)
   target_compile_options(dgmp-server PRIVATE /W4 /utf-8 /EHsc)
   target_compile_definitions(dgmp-server PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-  target_link_libraries(dgmp-server PRIVATE dbghelp)
+  target_link_libraries(dgmp-server PRIVATE dbghelp winhttp)
 else()
   target_compile_options(dgmp-server PRIVATE -Wall -Wextra)
   target_link_options(dgmp-server PRIVATE -rdynamic)  # function names in crash stacks
+  target_link_libraries(dgmp-server PRIVATE ${CMAKE_DL_LIBS})  # dlopen: libcurl for HTTPS (Steam Web API), loaded only when used
   if(DGMP_STATIC_RUNTIME)
     target_link_options(dgmp-server PRIVATE -static-libstdc++ -static-libgcc)
   endif()

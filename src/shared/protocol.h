@@ -9,7 +9,7 @@
 
 namespace net {
 
-constexpr uint16_t kProtocolVersion = 7;
+constexpr uint16_t kProtocolVersion = 8;
 constexpr uint16_t kDefaultPort = 7777;
 constexpr int kLanPortSpan = 10;        // LAN discovery probes kDefaultPort .. kDefaultPort+span-1
 constexpr int kChannels = 3;
@@ -18,6 +18,7 @@ constexpr float kPoseRelayRange = 25000.f;  // 250 m: bone poses only go to play
 constexpr int kMaxPlayersLimit = 64;
 constexpr size_t kNickMin = 3, kNickMax = 24;  // in UTF-8 code points
 constexpr size_t kChatMax = 256;
+constexpr size_t kTicketMax = 4096;    // Steam auth session ticket as hex (the tickets are ~240 bytes)
 
 // Raw query datagram: "DGMQ" + u32 token  ->  reply "DGMR" + u32 token + ServerInfo
 constexpr char kQueryMagic[4] = {'D', 'G', 'M', 'Q'};
@@ -25,7 +26,8 @@ constexpr char kReplyMagic[4] = {'D', 'G', 'M', 'R'};
 
 enum class Msg : uint8_t {
     // client -> server
-    Hello = 1,        // u16 protocol, str nick, str password
+    Hello = 1,        // u16 protocol, str nick, str password, str lang, u32 steamId low, u32 steamId high (0: no Steam),
+                      // str ticket: Steam auth session ticket (hex) the server checks with the Steam Web API
     State = 2,        // PlayerState (unreliable)
     Pose = 4,         // PoseFrame payload (unreliable, fragmented); relayed as Msg::PlayerPose
     Chat = 3,         // str text ("/cmd args" is a command)
@@ -83,6 +85,7 @@ enum class Msg : uint8_t {
     Icon = 102,       // u16 id, u8 op (1 add/update: f32 x,y,z, f32 size (pixels), f32 distance (units), i32 world (-1 every), u32 rgba, str image, str text, u8 throughWalls; 2 remove)
     WatchKeys = 94,   // u8 n, n x u8 virtualKey: keys whose presses the client reports (Msg::Key)
     Spectate = 89,    // u8 on, u8 count, count x u16 playerId: watch other players (count 0: anyone)
+    SetHealth = 105,  // f32 percent of the maximum (0: the player dies, as from any other cause)
     Freeze = 88,      // u8 on: the player cannot move (on a bike: no throttle, brake or getting off)
     Damage = 86,      // u16 attackerId, f32 damage, u8 HitZone: another player hurt you
     WorldEdits = 85,  // u16 part, u16 parts, str chunk: the mode's world.json (docs/world.md), split in chunks; "" = none

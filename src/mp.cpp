@@ -22,6 +22,7 @@
 #include "log.h"
 #include "../api/dgmp.h"
 #include "shared/netclient.h"
+#include "steam.h"
 #include <windows.h>
 #include <algorithm>
 #include <chrono>
@@ -321,6 +322,7 @@ std::vector<uint8_t> reportedGear;
 uint8_t collisions = 0;  // net::CollisionMask from the server
 
 bool localDead = false;  // the local player lies dead / waits for its respawn
+float wantedHealth = -1;  // the server set the health (percent; -1: nothing to do)
 bool spectatorHidden = false;  // spectating: the own body is hidden from everyone
 // A skin choice at a place of the mode: opens once the player has arrived there.
 struct PendingCreator { bool on = false; skins::Options options; FVector at{}; double since = 0; } pendingCreator;
@@ -1476,12 +1478,14 @@ void OnPose(uint16_t id, const uint8_t* data, size_t size) {
 void HookClient() {
     client.on.welcome = [](const std::string& name, const std::string& mode) {
         serverName = name; modeName = mode; phase = Phase::Joined; lostAfterJoin = false; everJoined = true; reportedLook.clear(); reportedGear.clear();
+        steam::CancelTicket();  // the server has checked it: nobody else can reuse it
         hud::SetBanner(L"", L"");
         hud::AddMessage(0xA9C4E4FF, std::wstring(lang::Pick(L"Подключено к ",L"Connected to ")) + W(name) + L" (" + W(mode) + L")");
         dg::Log("MP joined %s (mode %s) as id %u", name.c_str(), mode.c_str(), client.localId());
     };
     client.on.disconnected = [](const std::string& reason) {
         dg::Log("MP disconnected: %s", reason.c_str());
+        steam::CancelTicket();
         mpui::Reset();
         vehicles::Reset();
         carry::Reset();
@@ -1530,6 +1534,7 @@ void HookClient() {
     client.on.item = [](net::ItemAction action, const std::string& key, int amount) { inventory::Apply(action, key, amount); };
     client.on.bike = [](net::BikeAction action, float x, float y, float z, float yaw) { inventory::RequestBike(action, {x, y, z}, yaw); };
     client.on.freeze = [](bool on) { inventory::SetFrozen(on); };
+    client.on.setHealth = [](float percent) { wantedHealth = std::clamp(percent, 0.f, 100.f); dg::Log("MP: server sets health to %.0f%%", wantedHealth); };
     client.on.customize = [](bool cancel, const std::string& title, const std::string& families, const std::string& current,
                              const std::vector<std::pair<std::string, std::string>>& choices, const float* place) {
         skins::Options o; o.cancel = cancel; o.title = title; o.current = current.empty() ? reportedLook : current;
@@ -1655,9 +1660,17 @@ void HookClient() {
     };
 }
 
+// Who we are on Steam, for the server to check (admins and bans go by SteamID).
+void SetSteamIdentity() {
+    uint64_t id = 0; std::string ticket;
+    if (steam::Identity(id)) steam::NewTicket(ticket);
+    client.SetIdentity(id, ticket);
+}
+
 void StartConnect() {
     connectStarted = true; phase = Phase::Connecting; initialTeleportSeen = false;
     dg::Log("MP connecting to %s:%u as %s", host.c_str(), port, nick.c_str());
+    SetSteamIdentity();
     if (!client.Connect(host, port, nick, password)) { phase = Phase::Failed; if (failReason.empty()) failReason = lang::Pick(L"Не удалось начать подключение",L"Could not start connecting"); }
 }
 // ---------------------------------------------------------------- editor: quest preview
@@ -1976,6 +1989,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
     if (lostAfterJoin && gameplay && f9Pressed) {
         lostAfterJoin = false; phase = Phase::Connecting;
         hud::SetBanner(lang::Pick(L"Переподключение…",L"Reconnecting…"), W(host) + L":" + std::to_wstring(port));
+        SetSteamIdentity();
         client.Connect(host, port, nick, password);
     }
     if (client.status() != net::Client::Status::Connected || !inWorld) {
@@ -2018,6 +2032,8 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         policy::SetInterceptLethalHits(true);
         float& hp = Field<float>(pawn, kPawnHealth);
         const float maxHp = Field<float>(pawn, kPawnMaxHealth);
+        // The server's setHealth / heal / kill: 0 goes the same way as a lethal hit.
+        if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? std::max(2.f, maxHp * wantedHealth / 100.f) : 0.f; wantedHealth = -1; }
         const bool lethal = policy::TakeLethalHit();
         if (!deathPhase && (hp <= 1.5f || lethal)) {
             deathPhase = 1; deathAt = now;

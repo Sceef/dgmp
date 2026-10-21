@@ -4,6 +4,8 @@
 //               [--max 16] [--password secret] [--bind 0.0.0.0]
 #include "server.h"
 #include "platform.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -147,6 +149,18 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
         if (!item.empty()) cfg.admins.push_back(item);
         list = comma == std::string::npos ? "" : list.substr(comma + 1);
     }
+    std::string auth = Ini(ini, "SteamAuth", "optional");
+    for (auto& ch : auth) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    cfg.steamAuth = auth == "off" ? srv::Config::SteamAuth::Off : auth == "required" ? srv::Config::SteamAuth::Required : srv::Config::SteamAuth::Optional;
+    cfg.steamApiKey = Ini(ini, "SteamApiKey", "");
+    if (auto app = Ini(ini, "SteamAppId", ""); !app.empty()) cfg.steamAppId = static_cast<uint32_t>(std::strtoul(app.c_str(), nullptr, 10));
+    cfg.reserveNicks = Ini(ini, "ReserveNicks", "1") != "0";
+    cfg.localAdmin = Ini(ini, "LocalAdmin", "1") != "0";
+    cfg.rconPassword = Ini(ini, "RconPassword", "");
+    cfg.maxHitDamage = static_cast<float>(std::atof(Ini(ini, "MaxHitDamage", "500").c_str()));
+    cfg.meleeRange = static_cast<float>(std::atof(Ini(ini, "MeleeRange", "6").c_str())) * 100.f;
+    cfg.maxHitsPerSecond = std::max(1, std::atoi(Ini(ini, "MaxHitsPerSecond", "30").c_str()));
+    cfg.cheatKick = std::atoi(Ini(ini, "CheatKick", "10").c_str());
     if (auto x = Ini(ini, "SpawnX", ""); !x.empty()) {
         cfg.spawnX = static_cast<float>(std::atof(x.c_str()));
         cfg.spawnY = static_cast<float>(std::atof(Ini(ini, "SpawnY", "0").c_str()));
@@ -186,6 +200,12 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
     g_server = nullptr;
     return 0;
 }
+// The console thread sits in fgets on stdin; a normal exit flushes every stream and waits for stdin's
+// lock forever (a server fed through a pipe never quit). The server is already shut down here.
+int Exit(int code) {
+    std::fflush(stdout); std::fflush(stderr);
+    std::_Exit(code);
+}
 }  // namespace
 
 #ifdef _WIN32
@@ -193,8 +213,8 @@ int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     std::vector<std::string> args;
     for (int i = 0; i < argc; ++i) args.push_back(srv::Utf8(argv[i]));
-    return Run(args, srv::ExecutableDir());
+    return Exit(Run(args, srv::ExecutableDir()));
 }
 #else
-int main(int argc, char** argv) { return Run(std::vector<std::string>(argv, argv + argc), srv::ExecutableDir()); }
+int main(int argc, char** argv) { return Exit(Run(std::vector<std::string>(argv, argv + argc), srv::ExecutableDir())); }
 #endif

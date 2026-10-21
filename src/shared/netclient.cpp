@@ -3,6 +3,7 @@
 #include <enet/enet.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <random>
 
 namespace net {
@@ -161,6 +162,7 @@ void Client::Service(double now) {
             Writer w; w.Op(Msg::Hello); w.U16(kProtocolVersion); w.Str(nick_); w.Str(password_);
             char lang[16] = "en"; DWORD n = GetEnvironmentVariableA("DGMP_LANG", lang, sizeof(lang)); if (!n || n >= sizeof(lang)) strcpy_s(lang, "en");
             w.Str(lang);
+            w.U32(uint32_t(steamId_)); w.U32(uint32_t(steamId_ >> 32)); w.Str(ticket_.size() <= kTicketMax ? ticket_ : std::string());
             enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
             break;
         }
@@ -359,6 +361,7 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         break;
     }
     case Msg::Freeze: { const bool frozen = r.U8() != 0; if (r.ok() && on.freeze) on.freeze(frozen); break; }
+    case Msg::SetHealth: { const float percent = r.F32(); if (r.ok() && std::isfinite(percent) && on.setHealth) on.setHealth(percent); break; }
     case Msg::Damage: { const auto from = r.U16(); const float amount = r.F32(); const auto zone = r.U8(); if (r.ok() && on.damage) on.damage(from, amount, HitZone(zone)); break; }
     case Msg::WorldItem: {
         const auto id = r.U16(); const auto op = r.U8();

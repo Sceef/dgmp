@@ -10,6 +10,7 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -158,6 +159,9 @@ struct Api {
         if (std::strcmp(key, "skin") == 0) { if (p && !p->skin.empty()) lua_pushstring(L, p->skin.c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "uniform") == 0) { if (p && !p->uniform.empty()) lua_pushstring(L, p->uniform.c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "admin") == 0) { lua_pushboolean(L, p && p->admin); return 1; }
+        if (std::strcmp(key, "steamId") == 0) { if (p && p->steamId) lua_pushstring(L, std::to_string(p->steamId).c_str()); else lua_pushnil(L); return 1; }
+        if (std::strcmp(key, "verified") == 0) { lua_pushboolean(L, p && p->steamId); return 1; }
+        if (std::strcmp(key, "ip") == 0) { lua_pushstring(L, p ? p->ip.c_str() : ""); return 1; }
         if (std::strcmp(key, "pvp") == 0) { if (p && p->pvp >= 0) lua_pushboolean(L, p->pvp); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "zone") == 0) {  // the zone deciding its PvP (a PvE one first), or nil
             const Zone* z = p ? Srv(L).RuleZone(*p) : nullptr;
@@ -215,7 +219,70 @@ struct Api {
         Srv(L).Damage(&p, float(luaL_checknumber(L, 2)), attacker);
         return 0;
     }
+    // setHealth(percent): 0..100 of the maximum; 0 kills. heal(): full health. kill(): dies (playerDeath).
+    static int PSetHealth(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, float(luaL_checknumber(L, 2))); return 0; }
+    static int PHeal(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, float(luaL_optnumber(L, 2, 100))); return 0; }
+    static int PKill(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, 0); return 0; }
     static int PKick(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).Kick(&p, luaL_optstring(L, 2, "Kicked")); return 0; }
+    // player:ban([reason [, minutes]]): by its Steam account and address; minutes nil or 0: for ever.
+    static int PBan(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        Srv(L).BanPlayer(&p, luaL_optstring(L, 2, ""), int(luaL_optinteger(L, 3, 0)), "mode " + Self(L).mode());
+        return 0;
+    }
+    // ban(target [, minutes [, reason]]): a player, SteamID, address or nickname (an online player
+    // with that account, address or name is kicked).
+    static int BanGlobal(lua_State* L) {
+        const int minutes = int(luaL_optinteger(L, 2, 0));
+        const std::string reason = luaL_optstring(L, 3, "");
+        auto& s = Srv(L);
+        const std::string by = "mode " + Self(L).mode();
+        if (luaL_testudata(L, 1, kPlayerMeta)) { s.BanPlayer(&CheckPlayer(L, 1), reason, minutes, by); return 0; }
+        const std::string who = luaL_checkstring(L, 1);
+        uint64_t sid = 0;
+        const bool isId = ParseSteamId(who, sid), isIp = !isId && LooksLikeIp(who);
+        for (auto p : s.Players())
+            if ((isId && (p->steamId == sid || p->claimedSteamId == sid)) || (isIp && p->ip == who) || (!isId && !isIp && StrICmp(p->nick.c_str(), who.c_str()) == 0)) {
+                s.BanPlayer(p, reason, minutes, by); return 0;
+            }
+        Ban b; b.reason = reason; b.by = by;
+        b.until = minutes > 0 ? int64_t(std::time(nullptr)) + int64_t(minutes) * 60 : 0;
+        if (isId) b.steamId = who; else if (isIp) b.ip = who; else b.nick = who;
+        s.AddBan(b);
+        return 0;
+    }
+    static int Unban(lua_State* L) { lua_pushinteger(L, Srv(L).Unban(luaL_checkstring(L, 1))); return 1; }
+    static int Bans(lua_State* L) {
+        const auto& list = Srv(L).Bans();
+        lua_createtable(L, int(list.size()), 0);
+        for (size_t i = 0; i < list.size(); ++i) {
+            const Ban& b = list[i];
+            lua_createtable(L, 0, 7);
+            if (!b.steamId.empty()) { lua_pushstring(L, b.steamId.c_str()); lua_setfield(L, -2, "steamId"); }
+            if (!b.ip.empty()) { lua_pushstring(L, b.ip.c_str()); lua_setfield(L, -2, "ip"); }
+            if (!b.nick.empty()) { lua_pushstring(L, b.nick.c_str()); lua_setfield(L, -2, "name"); }
+            lua_pushstring(L, b.reason.c_str()); lua_setfield(L, -2, "reason");
+            lua_pushstring(L, b.by.c_str()); lua_setfield(L, -2, "by");
+            lua_pushinteger(L, lua_Integer(b.at)); lua_setfield(L, -2, "at");
+            lua_pushinteger(L, lua_Integer(b.until)); lua_setfield(L, -2, "expires");
+            lua_rawseti(L, -2, lua_Integer(i + 1));
+        }
+        return 1;
+    }
+    // protectItems({"kWeaponID_", "kAmmoID_9mm"}): key prefixes only the server hands out; nil or {}: none.
+    static int ProtectItems(lua_State* L) {
+        std::vector<std::string> list;
+        if (lua_istable(L, 1)) for (lua_Integer i = 1; lua_rawgeti(L, 1, i) == LUA_TSTRING; ++i) { list.push_back(lua_tostring(L, -1)); lua_pop(L, 1); }
+        else if (lua_isstring(L, 1)) list.push_back(lua_tostring(L, 1));
+        Srv(L).ProtectItems(list);
+        return 0;
+    }
+    static int ProtectedItems(lua_State* L) {
+        const auto& list = Srv(L).ProtectedItems();
+        lua_createtable(L, int(list.size()), 0);
+        for (size_t i = 0; i < list.size(); ++i) { lua_pushstring(L, list[i].c_str()); lua_rawseti(L, -2, lua_Integer(i + 1)); }
+        return 1;
+    }
     static int PHint(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
         Srv(L).Hint(&p, luaL_checkstring(L, 2), luaL_checkstring(L, 3), luaL_optstring(L, 4, ""), lua_toboolean(L, 5)); return 0;
@@ -1243,6 +1310,7 @@ bool Script::ChangedOnDisk() const {
 bool Script::Load(const std::string& modeId) {
     Unload();
     mode_ = modeId; title_ = modeId; watchQuests_ = false;
+    server_.ProtectItems({});  // each mode says what it protects
     const bool safeId = !modeId.empty() && std::all_of(modeId.begin(), modeId.end(), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '-'; });
     dir_ = server_.root() / "modes" / modeId;
     if (!safeId || !std::filesystem::exists(dir_ / "main.lua")) {
@@ -1289,7 +1357,7 @@ bool Script::Load(const std::string& modeId) {
     lua_pushcfunction(L_, &Api::PEq); lua_setfield(L_, -2, "__eq");
     lua_pushcfunction(L_, &Api::PToString); lua_setfield(L_, -2, "__tostring");
     const luaL_Reg methods[] = {{"message", &Api::PMessage}, {"position", &Api::PPosition}, {"velocity", &Api::PVelocity}, {"setPosition", &Api::PSetPosition},
-                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
+                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
                                 {"giveItem", &Api::PGiveItem}, {"takeItem", &Api::PTakeItem}, {"giveWeapon", &Api::PGiveWeapon}, {"setAmmo", &Api::PSetAmmo},
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
                                 {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
@@ -1305,7 +1373,8 @@ bool Script::Load(const std::string& modeId) {
                                 {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
-                                {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries}, {nullptr, nullptr}};
+                                {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
+                                {"ban", &Api::BanGlobal}, {"unban", &Api::Unban}, {"bans", &Api::Bans}, {"protectItems", &Api::ProtectItems}, {"protectedItems", &Api::ProtectedItems}, {nullptr, nullptr}};
     lua_pushglobaltable(L_); luaL_setfuncs(L_, globals, 0); lua_pop(L_, 1);
     const luaL_Reg storage[] = {{"get", &Api::StorageGet}, {"set", &Api::StorageSet}, {"keys", &Api::StorageKeys}, {"save", &Api::StorageSave}, {nullptr, nullptr}};
     luaL_newlib(L_, storage); lua_setglobal(L_, "storage");
@@ -1619,7 +1688,8 @@ void Script::Unload() {
 
 // Calls every handler of `event` with the nargs values on top of the stack (they are consumed).
 // cancelResult: set to 1 if any handler returned exactly false, 2 if any returned true.
-void Script::Fire(const char* event, int nargs, int* cancelResult) {
+// textResult: the first text a handler returned (a string also counts as false for cancelResult).
+void Script::Fire(const char* event, int nargs, int* cancelResult, std::string* textResult) {
     if (!L_) return;
     const int base = lua_gettop(L_) - nargs;
     lua_getfield(L_, LUA_REGISTRYINDEX, "dgmp.events");
@@ -1633,12 +1703,51 @@ void Script::Fire(const char* event, int nargs, int* cancelResult) {
                 server_.Log("[%s] error in %s handler: %s", mode_.c_str(), event, lua_tostring(L_, -1));
             } else if (cancelResult && lua_isboolean(L_, -1)) {
                 *cancelResult |= lua_toboolean(L_, -1) ? 2 : 1;
+            } else if (textResult && lua_type(L_, -1) == LUA_TSTRING) {
+                if (textResult->empty()) *textResult = lua_tostring(L_, -1);
+                if (cancelResult) *cancelResult |= 1;
             }
             g_deadline = 0;
             lua_pop(L_, 1);
         }
     }
     lua_settop(L_, base);
+}
+
+bool Script::PlayerConnecting(const std::string& nick, uint64_t steamId, const std::string& ip, std::string& reason) {
+    if (!L_) return true;
+    lua_createtable(L_, 0, 4);
+    lua_pushstring(L_, nick.c_str()); lua_setfield(L_, -2, "name");
+    if (steamId) { lua_pushstring(L_, std::to_string(steamId).c_str()); lua_setfield(L_, -2, "steamId"); }
+    lua_pushboolean(L_, steamId != 0); lua_setfield(L_, -2, "verified");
+    lua_pushstring(L_, ip.c_str()); lua_setfield(L_, -2, "ip");
+    int result = 0;
+    Fire("playerConnecting", 1, &result, &reason);
+    return !(result & 1);
+}
+
+bool Script::Cheat(Player& p, const char* kind, const std::string& detail, int strikes) {
+    if (!L_) return false;
+    Api::PushPlayer(L_, p); lua_pushstring(L_, kind);
+    lua_createtable(L_, 0, 2);
+    lua_pushstring(L_, detail.c_str()); lua_setfield(L_, -2, "detail");
+    lua_pushinteger(L_, strikes); lua_setfield(L_, -2, "strikes");
+    int result = 0;
+    Fire("cheat", 3, &result);
+    return (result & 2) != 0;
+}
+
+bool Script::InventoryViolation(Player& p, const std::string& key, int have, int allowed, bool pickedUp) {
+    if (!L_) return false;
+    Api::PushPlayer(L_, p);
+    lua_createtable(L_, 0, 4);
+    lua_pushstring(L_, key.c_str()); lua_setfield(L_, -2, "item");
+    lua_pushinteger(L_, have); lua_setfield(L_, -2, "have");
+    lua_pushinteger(L_, allowed); lua_setfield(L_, -2, "allowed");
+    lua_pushboolean(L_, pickedUp); lua_setfield(L_, -2, "pickedUp");
+    int result = 0;
+    Fire("inventoryViolation", 2, &result);
+    return (result & 2) != 0;
 }
 
 void Script::PlayerJoin(Player& p) {

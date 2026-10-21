@@ -163,6 +163,17 @@ admin.look = function(target, name)
     return ok and ("look " .. name) or tostring(err)
 end
 admin.bike = function(target) target:giveBike(); return "bike given" end
+-- kick <player> [reason], ban <player> [minutes] [reason] (no minutes or 0: for ever), whois <player>
+admin.kick = function(target, ...) target:kick(table.concat({ ... }, " ")); return "kicked" end
+admin.ban = function(target, minutes, ...)
+    local words = { ... }
+    if minutes and not tonumber(minutes) then table.insert(words, 1, minutes); minutes = nil end
+    target:ban(table.concat(words, " "), tonumber(minutes) or 0)
+    return "banned" .. (tonumber(minutes) and tonumber(minutes) > 0 and (" for " .. minutes .. " min") or "")
+end
+admin.whois = function(target)
+    return "id " .. target.id .. ", Steam " .. (target.steamId or "not confirmed") .. ", IP " .. target.ip .. (target.admin and ", admin" or "")
+end
 admin.nobike = function(target) target:takeBike(); return "bike taken" end
 admin.inv = function(target)
     local list = {}
@@ -172,7 +183,8 @@ admin.inv = function(target)
 end
 
 adminUsage = "give|take <player> <item> [n], weapon|replace <player> <weapon> [ammo], ammo <player> <item> <n>, " ..
-                   "disarm <player> [all|knife|rock], clear <player>, bike|nobike <player>, inv <player>, nametags visible|walls|hidden, collisions on|off|players|bikes, hint <title> | <text>, look <player> <name>, looks [filter]"
+                   "disarm <player> [all|knife|rock], clear <player>, bike|nobike <player>, inv <player>, kick <player> [reason], ban <player> [minutes] [reason], " ..
+                   "unban <name|steamid|ip>, bans, whois <player>, nametags visible|walls|hidden, collisions on|off|players|bikes, hint <title> | <text>, look <player> <name>, looks [filter]"
 
 local function runAdmin(words)
     local action = words[1]
@@ -182,6 +194,12 @@ local function runAdmin(words)
         local m = words[2] or "on"
         if m == "players" or m == "bikes" then setCollisions({ players = m == "players", bikes = m == "bikes" }) else setCollisions(m == "on") end
         return "collisions: " .. m
+    end
+    if action == "unban" then return unban(words[2] or "") .. " ban(s) lifted for " .. tostring(words[2]) end
+    if action == "bans" then
+        local list = {}
+        for _, b in ipairs(bans()) do list[#list + 1] = (b.name or b.steamId or b.ip) .. (b.expires > 0 and (" until " .. os.date("%d.%m %H:%M", b.expires)) or "") end
+        return #list .. " bans: " .. table.concat(list, ", ")
     end
     if action == "looks" then
         local list = looks(words[2] or "")
@@ -204,15 +222,19 @@ local function runAdmin(words)
     if not fn then return nil end
     local target = findPlayer(words[2])
     if not target then return "no such player: " .. tostring(words[2]) end
-    return target.name .. ": " .. fn(target, table.unpack(words, 3))
+    local name = target.name  -- (kick and ban remove the player)
+    return name .. ": " .. fn(target, table.unpack(words, 3))
 end
 
-for name in pairs(admin) do
+local chatTools = { unban = true, bans = true }
+for name in pairs(admin) do chatTools[name] = true end
+for name in pairs(chatTools) do
     command(name, function(player, args)
         if not player.admin then return player:message("Admins only.", YELLOW) end
         local words = { name }
         for w in args:gmatch("%S+") do words[#words + 1] = w end
-        player:message(runAdmin(words) or adminUsage, YELLOW)
+        local answer = runAdmin(words) or adminUsage
+        if player.valid then player:message(answer, YELLOW) end  -- (it may have kicked itself)
     end)
 end
 command("nametags", function(player, args, mode)
