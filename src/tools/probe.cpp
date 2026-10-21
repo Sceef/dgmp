@@ -7,7 +7,7 @@
 //       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
 //       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll),
 //       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
-//       !pickup <key> [x y z] [object id] (the game says we picked it up). Item orders change a simulated backpack.
+//       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 #include "../shared/netclient.h"
 #include <windows.h>
@@ -187,6 +187,7 @@ int main() {
                         unsigned zone = 0; float dmg = 0; char weapon[128] = "";
                         if (std::sscanf(s.c_str(), "!hit %u %f %u %127s", &id, &dmg, &zone, weapon) >= 2) c.SendHit(uint16_t(id), dmg, net::HitZone(zone), weapon);
                     }
+                    else if (s.rfind("!shot ", 0) == 0) c.SendShot(s.substr(6), px, py, pz);
                     else if (s == "!dead") { dead = true; nextState = 0; }
                     else if (s == "!alive") { dead = false; nextState = 0; }
                     else if (s.rfind("!inv", 0) == 0) {

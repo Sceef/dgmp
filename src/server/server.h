@@ -251,6 +251,8 @@ struct Player {
     std::map<std::string, double> pickedUpAt;      // the game said it picked up this key (lower-case) then
     double inventoryRecheckAt = 0;                 // judge the last snapshot again then (it had keys still in grace)
     std::string anim;                              // the animation the mode plays on it (asset path; "": none)
+    double shotWindow = 0; int shotCount = 0;      // shots relayed this second (flood guard)
+    double lastShotEvent = 0;                      // the mode heard playerShot then
 };
 
 // A point of the world (logic points: z on the ground). Outside Server: g++ cannot use a nested class
@@ -303,6 +305,10 @@ public:
     void Freeze(Player* p, bool on);
     // An animation on the player (docs/API.md "Анимации игрока"); path "": stop. Flags: net::AnimFlags.
     void PlayAnim(Player* p, const std::string& path, uint8_t flags, float rate);
+    // A sound of the game (docs/API.md "Звуки"): to one player or everyone; at a point (3D, heard within
+    // `range` units, in `world` (-1 every)) or without one (2D).
+    void PlaySound(Player* to, const std::string& path, const float* at, float volume, float pitch, float range, int32_t world);
+    std::string ResolveSound(const std::string& nameOrPath) const;  // data/sounds.txt name or /Game/ path; "" if unknown
     // Health in percent of the maximum; 0 kills (playerDeath, the respawn cover, as any other death).
     void SetHealth(Player* p, float percent);
     // Skins (docs/API.md "Skins"): the player's own look, kept by nick in data/skins.json, and a uniform
@@ -493,6 +499,8 @@ private:
     void SendObject(_ENetPeer* peer, const Object& o);   // peer null: everyone
     void TickObjects();                                 // finished moves: objectMoved
     std::map<std::string, std::string> props_;          // lower-case mesh name -> asset path (data/props.txt)
+    std::map<std::string, std::string> sounds_;         // lower-case sound name -> asset path (data/sounds.txt)
+    void LoadSounds();
     void LoadProps();
     std::map<uint16_t, Actor> actors_;
     std::map<uint16_t, Vehicle> vehicles_;

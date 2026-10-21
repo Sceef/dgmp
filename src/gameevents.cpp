@@ -4,6 +4,7 @@
 #include "inventory.h"
 #include "hud.h"
 #include "carry.h"
+#include "sounds.h"
 #include <windows.h>
 #include "log.h"
 #include <cmath>
@@ -101,6 +102,7 @@ void Observe(UObject* object, const std::string& name) {
     if (!IsValid(object)) return;
     const std::string cls = GetName(object->Class);
     carry::OnPawnEvent(object, name);
+    sounds::OnPawnEvent(object, name);
     if (carry::IsBoxActor(object)) return;  // the server's boxes report themselves (carryPick / carryDrop)
     if (name == "OnPickupAccepted") {
         auto key = ItemKey(object);

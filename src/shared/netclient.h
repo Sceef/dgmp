@@ -65,6 +65,8 @@ public:
         std::function<void(bool on)> freeze;
         std::function<void(float percent)> setHealth;  // 0: die
         std::function<void(const std::string& path, uint8_t flags, float rate)> playAnim;  // path "": stop
+        std::function<void(const std::string& path, const float* at, float volume, float pitch)> sound;  // at null: 2D
+        std::function<void(uint16_t id, const std::string& weaponClass, float x, float y, float z)> playerShot;
         // choices: (name, look) to pick from; empty: the full character creator
         // place: x, y, z, yaw where the server put the player to choose (null: where it is)
         std::function<void(bool cancel, const std::string& title, const std::string& families, const std::string& current,
@@ -120,6 +122,7 @@ public:
     void SendUse(uint16_t interaction);
     void SendKey(uint8_t virtualKey);
     void SendAnimEnd(uint8_t reason);
+    void SendShot(const std::string& weaponClass, float x, float y, float z);
     void SendImageRequest(const std::string& name);
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
     void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);

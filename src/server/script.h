@@ -60,7 +60,8 @@ public:
     bool CarryDrop(Player& p, uint16_t carry, float x, float y, float z, const char* reason);
     void VehicleArrive(uint16_t vehicle);  // its NPC got to the end of the way (driveVehicle onArrive, vehicleArrive)
     void ObjectMoved(uint16_t object);     // moveObject got there: its onArrive and the objectMoved event
-    void AnimEnd(Player& p, const char* reason);  // the animation of playAnim is over: "done", "moved"
+    void AnimEnd(Player& p, const char* reason);
+    void PlayerShot(Player& p, const std::string& weaponClass, float x, float y, float z);  // playerShot (at most twice a second per player)  // the animation of playAnim is over: "done", "moved"
     void SaveStorage();  // flushes the mode's persistent storage (also done every few seconds)
     bool ChangedOnDisk() const;
 

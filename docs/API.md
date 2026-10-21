@@ -85,6 +85,7 @@ end)
 | `cheat` | `player, kind, info` | античит поймал невозможное (см. «Античит»). `info`: `detail`, `strikes` — сколько за минуту. `return true` — режим разбирается сам, сервер не кикает |
 | `inventoryViolation` | `player, v` | у игрока больше защищённого предмета, чем выдал сервер (см. «Античит»). `v`: `item`, `have`, `allowed`, `pickedUp` (игра только что сообщила о подборе такого предмета). `return true` — оставить, иначе лишнее забирается |
 | `carryPick` | `player, carryId` | игрок зажал F у ящика и хочет его поднять. `return false` — не давать (см. «Переноска») |
+| `playerShot` | `player, shot` | игрок выстрелил (не чаще двух раз в секунду на игрока): `shot.weapon` — класс оружия, `x, y, z`. Например, тревога в городе или розыск |
 | `objectMoved` | `id` | объект доехал до цели `moveObject` (см. «Объекты») |
 | `animEnd` | `player, reason` | анимация `playAnim` кончилась: `"done"` — доиграла (или игрок погиб), `"moved"` — игрок пошёл (`stopOnMove`) |
 | `carryDrop` | `player, carryId, info` | ящик покинул руки игрока. `info`: `x, y, z`, `reason`: `"put"` — игрок сам кладёт его сюда (`return false` — не класть, ящик остаётся в руках); `"lost"` — игра выбила его из рук (удар, мотоцикл, паркур), `"roll"` — выпал при перекате, `"death"`, `"quit"` — сообщается уже после, ящик лежит там; `"break"` — разбился при перекате: после обработчика ящик удаляется (если обработчик не переставил его через `setCarry`) |
@@ -192,6 +193,7 @@ end)
 | `objective(opts)` | панель задания игры у этого игрока (см. «Задания») |
 | `objectiveMeter(title, percent)` | шкала под заданием, `percent` 0..1; без аргументов — скрыть |
 | `playAnim(name [, opts])` / `stopAnim()` | анимация на игроке (см. «Анимации игрока») |
+| `playSound(name [, opts])` | звук только этому игроку (см. «Звуки») |
 | `setLook(name)` | надеть облик: имя из [`docs/looks.md`](looks.md) или путь `/Game/...`. Все игроки видят его сразу, вошедшие позже — тоже |
 | `giveMoney(amount)` → сумма / `setMoney(amount)` | деньги игрока (см. «Деньги») |
 | `giveCarry(id)` / `dropCarry([x, y, z, yaw])` | ящик в руки / из рук (см. «Переноска») |
@@ -657,6 +659,29 @@ removeBlip(shop)
 ```
 
 Иконки игры: `MAP_objective_encampment_merchant` (торговец), `MAP_objective_encampment_mechanic` (механик), `MAP_objective_encampment_food` (еда), `MAP_objective_encampment_locker` (шкафчик), `MAP_objective_encampment_bounty`, `MAP_fuel`, `MAP_player_safehouse` (убежище), `MAP_objective_encampment` (лагерь), `MAP_encampment_job`, `MAP_objective_NERO_checkpoint`, `MAP_objective_ambush`, `MAP_nest`, `MAP_collectable`, `MAP_plant`, `MAP_alert`, `MAP_enemy`, `MAP_bike`, `MAP_player_marker` (по умолчанию) и др. Радар показывает значки в радиусе примерно 25 м вокруг игрока; дальние — только с `edge = true`, на краю. Значки режима убираются при его перезагрузке.
+
+## Звуки
+
+Звуки игры, как `PlayerPlaySound` / `PlayAudioStreamForPlayer` в SA-MP: сигнал, выстрел, сирена, звук двери, интерфейс.
+
+```lua
+playSound("cc_wpn_m9_npc", { x = x, y = y, z = z })            -- в точке мира (3D): слышат все в радиусе
+playSound("ui_tutorial_x_press")                                 -- всем, без точки (2D)
+player:playSound("ui_mech_scroll")                               -- только этому игроку
+playSound("cc_amb_infestation", { x = x, y = y, z = z, range = 300, volume = 0.6, pitch = 1, world = 0 })
+```
+
+| Поле | |
+|---|---|
+| `x`, `y`, `z` | точка звука; без них — 2D, без положения |
+| `range` | кому отправить 3D-звук: игрокам ближе этого числа метров (по умолчанию 100). Сама громкость затухает по настройкам звука игры |
+| `volume`, `pitch` | громкость и высота (1 — как в игре) |
+| `world` | только игрокам этого виртуального мира |
+| `player` | только этому игроку |
+
+Имена — из `data/sounds.txt` (около 3000 звуков: оружие, взрывы, транспорт, двери, интерфейс, окружение, музыка; `cc_*` — звуки с вариантами, хорошо звучат в 3D) или полный путь `/Game/Audio/...`. Реплики персонажей в каталог не входят.
+
+**Выстрелы других игроков** слышны сами: клиент стрелявшего сообщает о выстреле, сервер передаёт его игрокам в радиусе 300 м (того же мира), и у них звучит звук этого оружия из игры в точке стрелка. Режим узнаёт о выстрелах из события `playerShot`.
 
 ## PvP и зоны
 

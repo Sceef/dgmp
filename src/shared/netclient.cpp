@@ -431,6 +431,16 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         break;
     }
     case Msg::Freeze: { const bool frozen = r.U8() != 0; if (r.ok() && on.freeze) on.freeze(frozen); break; }
+    case Msg::Sound: {
+        const auto path = r.Str(512); const bool threeD = r.U8() != 0; const float at[3] = {r.F32(), r.F32(), r.F32()}; const float volume = r.F32(), pitch = r.F32();
+        if (r.ok() && on.sound) on.sound(path, threeD ? at : nullptr, volume, pitch);
+        break;
+    }
+    case Msg::PlayerShot: {
+        const uint16_t id = r.U16(); const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
+        if (r.ok() && on.playerShot) on.playerShot(id, cls, x, y, z);
+        break;
+    }
     case Msg::PlayAnim: { const auto path = r.Str(512); const uint8_t flags = r.U8(); const float rate = r.F32(); if (r.ok() && on.playAnim) on.playAnim(path, flags, rate); break; }
     case Msg::SetHealth: { const float percent = r.F32(); if (r.ok() && std::isfinite(percent) && on.setHealth) on.setHealth(percent); break; }
     case Msg::Damage: { const auto from = r.U16(); const float amount = r.F32(); const auto zone = r.U8(); if (r.ok() && on.damage) on.damage(from, amount, HitZone(zone)); break; }
@@ -526,6 +536,11 @@ void Client::SendImageRequest(const std::string& name) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::ImageRequest); w.Str(name.substr(0, 128));
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendShot(const std::string& weaponClass, float x, float y, float z) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::Shot); w.Str(weaponClass.substr(0, 128)); w.F32(x); w.F32(y); w.F32(z);
+    enet_peer_send(peer_, kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
 }
 void Client::SendAnimEnd(uint8_t reason) {
     if (status_ != Status::Connected) return;

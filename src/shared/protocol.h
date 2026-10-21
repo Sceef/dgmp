@@ -49,6 +49,7 @@ enum class Msg : uint8_t {
     VehicleExit = 15,  // u16 vehicleId, VehicleState: the player got off it, here (a passenger: the state is ignored)
     VehicleState = 16, // u16 vehicleId, VehicleState: where the vehicle it drives is now (about every second)
     ImageRequest = 17, // str name: send me this image of the mode (ImageList: not in my cache)
+    Shot = 20,        // str weapon class, f32 x,y,z: this player fired (relayed to the players nearby as PlayerShot)
     AnimEnd = 19,     // u8 reason (0 it ended, 1 the player moved): the animation the mode played (PlayAnim) is over
     CarryAction = 18,  // u16 carryId, u8 CarryOp, f32 x,y,z,yaw: pick it up / put it down there / the game dropped it there
     CustomizeDone = 10, // u8 ok, str skin: the player closed the character creator (or picked one of the offered looks)
@@ -96,6 +97,8 @@ enum class Msg : uint8_t {
     WatchKeys = 94,   // u8 n, n x u8 virtualKey: keys whose presses the client reports (Msg::Key)
     Spectate = 89,    // u8 on, u8 count, count x u16 playerId: watch other players (count 0: anyone)
     SetHealth = 105,  // f32 percent of the maximum (0: the player dies, as from any other cause)
+    Sound = 109,      // str asset path, u8 3D (1: at x,y,z), f32 x,y,z, f32 volume, f32 pitch: play it (the mode's playSound)
+    PlayerShot = 110, // u16 id, str weapon class, f32 x,y,z: that player fired there (its weapon's sound)
     Blip = 108,       // u16 id, u8 op (1 add/update: f32 x,y,z, str icon (MAP_* name or path), u32 rgba, f32 scale, u8 BlipFlags, i32 world (-1 every); 2 remove)
     PlayAnim = 107,   // str animation path ("": stop), u8 AnimFlags, f32 rate: play it on the player (FullBody slot)
     Object = 106,     // u16 id, u8 op: 1 add/update (str asset, f32 x,y,z, f32 pitch,yaw,roll, f32 scale, i32 world (-1 every), u8 collision);

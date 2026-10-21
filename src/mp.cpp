@@ -10,6 +10,7 @@
 #include "objects.h"
 #include "playeranim.h"
 #include "blips.h"
+#include "sounds.h"
 #include "images.h"
 #include "overlay.h"
 #include "imgui.h"
@@ -1495,6 +1496,7 @@ void HookClient() {
         objects::Reset();
         playeranim::Reset();
         blips::Reset();
+        sounds::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1560,6 +1562,11 @@ void HookClient() {
     client.on.watchKeys = [](const std::vector<uint8_t>& keys) { mpui::OnWatchKeys(keys); };
     client.on.carry = [](uint16_t id, const net::Client::Events::CarryInfo* info) { carry::OnCarry(id, info); };
     client.on.object = [](uint16_t id, const net::Client::Events::ObjectInfo* info) { objects::OnObject(id, info); };
+    client.on.sound = [](const std::string& path, const float* at, float volume, float pitch) {
+        FVector v{}; if (at) v = FVector{at[0], at[1], at[2]};
+        sounds::Play(path, at ? &v : nullptr, volume, pitch);
+    };
+    client.on.playerShot = [](uint16_t id, const std::string& cls, float x, float y, float z) { sounds::OnPlayerShot(id, cls, FVector{x, y, z}); };
     client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
     client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) { playeranim::OnPlay(path, flags, rate); };
     client.on.objectMove = [](uint16_t id, const float to[6], float seconds, float elapsed) { objects::OnMove(id, to, seconds, elapsed); };
@@ -2084,6 +2091,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen());
         objects::Update(now, pawn);
         blips::Update(pawn);
+        sounds::Update(pawn, client);
         playeranim::Update(pawn, controller, client, canAct && !mpui::DialogOpen(), localDead || Respawning());
         UpdateHeliView(pawn);  // after the helicopter moved this frame (else the view lags a frame and shakes)
         // The UI took or gave back the keyboard: nothing the game saw pressed stays held (a W let go

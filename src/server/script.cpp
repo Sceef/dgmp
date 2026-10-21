@@ -224,6 +224,31 @@ struct Api {
         Srv(L).Damage(&p, float(luaL_checknumber(L, 2)), attacker);
         return 0;
     }
+    // playSound(name or path [, {x, y, z, volume = 1, pitch = 1, range = 100 (m), world, player}]); player:playSound(name [, opts])
+    static int PlaySoundImpl(lua_State* L, Player* to, int optIdx) {
+        char want[256]; std::snprintf(want, sizeof(want), "%s", luaL_checkstring(L, optIdx - 1));
+        float at[3] = {0, 0, 0}; bool threeD = false; double volume = 1, pitch = 1, range = 100; int world = -1;
+        if (lua_istable(L, optIdx)) {
+            lua_getfield(L, optIdx, "x");
+            if (!lua_isnil(L, -1)) {
+                threeD = true; at[0] = float(luaL_checknumber(L, -1));
+                lua_getfield(L, optIdx, "y"); at[1] = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
+                lua_getfield(L, optIdx, "z"); at[2] = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, optIdx, "volume"); volume = luaL_optnumber(L, -1, 1); lua_pop(L, 1);
+            lua_getfield(L, optIdx, "pitch"); pitch = luaL_optnumber(L, -1, 1); lua_pop(L, 1);
+            lua_getfield(L, optIdx, "range"); range = luaL_optnumber(L, -1, 100); lua_pop(L, 1);
+            lua_getfield(L, optIdx, "world"); world = int(luaL_optinteger(L, -1, -1)); lua_pop(L, 1);
+            lua_getfield(L, optIdx, "player"); if (!lua_isnil(L, -1) && !to) to = &CheckPlayer(L, lua_gettop(L)); lua_pop(L, 1);
+        }
+        const std::string path = Srv(L).ResolveSound(want);
+        if (path.empty()) { char msg[320]; std::snprintf(msg, sizeof(msg), "playSound: unknown sound '%s' (a name of data/sounds.txt or a path)", want); lua_pushstring(L, msg); return lua_error(L); }
+        Srv(L).PlaySound(to, path, threeD ? at : nullptr, float(volume), float(pitch), float(range * 100), world);
+        return 0;
+    }
+    static int PlaySoundAll(lua_State* L) { return PlaySoundImpl(L, nullptr, 2); }
+    static int PPlaySound(lua_State* L) { auto& p = CheckPlayer(L, 1); return PlaySoundImpl(L, &p, 3); }
     // playAnim(name or path [, {loop = true, freeze = true, stopOnMove = true, rate = 1}]) / stopAnim()
     static int PPlayAnim(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
@@ -1573,7 +1598,7 @@ bool Script::Load(const std::string& modeId) {
     lua_pushcfunction(L_, &Api::PEq); lua_setfield(L_, -2, "__eq");
     lua_pushcfunction(L_, &Api::PToString); lua_setfield(L_, -2, "__tostring");
     const luaL_Reg methods[] = {{"message", &Api::PMessage}, {"position", &Api::PPosition}, {"velocity", &Api::PVelocity}, {"setPosition", &Api::PSetPosition},
-                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"playAnim", &Api::PPlayAnim}, {"stopAnim", &Api::PStopAnim}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
+                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"playAnim", &Api::PPlayAnim}, {"stopAnim", &Api::PStopAnim}, {"playSound", &Api::PPlaySound}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
                                 {"giveItem", &Api::PGiveItem}, {"takeItem", &Api::PTakeItem}, {"giveWeapon", &Api::PGiveWeapon}, {"setAmmo", &Api::PSetAmmo},
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
                                 {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
@@ -1590,6 +1615,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
+                                {"playSound", &Api::PlaySoundAll},
                                 {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
                                 {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
                                 {"removeObject", &Api::RemoveObject}, {"getObject", &Api::GetObject}, {"objects", &Api::ObjectsList},
@@ -1751,6 +1777,17 @@ void Script::ObjectMoved(uint16_t object) {
     } else lua_pop(L_, 1);
     lua_pop(L_, 1);
     lua_pushinteger(L_, object); Fire("objectMoved", 1);
+}
+
+void Script::PlayerShot(Player& p, const std::string& weaponClass, float x, float y, float z) {
+    if (!L_) return;
+    Api::PushPlayer(L_, p);
+    lua_createtable(L_, 0, 4);
+    lua_pushstring(L_, weaponClass.c_str()); lua_setfield(L_, -2, "weapon");
+    lua_pushnumber(L_, x); lua_setfield(L_, -2, "x");
+    lua_pushnumber(L_, y); lua_setfield(L_, -2, "y");
+    lua_pushnumber(L_, z); lua_setfield(L_, -2, "z");
+    Fire("playerShot", 2);
 }
 
 void Script::AnimEnd(Player& p, const char* reason) {

@@ -90,6 +90,7 @@ bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
     Log("DGMP server \"%s\" listening on UDP %u, %d slots%s", cfg_.name.c_str(), cfg_.port, cfg_.maxPlayers, cfg_.password.empty() ? "" : ", password protected");
     LoadLooks();
     LoadProps();
+    LoadSounds();
     LoadAnims();
     LoadSkins();
     bans_.Load(root_ / "data" / "bans.json");
@@ -334,6 +335,22 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         break;
     }
     case net::Msg::CarryAction: OnCarryAction(*p, r); break;
+    case net::Msg::Shot: {
+        // Its weapon fired: the players nearby (same world, 300 m) hear it.
+        const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
+        if (!r.ok() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || (p->state.flags & net::StateDead)) break;
+        const double now = Now();
+        if (now - p->shotWindow >= 1.0) { p->shotWindow = now; p->shotCount = 0; }
+        if (++p->shotCount > 20) break;
+        net::Writer w; w.Op(net::Msg::PlayerShot); w.U16(p->id); w.Str(cls); w.F32(x); w.F32(y); w.F32(z);
+        for (auto& [id, other] : players_) {
+            if (other.get() == p || !other->ready || !other->peer || Apart(*other, *p)) continue;
+            const float dx = other->state.x - x, dy = other->state.y - y, dz = other->state.z - z;
+            if (dx * dx + dy * dy + dz * dz <= 30000.f * 30000.f) enet_peer_send(other->peer, net::kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
+        }
+        if (now - p->lastShotEvent >= 0.5) { p->lastShotEvent = now; script_->PlayerShot(*p, cls, x, y, z); }
+        break;
+    }
     case net::Msg::AnimEnd: {
         const uint8_t reason = r.U8();
         if (!r.ok() || p->anim.empty()) break;
@@ -1562,6 +1579,36 @@ void Server::HurtBot(Player* bot, float amount, Player* attacker) {
     bot->inventoryAtDeath.clear();
     script_->PlayerDeath(*bot, attacker);
     Log("%s was killed by %s", bot->nick.c_str(), attacker ? attacker->nick.c_str() : "?");
+}
+void Server::PlaySound(Player* to, const std::string& path, const float* at, float volume, float pitch, float range, int32_t world) {
+    net::Writer w; w.Op(net::Msg::Sound); w.Str(path); w.U8(at ? 1 : 0);
+    w.F32(at ? at[0] : 0); w.F32(at ? at[1] : 0); w.F32(at ? at[2] : 0); w.F32(volume); w.F32(pitch);
+    for (auto& [id, p] : players_) {
+        if (!p->ready || !p->peer || (to && p.get() != to)) continue;
+        if (world >= 0 && p->world != world) continue;
+        if (at && range > 0) {
+            const float dx = p->state.x - at[0], dy = p->state.y - at[1], dz = p->state.z - at[2];
+            if (dx * dx + dy * dy + dz * dz > range * range) continue;
+        }
+        SendTo(p->peer, w, true);
+    }
+}
+void Server::LoadSounds() {
+    std::ifstream in(root_ / "data" / "sounds.txt");
+    for (std::string line; std::getline(in, line);) {
+        if (line.empty() || line[0] == '#') continue;
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        std::string path = line.substr(tab + 1);
+        while (!path.empty() && (path.back() == '\r' || path.back() == ' ')) path.pop_back();
+        sounds_.emplace(Lower(line.substr(0, tab)), path);
+    }
+    Log("Sounds catalog: %zu sounds", sounds_.size());
+}
+std::string Server::ResolveSound(const std::string& nameOrPath) const {
+    if (nameOrPath.rfind("/Game/", 0) == 0) return nameOrPath;
+    auto it = sounds_.find(Lower(nameOrPath));
+    return it == sounds_.end() ? std::string() : it->second;
 }
 void Server::PlayAnim(Player* p, const std::string& path, uint8_t flags, float rate) {
     if (!p || p->bot) return;
