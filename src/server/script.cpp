@@ -243,7 +243,7 @@ struct Api {
             lua_getfield(L, optIdx, "player"); if (!lua_isnil(L, -1) && !to) to = &CheckPlayer(L, lua_gettop(L)); lua_pop(L, 1);
         }
         const std::string path = Srv(L).ResolveSound(want);
-        if (path.empty()) { char msg[320]; std::snprintf(msg, sizeof(msg), "playSound: unknown sound '%s' (a name of data/sounds.txt or a path)", want); lua_pushstring(L, msg); return lua_error(L); }
+        if (path.empty()) { char msg[512]; std::snprintf(msg, sizeof(msg), "playSound: unknown sound '%s' (a name of data/sounds.txt or a path)", want); lua_pushstring(L, msg); return lua_error(L); }
         Srv(L).PlaySound(to, path, threeD ? at : nullptr, float(volume), float(pitch), float(range * 100), world);
         return 0;
     }
@@ -261,7 +261,7 @@ struct Api {
             lua_getfield(L, 3, "rate"); rate = luaL_optnumber(L, -1, 1); lua_pop(L, 1);
         }
         const std::string path = Srv(L).ResolveAnim(want);
-        if (path.empty()) { char msg[320]; std::snprintf(msg, sizeof(msg), "playAnim: unknown animation '%s' (a name of data/anims.txt or a path)", want); lua_pushstring(L, msg); return lua_error(L); }
+        if (path.empty()) { char msg[512]; std::snprintf(msg, sizeof(msg), "playAnim: unknown animation '%s' (a name of data/anims.txt or a path)", want); lua_pushstring(L, msg); return lua_error(L); }
         Srv(L).PlayAnim(&p, path, uint8_t((loop ? net::AnimLoop : 0) | (freeze ? net::AnimFreeze : 0) | (stopOnMove ? net::AnimStopOnMove : 0)), float(rate));
         return 0;
     }
@@ -1011,7 +1011,7 @@ struct Api {
         }
         if (want[0]) {
             const std::string path = Srv(L).ResolveProp(want);
-            if (path.empty()) { char msg[320]; std::snprintf(msg, sizeof(msg), "%s: unknown model '%s' (a mesh name from data/props.txt or a /Game/ path)", fn, want); lua_pushstring(L, msg); lua_error(L); }
+            if (path.empty()) { char msg[512]; std::snprintf(msg, sizeof(msg), "%s: unknown model '%s' (a mesh name from data/props.txt or a /Game/ path)", fn, want); lua_pushstring(L, msg); lua_error(L); }
             o.asset = path;
         }
         o.scale = std::clamp(o.scale, 0.01f, 100.f);
