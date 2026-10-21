@@ -49,6 +49,7 @@ enum class Msg : uint8_t {
     VehicleExit = 15,  // u16 vehicleId, VehicleState: the player got off it, here (a passenger: the state is ignored)
     VehicleState = 16, // u16 vehicleId, VehicleState: where the vehicle it drives is now (about every second)
     ImageRequest = 17, // str name: send me this image of the mode (ImageList: not in my cache)
+    AnimEnd = 19,     // u8 reason (0 it ended, 1 the player moved): the animation the mode played (PlayAnim) is over
     CarryAction = 18,  // u16 carryId, u8 CarryOp, f32 x,y,z,yaw: pick it up / put it down there / the game dropped it there
     CustomizeDone = 10, // u8 ok, str skin: the player closed the character creator (or picked one of the offered looks)
     Gear = 9,         // GearList payload: what the player carries (weapons in hand, on the back, holstered)
@@ -95,6 +96,10 @@ enum class Msg : uint8_t {
     WatchKeys = 94,   // u8 n, n x u8 virtualKey: keys whose presses the client reports (Msg::Key)
     Spectate = 89,    // u8 on, u8 count, count x u16 playerId: watch other players (count 0: anyone)
     SetHealth = 105,  // f32 percent of the maximum (0: the player dies, as from any other cause)
+    Blip = 108,       // u16 id, u8 op (1 add/update: f32 x,y,z, str icon (MAP_* name or path), u32 rgba, f32 scale, u8 BlipFlags, i32 world (-1 every); 2 remove)
+    PlayAnim = 107,   // str animation path ("": stop), u8 AnimFlags, f32 rate: play it on the player (FullBody slot)
+    Object = 106,     // u16 id, u8 op: 1 add/update (str asset, f32 x,y,z, f32 pitch,yaw,roll, f32 scale, i32 world (-1 every), u8 collision);
+                      // 2 remove; 3 move (f32 x,y,z, f32 pitch,yaw,roll, f32 seconds, f32 elapsed): from where it is to there
     Freeze = 88,      // u8 on: the player cannot move (on a bike: no throttle, brake or getting off)
     Damage = 86,      // u16 attackerId, f32 damage, u8 HitZone: another player hurt you
     WorldEdits = 85,  // u16 part, u16 parts, str chunk: the mode's world.json (docs/world.md), split in chunks; "" = none
@@ -141,6 +146,8 @@ struct PlayerState {
     float bx = 0, by = 0, bz = 0, bqx = 0, bqy = 0, bqz = 0, bqw = 1;
     double time = 0;    // sender clock, seconds
 };
+enum BlipFlags : uint8_t { BlipMap = 1, BlipRadar = 2, BlipEdge = 4 };
+enum AnimFlags : uint8_t { AnimLoop = 1, AnimFreeze = 2, AnimStopOnMove = 4 };
 enum StateFlags : uint8_t { StateOnBike = 1, StateHasBike = 2, StateFlying = 4, StateHasMesh = 8, StateOwnsBike = 16,
                             StateDead = 32,    // dead: others show only its corpse until it respawns
                             StateHidden = 64,    // spectating: others do not see it

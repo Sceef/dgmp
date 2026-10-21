@@ -398,6 +398,31 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         } else if (r.ok() && on.carry) on.carry(id, nullptr);
         break;
     }
+    case Msg::Blip: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::BlipInfo b;
+            b.x = r.F32(); b.y = r.F32(); b.z = r.F32(); b.icon = r.Str(256); b.color = r.U32(); b.scale = r.F32();
+            const uint8_t flags = r.U8(); b.world = r.I32();
+            b.map = flags & BlipMap; b.radar = flags & BlipRadar; b.edge = flags & BlipEdge;
+            if (r.ok() && on.blip) on.blip(id, &b);
+        } else if (r.ok() && on.blip) on.blip(id, nullptr);
+        break;
+    }
+    case Msg::Object: {
+        const uint16_t id = r.U16(); const uint8_t op = r.U8();
+        if (op == 1) {
+            Events::ObjectInfo o;
+            o.asset = r.Str(512); o.x = r.F32(); o.y = r.F32(); o.z = r.F32(); o.pitch = r.F32(); o.yaw = r.F32(); o.roll = r.F32(); o.scale = r.F32();
+            o.world = r.I32(); o.collision = r.U8() != 0;
+            if (r.ok() && on.object) on.object(id, &o);
+        } else if (op == 3) {
+            float to[6]; for (auto& v : to) v = r.F32();
+            const float seconds = r.F32(), elapsed = r.F32();
+            if (r.ok() && on.objectMove) on.objectMove(id, to, seconds, elapsed);
+        } else if (r.ok() && on.object) on.object(id, nullptr);
+        break;
+    }
     case Msg::WatchKeys: {
         std::vector<uint8_t> keys;
         const int n = r.U8();
@@ -406,6 +431,7 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         break;
     }
     case Msg::Freeze: { const bool frozen = r.U8() != 0; if (r.ok() && on.freeze) on.freeze(frozen); break; }
+    case Msg::PlayAnim: { const auto path = r.Str(512); const uint8_t flags = r.U8(); const float rate = r.F32(); if (r.ok() && on.playAnim) on.playAnim(path, flags, rate); break; }
     case Msg::SetHealth: { const float percent = r.F32(); if (r.ok() && std::isfinite(percent) && on.setHealth) on.setHealth(percent); break; }
     case Msg::Damage: { const auto from = r.U16(); const float amount = r.F32(); const auto zone = r.U8(); if (r.ok() && on.damage) on.damage(from, amount, HitZone(zone)); break; }
     case Msg::WorldItem: {
@@ -499,6 +525,11 @@ void Client::SendCarry(uint16_t id, CarryOp op, float x, float y, float z, float
 void Client::SendImageRequest(const std::string& name) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::ImageRequest); w.Str(name.substr(0, 128));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendAnimEnd(uint8_t reason) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::AnimEnd); w.U8(reason);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendKey(uint8_t virtualKey) {

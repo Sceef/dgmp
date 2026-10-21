@@ -118,6 +118,13 @@ int main() {
             if (in->carrier == c.localId()) carried = id; else if (carried == id) carried = 0;
             std::printf("* CARRY %u %s at %.0f %.0f %.0f carrier %d roll %u\n", id, in->model.c_str(), in->x, in->y, in->z, in->carrier == 0xFFFF ? -1 : int(in->carrier), in->roll);
         };
+        c.on.object = [](uint16_t id, const net::Client::Events::ObjectInfo* in) {
+            if (!in) { std::printf("* OBJECT %u removed\n", id); return; }
+            std::printf("* OBJECT %u %s at %.0f %.0f %.0f yaw %.0f scale %.2f world %d\n", id, in->asset.c_str(), in->x, in->y, in->z, in->yaw, in->scale, in->world);
+        };
+        c.on.objectMove = [](uint16_t id, const float to[6], float seconds, float elapsed) {
+            std::printf("* OBJECT %u moves to %.0f %.0f %.0f yaw %.0f in %.1f s (%.1f s gone)\n", id, to[0], to[1], to[2], to[4], seconds, elapsed);
+        };
         c.on.marker = [](uint16_t id, const net::Client::Events::MarkerInfo* in) {
             if (!in) { std::printf("* MARKER %u removed\n", id); return; }
             std::printf("* MARKER %u at %.0f %.0f %.0f style %u route %d [%s]\n", id, in->x, in->y, in->z, in->style, in->route, in->title.c_str());

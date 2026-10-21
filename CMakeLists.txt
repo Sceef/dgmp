@@ -94,5 +94,5 @@ install(CODE "
     file(INSTALL \"${CMAKE_SOURCE_DIR}/server.ini\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}\")
   endif()")
 install(DIRECTORY modes quests DESTINATION .)
-install(FILES data/looks.txt DESTINATION data)
+install(FILES data/looks.txt data/anims.txt data/props.txt DESTINATION data)  # catalogs the server resolves names with
 install(FILES docs/server-linux.md docs/master.md tools/dgmp-server.service tools/dgmp-master.service DESTINATION docs OPTIONAL)  # a copy without them still installs

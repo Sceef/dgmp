@@ -7,6 +7,9 @@
 #include "mpui.h"
 #include "vehicles.h"
 #include "carry.h"
+#include "objects.h"
+#include "playeranim.h"
+#include "blips.h"
 #include "images.h"
 #include "overlay.h"
 #include "imgui.h"
@@ -1489,6 +1492,9 @@ void HookClient() {
         mpui::Reset();
         vehicles::Reset();
         carry::Reset();
+        objects::Reset();
+        playeranim::Reset();
+        blips::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1553,7 +1559,11 @@ void HookClient() {
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
     client.on.watchKeys = [](const std::vector<uint8_t>& keys) { mpui::OnWatchKeys(keys); };
     client.on.carry = [](uint16_t id, const net::Client::Events::CarryInfo* info) { carry::OnCarry(id, info); };
-    client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); carry::SetWorld(world); dg::Log("MP: virtual world %d", world); };
+    client.on.object = [](uint16_t id, const net::Client::Events::ObjectInfo* info) { objects::OnObject(id, info); };
+    client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
+    client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) { playeranim::OnPlay(path, flags, rate); };
+    client.on.objectMove = [](uint16_t id, const float to[6], float seconds, float elapsed) { objects::OnMove(id, to, seconds, elapsed); };
+    client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); carry::SetWorld(world); objects::SetWorld(world); blips::SetWorld(world); dg::Log("MP: virtual world %d", world); };
     client.on.vehicle = [](uint16_t id, const net::Client::Events::VehicleInfo* info) { vehicles::OnVehicle(id, info); };
     client.on.vehicleAllow = [](uint16_t id, int seat) { vehicles::OnAllow(id, seat); };
     client.on.vehicleEject = [](uint16_t id) { vehicles::OnEject(id); };
@@ -2072,6 +2082,9 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         mpui::Update(client, at, canAct, playing && !spec.on);
         vehicles::Update(now, pawn, controller, client);
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen());
+        objects::Update(now, pawn);
+        blips::Update(pawn);
+        playeranim::Update(pawn, controller, client, canAct && !mpui::DialogOpen(), localDead || Respawning());
         UpdateHeliView(pawn);  // after the helicopter moved this frame (else the view lags a frame and shakes)
         // The UI took or gave back the keyboard: nothing the game saw pressed stays held (a W let go
         // under a dialog kept the character running after it).

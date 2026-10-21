@@ -19,6 +19,11 @@ void Clear();
 // near the player. `pawn` is the world context.
 void Update(ue::UObject* pawn);
 
+// A static mesh (or a blueprint class "..._C") of the game spawned movable at that spot: the mode's
+// objects of createObject (src/objects.cpp). Null: the asset does not load.
+ue::UObject* SpawnMesh(const std::string& asset, const ue::FVector& at, const ue::FRotator& rot, float scale, ue::UObject* context);
+void PlaceActor(ue::UObject* actor, const ue::FVector& at, const ue::FRotator& rot, float scale);
+
 // The stable name of a world object: "<level>/<actor>", e.g. "03-12_Pop/BP_Interact_SearchCarTrunk21".
 std::string KeyOf(ue::UObject* actor);
 // Merged mesh collections (BendStaticMeshCollection): the piece of the collection actor at a world

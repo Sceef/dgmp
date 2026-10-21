@@ -89,6 +89,7 @@ bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
     host_->intercept = &OnRawPacket;
     Log("DGMP server \"%s\" listening on UDP %u, %d slots%s", cfg_.name.c_str(), cfg_.port, cfg_.maxPlayers, cfg_.password.empty() ? "" : ", password protected");
     LoadLooks();
+    LoadProps();
     LoadAnims();
     LoadSkins();
     bans_.Load(root_ / "data" / "bans.json");
@@ -140,6 +141,7 @@ void Server::Run() {
             if (p->inventoryRecheckAt && now >= p->inventoryRecheckAt) { CheckInventory(*p); break; }  // (it may kick: one a tick)
         TickMarkers();
         TickVehicles();
+        TickObjects();
         if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
@@ -332,6 +334,13 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         break;
     }
     case net::Msg::CarryAction: OnCarryAction(*p, r); break;
+    case net::Msg::AnimEnd: {
+        const uint8_t reason = r.U8();
+        if (!r.ok() || p->anim.empty()) break;
+        p->anim.clear();
+        script_->AnimEnd(*p, reason == 1 ? "moved" : "done");
+        break;
+    }
     case net::Msg::Key: {
         const uint8_t key = r.U8();
         if (r.ok() && watchedKeys_.count(key)) script_->KeyPress(*p, key);
@@ -591,6 +600,8 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
     for (auto& [aid, a] : actors_) SendActor(peer, a);
+    for (auto& [oid, o] : objects_) SendObject(peer, o);
+    for (auto& [bid, b] : blips_) if (b.only == 0xFFFF) SendBlip(p, b);
     for (auto& [cid, c] : carries_) SendCarry(p, c);
     for (auto& [vid, v] : vehicles_) { SendVehicle(p, v); if (!v.route.empty()) SendRoute(p, v); }
     SendImageList(p);
@@ -1552,6 +1563,11 @@ void Server::HurtBot(Player* bot, float amount, Player* attacker) {
     script_->PlayerDeath(*bot, attacker);
     Log("%s was killed by %s", bot->nick.c_str(), attacker ? attacker->nick.c_str() : "?");
 }
+void Server::PlayAnim(Player* p, const std::string& path, uint8_t flags, float rate) {
+    if (!p || p->bot) return;
+    p->anim = path;
+    net::Writer w; w.Op(net::Msg::PlayAnim); w.Str(path); w.U8(flags); w.F32(rate); Send(p, w, true);
+}
 void Server::SetHealth(Player* p, float percent) {
     if (!p) return;
     percent = std::clamp(percent, 0.f, 100.f);
@@ -1831,6 +1847,120 @@ void Server::Bike(Player* p, net::BikeAction action, float x, float y, float z, 
     if (!p || p->bot) return;
     net::Writer w; w.Op(net::Msg::Bike); w.U8(static_cast<uint8_t>(action)); w.F32(x); w.F32(y); w.F32(z); w.F32(yaw); Send(p, w, true);
 }
+// ---------------------------------------------------------------- objects
+void Object::At(double now, float out[6]) const {
+    const float from[6] = {x, y, z, pitch, yaw, roll}, to[6] = {tx, ty, tz, tpitch, tyaw, troll};
+    const float k = moving && moveTime > 0 ? float(std::clamp((now - moveStart) / moveTime, 0.0, 1.0)) : 0.f;
+    for (int i = 0; i < 6; ++i) {
+        float d = to[i] - from[i];
+        if (i >= 3) d = std::fmod(std::fmod(d + 180.f, 360.f) + 360.f, 360.f) - 180.f;  // the short way round
+        out[i] = from[i] + d * k;
+    }
+}
+void Server::SendObject(ENetPeer* peer, const Object& o) {
+    net::Writer w; w.Op(net::Msg::Object); w.U16(o.id); w.U8(1); w.Str(o.asset);
+    w.F32(o.x); w.F32(o.y); w.F32(o.z); w.F32(o.pitch); w.F32(o.yaw); w.F32(o.roll); w.F32(o.scale); w.I32(o.world); w.U8(o.collision);
+    if (peer) SendTo(peer, w, true); else Send(nullptr, w, true);
+    if (!o.moving) return;
+    net::Writer m; m.Op(net::Msg::Object); m.U16(o.id); m.U8(3);
+    m.F32(o.tx); m.F32(o.ty); m.F32(o.tz); m.F32(o.tpitch); m.F32(o.tyaw); m.F32(o.troll); m.F32(float(o.moveTime)); m.F32(float(Now() - o.moveStart));
+    if (peer) SendTo(peer, m, true); else Send(nullptr, m, true);
+}
+void Server::SendBlip(Player* to, const Blip& b) {
+    net::Writer w; w.Op(net::Msg::Blip); w.U16(b.id); w.U8(1); w.F32(b.x); w.F32(b.y); w.F32(b.z); w.Str(b.icon); w.U32(b.color); w.F32(b.scale);
+    w.U8(uint8_t((b.map ? net::BlipMap : 0) | (b.radar ? net::BlipRadar : 0) | (b.edge ? net::BlipEdge : 0))); w.I32(b.world);
+    if (to) { if (to->peer) SendTo(to->peer, w, true); return; }
+    if (b.only == 0xFFFF) { Send(nullptr, w, true); return; }
+    if (Player* p = Find(b.only); p && p->joinedAt == b.onlyJoinedAt && p->peer) SendTo(p->peer, w, true);
+}
+uint16_t Server::AddBlip(Blip b) {
+    while (blips_.count(nextBlip_) || !nextBlip_) ++nextBlip_;
+    b.id = nextBlip_++;
+    if (b.only != 0xFFFF) if (auto p = Find(b.only)) b.onlyJoinedAt = p->joinedAt;
+    blips_[b.id] = b;
+    SendBlip(nullptr, b);
+    return b.id;
+}
+bool Server::UpdateBlip(const Blip& b) {
+    auto it = blips_.find(b.id);
+    if (it == blips_.end()) return false;
+    it->second = b;
+    SendBlip(nullptr, b);
+    return true;
+}
+bool Server::RemoveBlip(uint16_t id) {
+    auto it = blips_.find(id);
+    if (it == blips_.end()) return false;
+    const Blip b = it->second;
+    blips_.erase(it);
+    net::Writer w; w.Op(net::Msg::Blip); w.U16(id); w.U8(2);
+    if (b.only == 0xFFFF) Send(nullptr, w, true);
+    else if (Player* p = Find(b.only); p && p->peer) SendTo(p->peer, w, true);
+    return true;
+}
+uint16_t Server::AddObject(Object o) {
+    while (objects_.count(nextObject_) || !nextObject_) ++nextObject_;
+    o.id = nextObject_++; o.moving = false;
+    objects_[o.id] = o;
+    SendObject(nullptr, o);
+    return o.id;
+}
+bool Server::UpdateObject(const Object& o) {
+    auto it = objects_.find(o.id);
+    if (it == objects_.end()) return false;
+    it->second = o; it->second.moving = false;
+    SendObject(nullptr, it->second);
+    return true;
+}
+bool Server::RemoveObject(uint16_t id) {
+    if (!objects_.erase(id)) return false;
+    net::Writer w; w.Op(net::Msg::Object); w.U16(id); w.U8(2); Send(nullptr, w, true);
+    return true;
+}
+bool Server::MoveObject(uint16_t id, const float to[6], double seconds) {
+    auto it = objects_.find(id);
+    if (it == objects_.end()) return false;
+    Object& o = it->second;
+    const double now = Now();
+    float at[6]; o.At(now, at);  // a new move starts where the old one has got to
+    o.x = at[0]; o.y = at[1]; o.z = at[2]; o.pitch = at[3]; o.yaw = at[4]; o.roll = at[5];
+    o.tx = to[0]; o.ty = to[1]; o.tz = to[2]; o.tpitch = to[3]; o.tyaw = to[4]; o.troll = to[5];
+    o.moving = true; o.moveStart = now; o.moveTime = std::max(0.0, seconds);
+    net::Writer w; w.Op(net::Msg::Object); w.U16(id); w.U8(3);
+    for (int i = 0; i < 6; ++i) w.F32(to[i]);
+    w.F32(float(o.moveTime)); w.F32(0);
+    Send(nullptr, w, true);
+    return true;
+}
+void Server::TickObjects() {
+    const double now = Now();
+    std::vector<uint16_t> arrived;
+    for (auto& [id, o] : objects_) {
+        if (!o.moving || now < o.moveStart + o.moveTime) continue;
+        o.moving = false;
+        o.x = o.tx; o.y = o.ty; o.z = o.tz; o.pitch = o.tpitch; o.yaw = o.tyaw; o.roll = o.troll;
+        arrived.push_back(id);
+    }
+    for (auto id : arrived) if (objects_.count(id)) script_->ObjectMoved(id);  // (a callback may remove or move others)
+}
+void Server::LoadProps() {
+    std::ifstream in(root_ / "data" / "props.txt");
+    for (std::string line; std::getline(in, line);) {
+        // group <tab> subgroup <tab> kind <tab> /Game/path.Name <tab> title
+        size_t at = 0; std::string cols[4];
+        for (int i = 0; i < 4; ++i) { const auto tab = line.find('\t', at); cols[i] = line.substr(at, tab == std::string::npos ? std::string::npos : tab - at); at = tab == std::string::npos ? line.size() : tab + 1; }
+        const auto dot = cols[3].rfind('.');
+        if (cols[3].empty() || cols[3][0] != '/' || dot == std::string::npos) continue;
+        props_.emplace(Lower(cols[3].substr(dot + 1)), cols[3]);
+    }
+    Log("Props catalog: %zu meshes", props_.size());
+}
+std::string Server::ResolveProp(const std::string& nameOrPath) const {
+    if (nameOrPath.rfind("/Game/", 0) == 0) return nameOrPath;
+    auto it = props_.find(Lower(nameOrPath));
+    return it == props_.end() ? std::string() : it->second;
+}
+
 void Server::LoadLooks() {
     std::ifstream in(root_ / "data" / "looks.txt");
     for (std::string line; std::getline(in, line);) {
@@ -1920,6 +2050,12 @@ bool Server::ReloadMode() {
     ids.clear();
     for (auto& [id, c] : carries_) ids.push_back(id);
     for (auto id : ids) RemoveCarry(id);
+    ids.clear();
+    for (auto& [id, o] : objects_) ids.push_back(id);
+    for (auto id : ids) RemoveObject(id);
+    ids.clear();
+    for (auto& [id, b] : blips_) ids.push_back(id);
+    for (auto id : ids) RemoveBlip(id);
     if (!watchedKeys_.empty()) { watchedKeys_.clear(); SendWatchedKeys(nullptr); }
     LoadEnvironment(mode);
     if (!script_->Load(mode)) return false;

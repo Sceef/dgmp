@@ -64,6 +64,7 @@ public:
         std::function<void(uint16_t attacker, float damage, HitZone zone)> damage;  // another player hurt you
         std::function<void(bool on)> freeze;
         std::function<void(float percent)> setHealth;  // 0: die
+        std::function<void(const std::string& path, uint8_t flags, float rate)> playAnim;  // path "": stop
         // choices: (name, look) to pick from; empty: the full character creator
         // place: x, y, z, yaw where the server put the player to choose (null: where it is)
         std::function<void(bool cancel, const std::string& title, const std::string& families, const std::string& current,
@@ -93,6 +94,11 @@ public:
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
         struct CarryInfo { std::string model; float x, y, z, yaw; int world; uint16_t carrier; uint8_t roll = 0; };  // roll: CarryRoll
         std::function<void(uint16_t id, const CarryInfo* info)> carry;  // info null = removed
+        struct BlipInfo { float x = 0, y = 0, z = 0; std::string icon; uint32_t color = 0; float scale = 1; bool map = true, radar = true, edge = false; int world = -1; };
+        std::function<void(uint16_t id, const BlipInfo* info)> blip;  // info null = removed
+        struct ObjectInfo { std::string asset; float x = 0, y = 0, z = 0, pitch = 0, yaw = 0, roll = 0, scale = 1; int world = -1; bool collision = true; };
+        std::function<void(uint16_t id, const ObjectInfo* info)> object;  // info null = removed
+        std::function<void(uint16_t id, const float to[6], float seconds, float elapsed)> objectMove;
     } on;
 
     ~Client();
@@ -113,6 +119,7 @@ public:
     void SendDialogResponse(uint16_t id, bool ok, int item, const std::string& text);
     void SendUse(uint16_t interaction);
     void SendKey(uint8_t virtualKey);
+    void SendAnimEnd(uint8_t reason);
     void SendImageRequest(const std::string& name);
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
     void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);

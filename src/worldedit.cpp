@@ -109,6 +109,19 @@ UObject* SpawnProp(const Added& a, UObject* context) {
     Place(actor, a.t);
     return actor;
 }
+}  // namespace
+
+UObject* SpawnMesh(const std::string& asset, const FVector& at, const FRotator& rot, float scale, UObject* context) {
+    Added a; a.asset = asset; a.t.at = at; a.t.rot = rot; a.t.scale = scale;
+    return SpawnProp(a, context);
+}
+void PlaceActor(UObject* actor, const FVector& at, const FRotator& rot, float scale) {
+    if (!IsValid(actor)) return;
+    Transform t; t.at = at; t.rot = rot; t.scale = scale;
+    Place(actor, t);
+}
+
+namespace {
 // Live settings of a light component (the rest needs a new one: type, shadows).
 void ApplyLight(UObject* comp, UObject* shape, const Light& l) {
     if (!IsValid(comp)) return;

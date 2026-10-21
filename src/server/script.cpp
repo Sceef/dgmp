@@ -160,6 +160,10 @@ struct Api {
         if (std::strcmp(key, "skin") == 0) { if (p && !p->skin.empty()) lua_pushstring(L, p->skin.c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "uniform") == 0) { if (p && !p->uniform.empty()) lua_pushstring(L, p->uniform.c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "admin") == 0) { lua_pushboolean(L, p && p->admin); return 1; }
+        if (std::strcmp(key, "anim") == 0) {
+            if (!p || p->anim.empty()) { lua_pushnil(L); return 1; }
+            const auto dot = p->anim.rfind('.'); lua_pushstring(L, p->anim.substr(dot == std::string::npos ? 0 : dot + 1).c_str()); return 1;
+        }
         if (std::strcmp(key, "steamId") == 0) { if (p && p->steamId) lua_pushstring(L, std::to_string(p->steamId).c_str()); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "verified") == 0) { lua_pushboolean(L, p && p->steamId); return 1; }
         if (std::strcmp(key, "ip") == 0) { lua_pushstring(L, p ? p->ip.c_str() : ""); return 1; }
@@ -220,6 +224,23 @@ struct Api {
         Srv(L).Damage(&p, float(luaL_checknumber(L, 2)), attacker);
         return 0;
     }
+    // playAnim(name or path [, {loop = true, freeze = true, stopOnMove = true, rate = 1}]) / stopAnim()
+    static int PPlayAnim(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        char want[256]; std::snprintf(want, sizeof(want), "%s", luaL_checkstring(L, 2));
+        bool loop = true, freeze = true, stopOnMove = true; double rate = 1;
+        if (lua_istable(L, 3)) {
+            lua_getfield(L, 3, "loop"); if (!lua_isnil(L, -1)) loop = lua_toboolean(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "freeze"); if (!lua_isnil(L, -1)) freeze = lua_toboolean(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "stopOnMove"); if (!lua_isnil(L, -1)) stopOnMove = lua_toboolean(L, -1); lua_pop(L, 1);
+            lua_getfield(L, 3, "rate"); rate = luaL_optnumber(L, -1, 1); lua_pop(L, 1);
+        }
+        const std::string path = Srv(L).ResolveAnim(want);
+        if (path.empty()) { char msg[320]; std::snprintf(msg, sizeof(msg), "playAnim: unknown animation '%s' (a name of data/anims.txt or a path)", want); lua_pushstring(L, msg); return lua_error(L); }
+        Srv(L).PlayAnim(&p, path, uint8_t((loop ? net::AnimLoop : 0) | (freeze ? net::AnimFreeze : 0) | (stopOnMove ? net::AnimStopOnMove : 0)), float(rate));
+        return 0;
+    }
+    static int PStopAnim(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).PlayAnim(&p, "", 0, 1); return 0; }
     // setHealth(percent): 0..100 of the maximum; 0 kills. heal(): full health. kill(): dies (playerDeath).
     static int PSetHealth(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, float(luaL_checknumber(L, 2))); return 0; }
     static int PHeal(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, float(luaL_optnumber(L, 2, 100))); return 0; }
@@ -862,6 +883,128 @@ struct Api {
         IconFields(L, 2, i, "setIcon");
         lua_pushboolean(L, Srv(L).UpdateIcon(i)); return 1;
     }
+    // ---- blips (docs/API.md "Значки на карте") ----
+    // createBlip{x, y, z, icon = "MAP_player_marker", color, scale = 1, map = true, radar = true, edge = false, world, player} -> id
+    static void BlipFields(lua_State* L, int idx, Blip& b) {
+        auto num = [&](const char* k, float& v) { lua_getfield(L, idx, k); if (!lua_isnil(L, -1)) v = float(luaL_checknumber(L, -1)); lua_pop(L, 1); };
+        auto flag = [&](const char* k, bool& v) { lua_getfield(L, idx, k); if (!lua_isnil(L, -1)) v = lua_toboolean(L, -1); lua_pop(L, 1); };
+        num("x", b.x); num("y", b.y); num("z", b.z); num("scale", b.scale);
+        flag("map", b.map); flag("radar", b.radar); flag("edge", b.edge);
+        lua_getfield(L, idx, "icon"); if (lua_isstring(L, -1)) b.icon = lua_tostring(L, -1); lua_pop(L, 1);
+        lua_getfield(L, idx, "world"); if (!lua_isnil(L, -1)) b.world = int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, idx, "color"); if (!lua_isnil(L, -1)) { b.color = ColorArg(L, lua_gettop(L), 0xFFFFFFFF); } lua_pop(L, 1);
+        lua_getfield(L, idx, "player"); if (!lua_isnil(L, -1)) b.only = CheckPlayer(L, lua_gettop(L)).id; lua_pop(L, 1);
+        b.scale = std::clamp(b.scale, 0.1f, 5.f);
+    }
+    static int CreateBlip(lua_State* L) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        Blip b; BlipFields(L, 1, b);
+        lua_pushinteger(L, Srv(L).AddBlip(b)); return 1;
+    }
+    static int SetBlip(lua_State* L) {
+        Blip* old = Srv(L).FindBlip(uint16_t(luaL_checkinteger(L, 1)));
+        luaL_checktype(L, 2, LUA_TTABLE);
+        if (!old) { lua_pushboolean(L, 0); return 1; }
+        Blip b = *old; BlipFields(L, 2, b);
+        lua_pushboolean(L, Srv(L).UpdateBlip(b)); return 1;
+    }
+    static int RemoveBlip(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveBlip(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
+
+    // ---- objects (docs/API.md "Объекты") ----
+    // Fields of createObject / setObject: model (a mesh name of data/props.txt) or asset (a /Game/ path),
+    // x, y, z, pitch, yaw, roll, scale, world, collision.
+    static void ObjectFields(lua_State* L, int idx, Object& o, const char* fn) {
+        auto num = [&](const char* k, float& v) { lua_getfield(L, idx, k); if (!lua_isnil(L, -1)) v = float(luaL_checknumber(L, -1)); lua_pop(L, 1); };
+        num("x", o.x); num("y", o.y); num("z", o.z); num("pitch", o.pitch); num("yaw", o.yaw); num("roll", o.roll); num("scale", o.scale);
+        lua_getfield(L, idx, "world"); if (!lua_isnil(L, -1)) o.world = int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, idx, "collision"); if (!lua_isnil(L, -1)) o.collision = lua_toboolean(L, -1); lua_pop(L, 1);
+        char want[256] = "";
+        for (const char* k : {"model", "asset"}) {
+            lua_getfield(L, idx, k);
+            if (lua_isstring(L, -1)) std::snprintf(want, sizeof(want), "%s", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (want[0]) {
+            const std::string path = Srv(L).ResolveProp(want);
+            if (path.empty()) { char msg[320]; std::snprintf(msg, sizeof(msg), "%s: unknown model '%s' (a mesh name from data/props.txt or a /Game/ path)", fn, want); lua_pushstring(L, msg); lua_error(L); }
+            o.asset = path;
+        }
+        o.scale = std::clamp(o.scale, 0.01f, 100.f);
+    }
+    static void PushObject(lua_State* L, const Object& o, double now) {
+        float at[6]; o.At(now, at);
+        lua_createtable(L, 0, 12);
+        lua_pushinteger(L, o.id); lua_setfield(L, -2, "id");
+        lua_pushstring(L, o.asset.c_str()); lua_setfield(L, -2, "asset");
+        static const char* names[] = {"x", "y", "z", "pitch", "yaw", "roll"};
+        for (int i = 0; i < 6; ++i) { lua_pushnumber(L, at[i]); lua_setfield(L, -2, names[i]); }
+        lua_pushnumber(L, o.scale); lua_setfield(L, -2, "scale");
+        lua_pushinteger(L, o.world); lua_setfield(L, -2, "world");
+        lua_pushboolean(L, o.collision); lua_setfield(L, -2, "collision");
+        lua_pushboolean(L, o.moving); lua_setfield(L, -2, "moving");
+    }
+    static int CreateObject(lua_State* L) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        Object o;
+        ObjectFields(L, 1, o, "createObject");
+        if (o.asset.empty()) return luaL_error(L, "createObject: model or asset is required");
+        lua_pushinteger(L, Srv(L).AddObject(o)); return 1;
+    }
+    static int SetObject(lua_State* L) {
+        Object* old = Srv(L).FindObject(uint16_t(luaL_checkinteger(L, 1)));
+        luaL_checktype(L, 2, LUA_TTABLE);
+        if (!old) { lua_pushboolean(L, 0); return 1; }
+        Object o = *old;
+        float at[6]; o.At(Srv(L).Now(), at);  // a moving one stops where it is, unless the table says where
+        o.x = at[0]; o.y = at[1]; o.z = at[2]; o.pitch = at[3]; o.yaw = at[4]; o.roll = at[5];
+        ObjectFields(L, 2, o, "setObject");
+        lua_pushboolean(L, Srv(L).UpdateObject(o)); return 1;
+    }
+    // moveObject(id, {x, y, z, pitch, yaw, roll, time = seconds | speed = metres a second, onArrive = fn(id)}) -> seconds
+    static int MoveObject(lua_State* L) {
+        const auto id = uint16_t(luaL_checkinteger(L, 1));
+        luaL_checktype(L, 2, LUA_TTABLE);
+        Object* o = Srv(L).FindObject(id);
+        if (!o) { lua_pushnil(L); return 1; }
+        float at[6]; o->At(Srv(L).Now(), at);
+        float to[6] = {at[0], at[1], at[2], at[3], at[4], at[5]};
+        static const char* names[] = {"x", "y", "z", "pitch", "yaw", "roll"};
+        for (int i = 0; i < 6; ++i) { lua_getfield(L, 2, names[i]); if (!lua_isnil(L, -1)) to[i] = float(luaL_checknumber(L, -1)); lua_pop(L, 1); }
+        lua_getfield(L, 2, "time"); double seconds = luaL_optnumber(L, -1, -1); lua_pop(L, 1);
+        if (seconds < 0) {
+            lua_getfield(L, 2, "speed"); const double speed = luaL_optnumber(L, -1, 2); lua_pop(L, 1);  // m/s
+            const double dist = std::sqrt(double(to[0] - at[0]) * (to[0] - at[0]) + double(to[1] - at[1]) * (to[1] - at[1]) + double(to[2] - at[2]) * (to[2] - at[2])) / 100.0;
+            seconds = speed > 0 ? dist / speed : 0;
+            if (dist < 0.01) seconds = 1;  // only turning: a second
+        }
+        seconds = std::min(seconds, 3600.0);
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.objmoves");
+        lua_getfield(L, 2, "onArrive");
+        if (!lua_isfunction(L, -1)) { lua_pop(L, 1); lua_pushnil(L); }
+        lua_rawseti(L, -2, id);
+        lua_pop(L, 1);
+        Srv(L).MoveObject(id, to, seconds);
+        lua_pushnumber(L, seconds); return 1;
+    }
+    static int StopObject(lua_State* L) {
+        Object* o = Srv(L).FindObject(uint16_t(luaL_checkinteger(L, 1)));
+        if (!o) { lua_pushboolean(L, 0); return 1; }
+        Object copy = *o;
+        float at[6]; copy.At(Srv(L).Now(), at);
+        copy.x = at[0]; copy.y = at[1]; copy.z = at[2]; copy.pitch = at[3]; copy.yaw = at[4]; copy.roll = at[5];
+        lua_pushboolean(L, Srv(L).UpdateObject(copy)); return 1;
+    }
+    static int RemoveObject(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveObject(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
+    static int GetObject(lua_State* L) {
+        Object* o = Srv(L).FindObject(uint16_t(luaL_checkinteger(L, 1)));
+        if (!o) { lua_pushnil(L); return 1; }
+        PushObject(L, *o, Srv(L).Now()); return 1;
+    }
+    static int ObjectsList(lua_State* L) {
+        lua_newtable(L); int i = 0;
+        for (auto& [id, o] : Srv(L).Objects()) { PushObject(L, o, Srv(L).Now()); lua_rawseti(L, -2, ++i); }
+        return 1;
+    }
     static int RemoveIcon(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveIcon(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
     static int PFreeze(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).Freeze(&p, lua_isnone(L, 2) || lua_toboolean(L, 2)); return 0; }
     static int PTakeBike(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).Bike(&p, net::BikeAction::Take); return 0; }
@@ -1430,7 +1573,7 @@ bool Script::Load(const std::string& modeId) {
     lua_pushcfunction(L_, &Api::PEq); lua_setfield(L_, -2, "__eq");
     lua_pushcfunction(L_, &Api::PToString); lua_setfield(L_, -2, "__tostring");
     const luaL_Reg methods[] = {{"message", &Api::PMessage}, {"position", &Api::PPosition}, {"velocity", &Api::PVelocity}, {"setPosition", &Api::PSetPosition},
-                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
+                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"playAnim", &Api::PPlayAnim}, {"stopAnim", &Api::PStopAnim}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
                                 {"giveItem", &Api::PGiveItem}, {"takeItem", &Api::PTakeItem}, {"giveWeapon", &Api::PGiveWeapon}, {"setAmmo", &Api::PSetAmmo},
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
                                 {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
@@ -1447,6 +1590,9 @@ bool Script::Load(const std::string& modeId) {
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
+                                {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
+                                {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
+                                {"removeObject", &Api::RemoveObject}, {"getObject", &Api::GetObject}, {"objects", &Api::ObjectsList},
                                 {"ban", &Api::BanGlobal}, {"unban", &Api::Unban}, {"bans", &Api::Bans}, {"protectItems", &Api::ProtectItems}, {"protectedItems", &Api::ProtectedItems}, {nullptr, nullptr}};
     lua_pushglobaltable(L_); luaL_setfuncs(L_, globals, 0); lua_pop(L_, 1);
     const luaL_Reg storage[] = {{"get", &Api::StorageGet}, {"set", &Api::StorageSet}, {"keys", &Api::StorageKeys}, {"save", &Api::StorageSave}, {nullptr, nullptr}};
@@ -1459,6 +1605,7 @@ bool Script::Load(const std::string& modeId) {
     luaL_newlib(L_, jsonLib); lua_setglobal(L_, "json");
     http_ = std::make_shared<HttpBox>(); httpInFlight_ = 0;
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.http");
+    lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.objmoves");
 
     // Persistent storage survives reloads and restarts: data/<mode>/storage.json
     storageFile_ = server_.root() / "data" / mode_ / "storage.json";
@@ -1591,6 +1738,26 @@ bool Script::CarryDrop(Player& p, uint16_t carry, float x, float y, float z, con
     Fire("carryDrop", 3, &result);
     return !(result & 1);
 }
+void Script::ObjectMoved(uint16_t object) {
+    if (!L_) return;
+    lua_getfield(L_, LUA_REGISTRYINDEX, "dgmp.objmoves");
+    lua_rawgeti(L_, -1, object);
+    lua_pushnil(L_); lua_rawseti(L_, -3, object);
+    if (lua_isfunction(L_, -1)) {
+        lua_pushinteger(L_, object);
+        g_deadline = Clock() + kCallBudget;
+        if (lua_pcall(L_, 1, 0, 0) != LUA_OK) { server_.Log("[%s] onArrive error: %s", mode_.c_str(), lua_tostring(L_, -1)); lua_pop(L_, 1); }
+        g_deadline = 0;
+    } else lua_pop(L_, 1);
+    lua_pop(L_, 1);
+    lua_pushinteger(L_, object); Fire("objectMoved", 1);
+}
+
+void Script::AnimEnd(Player& p, const char* reason) {
+    if (!L_) return;
+    Api::PushPlayer(L_, p); lua_pushstring(L_, reason); Fire("animEnd", 2);
+}
+
 void Script::VehicleExit(Player& p, uint16_t vehicle) {
     if (!L_) return;
     Api::PushPlayer(L_, p); lua_pushinteger(L_, vehicle);

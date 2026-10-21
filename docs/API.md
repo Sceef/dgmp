@@ -85,6 +85,8 @@ end)
 | `cheat` | `player, kind, info` | античит поймал невозможное (см. «Античит»). `info`: `detail`, `strikes` — сколько за минуту. `return true` — режим разбирается сам, сервер не кикает |
 | `inventoryViolation` | `player, v` | у игрока больше защищённого предмета, чем выдал сервер (см. «Античит»). `v`: `item`, `have`, `allowed`, `pickedUp` (игра только что сообщила о подборе такого предмета). `return true` — оставить, иначе лишнее забирается |
 | `carryPick` | `player, carryId` | игрок зажал F у ящика и хочет его поднять. `return false` — не давать (см. «Переноска») |
+| `objectMoved` | `id` | объект доехал до цели `moveObject` (см. «Объекты») |
+| `animEnd` | `player, reason` | анимация `playAnim` кончилась: `"done"` — доиграла (или игрок погиб), `"moved"` — игрок пошёл (`stopOnMove`) |
 | `carryDrop` | `player, carryId, info` | ящик покинул руки игрока. `info`: `x, y, z`, `reason`: `"put"` — игрок сам кладёт его сюда (`return false` — не класть, ящик остаётся в руках); `"lost"` — игра выбила его из рук (удар, мотоцикл, паркур), `"roll"` — выпал при перекате, `"death"`, `"quit"` — сообщается уже после, ящик лежит там; `"break"` — разбился при перекате: после обработчика ящик удаляется (если обработчик не переставил его через `setCarry`) |
 
 ## Команды чата — `command(name, fn)`
@@ -165,6 +167,7 @@ end)
 | `vehicle` | число | транспорт режима, на котором игрок сидит (за рулём или сзади), или `nil` |
 | `carrying` | число | ящик в руках (см. «Переноска») или `nil` |
 | `money` | число | деньги игрока (см. «Деньги») |
+| `anim` | строка | анимация, которую режим сейчас играет на игроке (`playAnim`), или `nil` |
 | `health` | число | здоровье в процентах от максимума (0..100), как его прислал клиент |
 | `passenger` | bool | игрок сидит сзади, а не за рулём |
 
@@ -188,6 +191,7 @@ end)
 | `setAdmin(bool)` | выдать или снять права администратора на эту сессию |
 | `objective(opts)` | панель задания игры у этого игрока (см. «Задания») |
 | `objectiveMeter(title, percent)` | шкала под заданием, `percent` 0..1; без аргументов — скрыть |
+| `playAnim(name [, opts])` / `stopAnim()` | анимация на игроке (см. «Анимации игрока») |
 | `setLook(name)` | надеть облик: имя из [`docs/looks.md`](looks.md) или путь `/Game/...`. Все игроки видят его сразу, вошедшие позже — тоже |
 | `giveMoney(amount)` → сумма / `setMoney(amount)` | деньги игрока (см. «Деньги») |
 | `giveCarry(id)` / `dropCarry([x, y, z, yaw])` | ящик в руки / из рук (см. «Переноска») |
@@ -567,7 +571,92 @@ setIcon(icon, { text = "Закрыто" })
 removeIcon(icon)
 ```
 
-Картинки в мире рисуются поверх игры: стены их прячут, но они не освещаются и не отбрасывают тень. Своих значков на игровой карте и радаре пока нет.
+Картинки в мире рисуются поверх игры: стены их прячут, но они не освещаются и не отбрасывают тень. Значки на игровой карте и радаре — `createBlip` (см. «Значки на карте»).
+
+## Объекты
+
+Пропсы игры, которые ставит код режима, как `CreateObject` / `MoveObject` в SA-MP: ворота, шлагбаум, двери, мебель, ящики. В отличие от пропсов из редактора (`world.json`) их можно двигать и убирать по ходу игры. Видны в пределах 400 м, с учётом виртуальных миров; движение у всех игроков одинаковое: сервер раздаёт цель и время.
+
+```lua
+local gate = createObject({
+    model = "SM_Militia_Fort_Gate_01a",   -- имя меша из data/props.txt (последняя часть пути) или asset = "/Game/..."
+    x = 1000, y = 2000, z = -5300,        -- единицы Unreal; z — низ модели, как в редакторе
+    pitch = 0, yaw = 90, roll = 0,
+    scale = 1,
+    world = 0,                            -- виртуальный мир; не задано — во всех
+    collision = true,                     -- false — сквозь него можно пройти
+})
+moveObject(gate, { z = getObject(gate).z + 400, time = 4,          -- поднять на 4 м за 4 секунды
+                   onArrive = function(id) print("открыто") end })
+moveObject(gate, { yaw = 0, speed = 1 })   -- или скорость, м/с (поворот без сдвига — 1 секунда)
+stopObject(gate)                           -- остановить там, где сейчас
+setObject(gate, { model = "...", scale = 2 })   -- поменять что угодно (движение прекращается)
+removeObject(gate)
+getObject(gate)   -- {id, asset, x, y, z, pitch, yaw, roll, scale, world, collision, moving} — где он сейчас
+objects()         -- все объекты режима
+```
+
+`moveObject` возвращает время движения в секундах. Событие `on("objectMoved", function(id) end)` приходит после `onArrive`. Каталог моделей — `data/props.txt` (13 тысяч мешей игры, по группам), в редакторе их видно в «Библиотеке». Объекты режима убираются при его перезагрузке. Игроков движущийся объект не толкает: ставьте ворота так, чтобы они не проезжали сквозь людей.
+
+```lua
+-- Ворота базы фракции: открываются по F у пульта, если игрок в фракции, и закрываются через 8 секунд.
+local gate = createObject({ model = "SM_Militia_Fort_Gate_01a", x = gx, y = gy, z = gz, yaw = 90 })
+createInteraction({ x = px, y = py, z = pz, radius = 2, text = "Ворота", onUse = function(p)
+    if p.data.faction ~= "militia" then return p:tip("Заперто", 3) end
+    moveObject(gate, { z = gz + 450, time = 3 })
+    after(8000, function() moveObject(gate, { z = gz, time = 3 }) end)
+end })
+```
+
+## Анимации игрока
+
+Как `ApplyAnimation` в SA-MP: режим проигрывает на игроке анимацию игры — сесть, поднять руки, помахать. Другие игроки видят её, потому что поза тела передаётся как обычно.
+
+```lua
+player:playAnim("surrender")                                  -- руки вверх, пока не сдвинется
+player:playAnim("sit", { loop = true, freeze = true })         -- сесть (ставьте игрока на скамью или ящик)
+player:playAnim("wave", { loop = false, freeze = false })      -- помахать один раз, идти можно
+player:stopAnim()
+print(player.anim)                                             -- "dcn_surrender" или nil
+on("animEnd", function(player, reason) end)                    -- "done" / "moved"
+```
+
+| Поле `opts` | |
+|---|---|
+| `loop` | повторять (по умолчанию `true`) |
+| `freeze` | игрок не может идти, пока анимация играет (по умолчанию `true`) |
+| `stopOnMove` | WASD или пробел прерывают анимацию (по умолчанию `true`; событие `animEnd` с `"moved"`) |
+| `rate` | скорость (1 — обычная) |
+
+Имена — из `data/anims.txt`, как у NPC (`idle`, `talk`, `wave`, `surrender`, `sit`, `sit_talk`, `kneel`, `prisoner`…) или полный путь. Анимация играет во всё тело (слот `FullBody` анимационного блюпринта Дикона). Смерть прерывает её. Для RP-команд вроде `/sit`, `/hands`, `/lay` этого достаточно:
+
+```lua
+for cmd, anim in pairs({ sit = "sit", hands = "surrender", wave = "wave", kneel = "kneel", lay = "lie" }) do
+    command(cmd, function(p) p:playAnim(anim) end)
+end
+command("stop", function(p) p:stopAnim() end)
+```
+
+## Значки на карте
+
+Свои значки на большой карте и радаре, как `SetPlayerMapIcon` в SA-MP: магазины, гаражи, базы фракций, точки работ. Значки берутся из иконок карты игры.
+
+```lua
+local shop = createBlip({
+    x = 1000, y = 2000, z = -5300,
+    icon = "MAP_objective_encampment_merchant",   -- текстура карты игры (можно без "MAP_": "fuel")
+    color = "#F2D16B",                            -- тон
+    scale = 1,
+    map = true, radar = true,                     -- где показывать
+    edge = false,                                 -- true: на краю радара, когда далеко (по умолчанию — только рядом)
+    world = 0,                                    -- виртуальный мир
+    player = somePlayer,                          -- только этому игроку (дом, личная работа)
+})
+setBlip(shop, { color = "#E07070" })
+removeBlip(shop)
+```
+
+Иконки игры: `MAP_objective_encampment_merchant` (торговец), `MAP_objective_encampment_mechanic` (механик), `MAP_objective_encampment_food` (еда), `MAP_objective_encampment_locker` (шкафчик), `MAP_objective_encampment_bounty`, `MAP_fuel`, `MAP_player_safehouse` (убежище), `MAP_objective_encampment` (лагерь), `MAP_encampment_job`, `MAP_objective_NERO_checkpoint`, `MAP_objective_ambush`, `MAP_nest`, `MAP_collectable`, `MAP_plant`, `MAP_alert`, `MAP_enemy`, `MAP_bike`, `MAP_player_marker` (по умолчанию) и др. Радар показывает значки в радиусе примерно 25 м вокруг игрока; дальние — только с `edge = true`, на краю. Значки режима убираются при его перезагрузке.
 
 ## PvP и зоны
 

@@ -110,6 +110,33 @@ struct Icon {
     bool throughWalls = false;          // also when something stands between it and the camera
 };
 
+// A prop of the game placed by the mode's code (createObject): a gate, a barrier, furniture. It can move
+// (moveObject): every client slides it from where it is to the target in the same time.
+struct Object {
+    uint16_t id = 0;
+    std::string asset;                         // static mesh path (or a blueprint class "..._C")
+    float x = 0, y = 0, z = 0, pitch = 0, yaw = 0, roll = 0, scale = 1;
+    int32_t world = -1;                        // virtual world (-1: every)
+    bool collision = true;
+    bool moving = false;                       // from x.. to tx.. between moveStart and moveStart + moveTime
+    float tx = 0, ty = 0, tz = 0, tpitch = 0, tyaw = 0, troll = 0;
+    double moveStart = 0, moveTime = 0;
+    void At(double now, float out[6]) const;   // where it is now (x, y, z, pitch, yaw, roll)
+};
+
+// An icon of the mode on the big map and the radar (createBlip): the game's map icons (MAP_*).
+struct Blip {
+    uint16_t id = 0;
+    float x = 0, y = 0, z = 0;
+    std::string icon = "MAP_player_marker";
+    uint32_t color = 0xFFFFFFFF;              // RGBA tint
+    float scale = 1;
+    bool map = true, radar = true, edge = false;  // edge: on the radar's rim when it is farther away
+    int32_t world = -1;
+    uint16_t only = 0xFFFF;                   // shown to this player only (0xFFFF: everyone)
+    double onlyJoinedAt = 0;
+};
+
 // A character standing in the world for the mode (shopkeeper, guard): a look, an animation, a name.
 struct Actor {
     uint16_t id = 0;
@@ -223,6 +250,7 @@ struct Player {
     bool inventorySettling = false;                // the first check after that: the save's protected items go without a strike
     std::map<std::string, double> pickedUpAt;      // the game said it picked up this key (lower-case) then
     double inventoryRecheckAt = 0;                 // judge the last snapshot again then (it had keys still in grace)
+    std::string anim;                              // the animation the mode plays on it (asset path; "": none)
 };
 
 // A point of the world (logic points: z on the ground). Outside Server: g++ cannot use a nested class
@@ -273,6 +301,8 @@ public:
     // Hurts the player through its game's own damage (hit reaction, death); `attacker` becomes the killer.
     void Damage(Player* p, float amount, Player* attacker);
     void Freeze(Player* p, bool on);
+    // An animation on the player (docs/API.md "Анимации игрока"); path "": stop. Flags: net::AnimFlags.
+    void PlayAnim(Player* p, const std::string& path, uint8_t flags, float rate);
     // Health in percent of the maximum; 0 kills (playerDeath, the respawn cover, as any other death).
     void SetHealth(Player* p, float percent);
     // Skins (docs/API.md "Skins"): the player's own look, kept by nick in data/skins.json, and a uniform
@@ -368,6 +398,18 @@ public:
     const std::map<uint16_t, Carry>& Carries() const { return carries_; }
     bool GiveCarry(Player* p, uint16_t id);
     uint16_t DropCarry(Player* p, const float* xyzYaw = nullptr);  // the box it held (0: none)
+    // Objects (docs/API.md "Объекты"): a moving one stops where it is when changed.
+    uint16_t AddObject(Object o);
+    uint16_t AddBlip(Blip b);
+    bool UpdateBlip(const Blip& b);
+    bool RemoveBlip(uint16_t id);
+    Blip* FindBlip(uint16_t id) { auto it = blips_.find(id); return it == blips_.end() ? nullptr : &it->second; }
+    bool UpdateObject(const Object& o);
+    bool RemoveObject(uint16_t id);
+    bool MoveObject(uint16_t id, const float to[6], double seconds);
+    Object* FindObject(uint16_t id) { auto it = objects_.find(id); return it == objects_.end() ? nullptr : &it->second; }
+    const std::map<uint16_t, Object>& Objects() const { return objects_; }
+    std::string ResolveProp(const std::string& nameOrPath) const;  // a mesh name of data/props.txt or a /Game/ path; "" if unknown
     uint16_t AddWorldItem(WorldItem item);
     bool RemoveWorldItem(uint16_t id);
     // Clears the backpack and gives `inv` back, skipping keys that start with one of `drop`.
@@ -443,6 +485,15 @@ private:
     std::set<uint8_t> watchedKeys_;
     void SendInteraction(_ENetPeer* peer, const Interaction& i);
     void SendWatchedKeys(Player* to);  // null: everyone
+    std::map<uint16_t, Object> objects_;
+    std::map<uint16_t, Blip> blips_;
+    uint16_t nextBlip_ = 1;
+    void SendBlip(Player* to, const Blip& b);       // to null: every player it is for
+    uint16_t nextObject_ = 1;
+    void SendObject(_ENetPeer* peer, const Object& o);   // peer null: everyone
+    void TickObjects();                                 // finished moves: objectMoved
+    std::map<std::string, std::string> props_;          // lower-case mesh name -> asset path (data/props.txt)
+    void LoadProps();
     std::map<uint16_t, Actor> actors_;
     std::map<uint16_t, Vehicle> vehicles_;
     std::vector<ImageFile> images_;
