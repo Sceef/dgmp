@@ -42,6 +42,7 @@ struct Config {
     std::vector<std::string> admins;  // SteamIDs; nicknames count only with SteamAuth=off
     std::string master;               // master server host[:port] to be listed on ("": not listed)
     bool http = true;                 // modes may use http.request (Http=0: not)
+    std::vector<std::string> scripts; // scripts/<name>.lua run in every mode before its main.lua (Scripts=a,b)
     // Anti-cheat (docs/API.md "Античит"): limits of the hits a client reports, strikes before a kick.
     float maxHitDamage = 500;         // one hit, before the hit zone multiplier
     float meleeRange = 600;           // units

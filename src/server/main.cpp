@@ -176,6 +176,13 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
     cfg.rconPassword = Ini(ini, "RconPassword", "");
     cfg.master = Ini(ini, "Master", "");
     cfg.http = Ini(ini, "Http", "1") != "0";
+    for (std::string list = Ini(ini, "Scripts", ""), item; !list.empty();) {
+        const auto comma = list.find(','); item = list.substr(0, comma);
+        while (!item.empty() && item.front() == ' ') item.erase(0, 1);
+        while (!item.empty() && item.back() == ' ') item.pop_back();
+        if (!item.empty()) cfg.scripts.push_back(item);
+        list = comma == std::string::npos ? "" : list.substr(comma + 1);
+    }
     cfg.maxHitDamage = static_cast<float>(std::atof(Ini(ini, "MaxHitDamage", "500").c_str()));
     cfg.meleeRange = static_cast<float>(std::atof(Ini(ini, "MeleeRange", "6").c_str())) * 100.f;
     cfg.maxHitsPerSecond = std::max(1, std::atoi(Ini(ini, "MaxHitsPerSecond", "30").c_str()));

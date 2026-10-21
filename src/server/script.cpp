@@ -1587,8 +1587,8 @@ std::filesystem::file_time_type Script::NewestWrite() const {
     // min(), not {}: libstdc++'s file clock counts from 2174, so real file times are below zero there.
     auto newest = std::filesystem::file_time_type::min();
     std::error_code ec;
-    // The mode and the shared library it requires (modes/_lib).
-    for (const auto& root : {dir_, dir_.parent_path() / "_lib"}) {
+    // The mode, the shared library it requires (modes/_lib) and the server's scripts (scripts/).
+    for (const auto& root : {dir_, dir_.parent_path() / "_lib", server_.root() / "scripts"}) {
         ec.clear();
         for (auto it = std::filesystem::recursive_directory_iterator(root, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
             const auto ext = it->path().extension();
@@ -1716,6 +1716,18 @@ bool Script::Load(const std::string& modeId) {
     lua_setglobal(L_, "server");
 
     lua_sethook(L_, &BudgetHook, LUA_MASKCOUNT, 100000);
+    // The server's own scripts first (server.ini Scripts=): admin tools, logs, anti-cheat rules that every
+    // mode gets, like SA-MP filterscripts. They share the mode's state; an error skips only that script.
+    for (const auto& name : server_.config().scripts) {
+        const bool safe = !name.empty() && std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '-'; });
+        const auto file = (server_.root() / "scripts" / (name + ".lua")).u8string();
+        g_deadline = Clock() + kCallBudget;
+        const int st = safe ? luaL_loadfilex(L_, reinterpret_cast<const char*>(file.c_str()), "t") : LUA_ERRFILE;
+        const int ok = st == LUA_OK ? lua_pcall(L_, 0, 0, 0) : st;
+        g_deadline = 0;
+        if (ok != LUA_OK) { server_.Log("[script %s] load error: %s", name.c_str(), safe ? lua_tostring(L_, -1) : "bad name"); if (safe) lua_pop(L_, 1); }
+        else server_.Log("Script %s loaded", name.c_str());
+    }
     const auto mainFile = (dir_ / "main.lua").u8string();
     g_deadline = Clock() + kCallBudget;
     const int status = luaL_loadfilex(L_, reinterpret_cast<const char*>(mainFile.c_str()), "t");
