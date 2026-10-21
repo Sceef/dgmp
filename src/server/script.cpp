@@ -837,6 +837,7 @@ struct Api {
         lua_pushboolean(L, v.locked); lua_setfield(L, -2, "locked");
         lua_pushstring(L, v.blip == 0 ? "none" : v.blip == 2 ? "all" : "owner"); lua_setfield(L, -2, "blip");
         lua_pushstring(L, v.model.empty() ? "bike" : v.model.c_str()); lua_setfield(L, -2, "model");
+        if (!v.key.empty()) { lua_pushstring(L, v.key.c_str()); lua_setfield(L, -2, "key"); }
         lua_pushboolean(L, v.npc); lua_setfield(L, -2, "npc");
         lua_pushboolean(L, !v.route.empty()); lua_setfield(L, -2, "driving");
         if (v.owner.empty()) lua_pushnil(L); else lua_pushstring(L, v.owner.c_str());
@@ -908,6 +909,65 @@ struct Api {
         IconFields(L, 2, i, "setIcon");
         lua_pushboolean(L, Srv(L).UpdateIcon(i)); return 1;
     }
+    // ---- doors, vehicles and loot of world.json (docs/API.md "Входы", "Транспорт", "Лут") ----
+    static void PushDoorEnd(lua_State* L, const float* at, int world) {
+        lua_createtable(L, 0, 5);
+        lua_pushnumber(L, at[0]); lua_setfield(L, -2, "x"); lua_pushnumber(L, at[1]); lua_setfield(L, -2, "y");
+        lua_pushnumber(L, at[2]); lua_setfield(L, -2, "z"); lua_pushnumber(L, at[3]); lua_setfield(L, -2, "yaw");
+        lua_pushinteger(L, world); lua_setfield(L, -2, "world");
+    }
+    static void PushDoor(lua_State* L, const Door& d) {
+        lua_createtable(L, 0, 5);
+        lua_pushstring(L, d.key.c_str()); lua_setfield(L, -2, "key");
+        lua_pushstring(L, d.text.c_str()); lua_setfield(L, -2, "text");
+        lua_pushboolean(L, d.locked); lua_setfield(L, -2, "locked");
+        PushDoorEnd(L, d.a, d.worldA); lua_setfield(L, -2, "a");
+        PushDoorEnd(L, d.b, d.worldB); lua_setfield(L, -2, "b");
+    }
+    static int GetDoor(lua_State* L) {
+        const Door* d = Srv(L).FindDoor(luaL_checkstring(L, 1));
+        if (!d) { lua_pushnil(L); return 1; }
+        PushDoor(L, *d); return 1;
+    }
+    static int DoorsList(lua_State* L) {
+        lua_newtable(L); int i = 0;
+        for (auto& [key, d] : Srv(L).Doors()) { PushDoor(L, d); lua_rawseti(L, -2, ++i); }
+        return 1;
+    }
+    // setDoor(key, {locked = bool, text = "..."})
+    static int SetDoor(lua_State* L) {
+        const Door* old = Srv(L).FindDoor(luaL_checkstring(L, 1));
+        luaL_checktype(L, 2, LUA_TTABLE);
+        if (!old) { lua_pushboolean(L, 0); return 1; }
+        Door d = *old;
+        lua_getfield(L, 2, "locked"); if (!lua_isnil(L, -1)) d.locked = lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, 2, "text"); if (lua_isstring(L, -1)) d.text = lua_tostring(L, -1); lua_pop(L, 1);
+        Srv(L).UpdateDoor(d);
+        lua_pushboolean(L, 1); return 1;
+    }
+    // getVehicle("key" or id) -> the same table as vehicleInfo, or nil
+    static int GetVehicleByKey(lua_State* L) {
+        Vehicle* v = lua_isinteger(L, 1) ? Srv(L).FindVehicle(uint16_t(lua_tointeger(L, 1))) : Srv(L).FindVehicle(std::string(luaL_checkstring(L, 1)));
+        if (!v) { lua_pushnil(L); return 1; }
+        lua_settop(L, 0); lua_pushinteger(L, v->id);
+        return VehicleInfo(L);
+    }
+    static int LootList(lua_State* L) {
+        lua_newtable(L); int i = 0;
+        for (auto& l : Srv(L).LootList()) {
+            lua_createtable(L, 0, 9);
+            lua_pushstring(L, l.key.c_str()); lua_setfield(L, -2, "key");
+            lua_pushstring(L, l.item.c_str()); lua_setfield(L, -2, "item");
+            lua_pushinteger(L, l.count); lua_setfield(L, -2, "count");
+            lua_pushstring(L, l.tag.c_str()); lua_setfield(L, -2, "tag");
+            lua_pushnumber(L, l.x); lua_setfield(L, -2, "x"); lua_pushnumber(L, l.y); lua_setfield(L, -2, "y"); lua_pushnumber(L, l.z); lua_setfield(L, -2, "z");
+            if (l.itemId) { lua_pushinteger(L, l.itemId); lua_setfield(L, -2, "itemId"); }
+            lua_pushboolean(L, l.itemId != 0); lua_setfield(L, -2, "present");
+            lua_rawseti(L, -2, ++i);
+        }
+        return 1;
+    }
+
     // ---- blips (docs/API.md "Значки на карте") ----
     // createBlip{x, y, z, icon = "MAP_player_marker", color, scale = 1, map = true, radar = true, edge = false, world, player} -> id
     static void BlipFields(lua_State* L, int idx, Blip& b) {
@@ -1616,6 +1676,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
                                 {"playSound", &Api::PlaySoundAll},
+                                {"getDoor", &Api::GetDoor}, {"doors", &Api::DoorsList}, {"setDoor", &Api::SetDoor}, {"getVehicle", &Api::GetVehicleByKey}, {"loot", &Api::LootList},
                                 {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
                                 {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
                                 {"removeObject", &Api::RemoveObject}, {"getObject", &Api::GetObject}, {"objects", &Api::ObjectsList},
@@ -1788,6 +1849,14 @@ void Script::PlayerShot(Player& p, const std::string& weaponClass, float x, floa
     lua_pushnumber(L_, y); lua_setfield(L_, -2, "y");
     lua_pushnumber(L_, z); lua_setfield(L_, -2, "z");
     Fire("playerShot", 2);
+}
+
+int Script::DoorUse(Player& p, const std::string& door, const char* side) {
+    if (!L_) return 0;
+    Api::PushPlayer(L_, p); lua_pushstring(L_, door.c_str()); lua_pushstring(L_, side);
+    int result = 0;
+    Fire("door", 3, &result);
+    return (result & 1) ? 1 : (result & 2) ? 2 : 0;
 }
 
 void Script::AnimEnd(Player& p, const char* reason) {

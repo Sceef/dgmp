@@ -91,6 +91,44 @@ const char* T(const char* ru) {
     {"Удалён проп", "Prop deleted"},
     {"Дублируются поставленные пропсы", "Only placed props can be duplicated"},
     {"Копия", "Copied"},
+    {"+ Транспорт", "+ Vehicle"},
+    {"Гольф-кар", "Golf cart"},
+    {"Самосвал (эксп.)", "Dump truck (exp.)"},
+    {"Военный грузовик (эксп.)", "Military truck (exp.)"},
+    {"Всем", "Everyone"},
+    {"Никому", "Nobody"},
+    {"  — Внутри", "  — inside"},
+    {"  — Снаружи", "  — outside"},
+    {"отмена##veh", "cancel##veh"},
+    {"ЛКМ в мире ставит транспорт", "Left click in the world places a vehicle"},
+    {"Транспорт режима: мотоциклы, гольф-кары. Сервер создаёт его при запуске режима; код находит его по ключу: getVehicle(\"ключ\").", "The mode's vehicles: bikes, golf carts. The server makes them when the mode starts; the code finds them by key: getVehicle(\"key\")."},
+    {"Поставленный транспорт", "Placed vehicles"},
+    {"Входы", "Doors"},
+    {"+ Вход", "+ Door"},
+    {"отмена##door", "cancel##door"},
+    {"ЛКМ в мире ставит вход (снаружи)", "Left click in the world places the door (outside)"},
+    {"Теперь ЛКМ ставит вторую сторону (внутри)", "Now a left click places the other end (inside)"},
+    {"Двери в интерьеры, как входы в дома на RP-серверах SA-MP: [F] у одной стороны переносит к другой и в её виртуальный мир. Код режима может запереть вход (setDoor) или решить сам (событие door).", "Doors into interiors, like house entrances on SA-MP RP servers: [F] at one end takes the player to the other end and into its virtual world. The mode's code can lock a door (setDoor) or decide itself (event door)."},
+    {"Поставленные входы", "Placed doors"},
+    {"Лут", "Loot"},
+    {"+ Лут", "+ Loot"},
+    {"отмена##loot", "cancel##loot"},
+    {"ЛКМ в мире кладёт предмет (выбранный в библиотеке)", "Left click in the world lays an item (the one picked in the library)"},
+    {"Предметы, которые лежат в мире и возвращаются через заданное время после того, как их подобрали.", "Items lying in the world that come back some time after someone took them."},
+    {"Поставленный лут", "Placed loot"},
+    {"Вход", "Door"},
+    {"Снаружи", "Outside"},
+    {"Внутри", "Inside"},
+    {"Мир снаружи", "World outside"},
+    {"Мир внутри", "World inside"},
+    {"Надпись [F]", "[F] text"},
+    {"Заперт", "Locked"},
+    {"К другой стороне", "Other end"},
+    {"Владелец (ник)", "Owner (nickname)"},
+    {"Бензин", "Fuel"},
+    {"Количество", "Count"},
+    {"Возвращается через, с (0 — один раз)", "Comes back after, s (0: once)"},
+    {"из библиотеки", "from the library"},
     {"Мир", "World"},
     {"Режим", "Mode"},
     {"— выберите —", "— select —"},
@@ -505,6 +543,19 @@ struct WZone { char name[48] = ""; bool pvp = false, box = false; WT t; float ra
                bool enabled = true, notify = true; char text[160] = ""; int world = -1; };
 // A box to carry in both hands (world.json "carries", docs/API.md "Переноска"): placed here, made by the server.
 struct WCarry { char key[48] = "", model[32] = "crate", tag[48] = ""; WT t; int world = -1; int roll = 0; };  // roll: 0 keep, 1 drop, 2 break
+// Things the server makes from world.json without code (docs/API.md "Транспорт", "Входы", "Лут"):
+// type 0 a vehicle ("vehicles"), 1 a door ("doors": t outside, t2 inside), 2 loot ("loot").
+struct WEnt {
+    int type = 0;
+    char key[48] = "";
+    WT t; int world = 0;
+    char model[32] = "bike", owner[48] = ""; bool locked = false; int blip = 0; float fuel = 1;  // vehicle (blip: 0 owner, 1 all, 2 none)
+    WT t2; int world2 = 0; char text[96] = "";                                                     // door
+    char item[96] = ""; int count = 1, respawn = 300; char tag[48] = "";                           // loot
+};
+const char* const kEntPrefix[] = {"v", "d", "l"};
+const char* const kVehicleModels[] = {"bike", "golfcart", "dumptruck", "militarytruck"};
+const char* const kVehicleBlips[] = {"owner", "all", "none"};
 struct World {
     std::vector<std::string> remove;          // world objects ("<level>/<actor>")
     std::map<std::string, WT> move;           // world objects moved/turned
@@ -513,6 +564,7 @@ struct World {
     std::vector<WActor> actors;
     std::vector<WZone> zones;
     std::vector<WCarry> carries;
+    std::vector<WEnt> ents;                   // vehicles, doors, loot
     bool pvp = true;                          // world.json "rules" "pvp": players hurt each other outside PvE zones
     // Time of day and weather the mode starts with (world.json "environment"); weather -1 = automatic.
     struct Env { bool set = false; float time = 12; bool paused = false; int weather = -1; } env;
@@ -523,6 +575,8 @@ std::vector<LDecl> logicDecls;
 std::string placeLogic;                       // name a click places an object of (world mode)
 int placeZone = 0;                            // a click places a zone: 1 PvE, 2 PvP
 bool placeCarry = false;                      // a click places a box to carry
+int placeEnt = 0;                             // a click places: 1 a vehicle, 2 a door (then its inside end), 3 loot
+std::string doorPending;                      // the door whose inside end the next click places
 const LDecl* FindDecl(const std::string& name) { for (auto& d : logicDecls) if (d.name == name) return &d; return nullptr; }
 void SelectLogic(const std::string& name, int index);
 void LoadSkinLists(const std::string& m);
@@ -806,6 +860,41 @@ json::Value WorldJson(const World& w) {
         }
         v.set("carries", list);
     }
+    {
+        json::Value vehicles = json::Value::Array(), doors = json::Value::Array(), loot = json::Value::Array();
+        auto at = [](json::Value& j, const WT& t, int inWorld, bool withWorld) {
+            j.set("x", double(std::round(t.x))); j.set("y", double(std::round(t.y))); j.set("z", double(std::round(t.z))); j.set("yaw", double(std::round(t.yaw)));
+            if (withWorld) j.set("world", double(inWorld));
+        };
+        for (auto& e : w.ents) {
+            json::Value j = json::Value::Object();
+            j.set("key", std::string(e.key));
+            if (e.type == 0) {
+                j.set("model", std::string(e.model)); at(j, e.t, e.world, e.world != 0);
+                if (e.locked) j.set("locked", true);
+                if (e.owner[0]) j.set("owner", std::string(e.owner));
+                if (e.blip) j.set("blip", std::string(kVehicleBlips[e.blip]));
+                if (e.fuel < 1) j.set("fuel", double(std::round(e.fuel * 100) / 100));
+                vehicles.push(j);
+            } else if (e.type == 1) {
+                if (e.text[0]) j.set("text", std::string(e.text));
+                if (e.locked) j.set("locked", true);
+                json::Value outside = json::Value::Object(), inside = json::Value::Object();
+                at(outside, e.t, e.world, true); at(inside, e.t2, e.world2, true);
+                j.set("a", outside); j.set("b", inside);
+                doors.push(j);
+            } else {
+                j.set("item", std::string(e.item)); if (e.count != 1) j.set("count", e.count);
+                at(j, e.t, e.world, e.world >= 0);
+                j.set("respawn", e.respawn);
+                if (e.tag[0]) j.set("tag", std::string(e.tag));
+                loot.push(j);
+            }
+        }
+        if (vehicles.size()) v.set("vehicles", vehicles);
+        if (doors.size()) v.set("doors", doors);
+        if (loot.size()) v.set("loot", loot);
+    }
     if (!w.pvp) { json::Value rules = json::Value::Object(); rules.set("pvp", false); v.set("rules", rules); }
     if (w.env.set) {
         json::Value e = json::Value::Object();
@@ -867,7 +956,51 @@ void WorldFrom(const json::Value& v, World& w) {
         c.roll = IndexOf(kCarryRolls, 3, j["roll"].asString(), 0);
         if (c.key[0]) w.carries.push_back(c);
     }
+    auto at = [](const json::Value& j, WT& t) { t.x = float(j["x"].asNumber()); t.y = float(j["y"].asNumber()); t.z = float(j["z"].asNumber()); t.yaw = float(j["yaw"].asNumber()); };
+    for (auto& j : v["vehicles"].elements()) {
+        WEnt e; e.type = 0; Copy(e.key, sizeof e.key, j["key"].asString()); at(j, e.t);
+        Copy(e.model, sizeof e.model, j["model"].isString() ? j["model"].asString() : std::string("bike"));
+        e.world = j["world"].isNumber() ? int(j["world"].asNumber()) : 0;
+        e.locked = j["locked"].asBool(false); Copy(e.owner, sizeof e.owner, j["owner"].asString());
+        e.blip = IndexOf(kVehicleBlips, 3, j["blip"].asString(), 0); e.fuel = float(j["fuel"].asNumber(1));
+        if (e.key[0]) w.ents.push_back(e);
+    }
+    for (auto& j : v["doors"].elements()) {
+        WEnt e; e.type = 1; Copy(e.key, sizeof e.key, j["key"].asString()); Copy(e.text, sizeof e.text, j["text"].asString());
+        e.locked = j["locked"].asBool(false);
+        at(j["a"], e.t); e.world = j["a"]["world"].isNumber() ? int(j["a"]["world"].asNumber()) : 0;
+        at(j["b"], e.t2); e.world2 = j["b"]["world"].isNumber() ? int(j["b"]["world"].asNumber()) : 0;
+        if (e.key[0]) w.ents.push_back(e);
+    }
+    for (auto& j : v["loot"].elements()) {
+        WEnt e; e.type = 2; Copy(e.key, sizeof e.key, j["key"].asString()); at(j, e.t);
+        Copy(e.item, sizeof e.item, j["item"].asString()); e.count = std::max(1, j["count"].asInt(1));
+        e.world = j["world"].isNumber() ? int(j["world"].asNumber()) : -1;
+        e.respawn = std::max(0, j["respawn"].asInt(300)); Copy(e.tag, sizeof e.tag, j["tag"].asString());
+        if (e.key[0]) w.ents.push_back(e);
+    }
     w.pvp = v["rules"]["pvp"].asBool(true);
+}
+// ---------------------------------------------------------------- vehicles, doors, loot (world.json)
+// Selection id: "v:key", "l:key", "d:key:a" / "d:key:b" (the door's outside / inside end).
+WEnt* EntOf(const std::string& id, bool* inside = nullptr) {
+    if (id.size() < 3 || id[1] != ':') return nullptr;
+    const int type = id[0] == 'v' ? 0 : id[0] == 'd' ? 1 : 2;
+    std::string key = id.substr(2);
+    bool b = false;
+    if (type == 1 && key.size() > 2 && key[key.size() - 2] == ':') { b = key.back() == 'b'; key.resize(key.size() - 2); }
+    if (inside) *inside = b;
+    for (auto& e : world.ents) if (e.type == type && key == e.key) return &e;
+    return nullptr;
+}
+std::string EntId(const WEnt& e, bool inside = false) { return std::string(kEntPrefix[e.type]) + ":" + e.key + (e.type == 1 ? (inside ? ":b" : ":a") : ""); }
+void SelectEnt(const WEnt& e, bool inside = false) { wsel = {7, EntId(e, inside), "", inside ? e.t2 : e.t}; }
+std::string FreeEntKey(int type, const std::string& base) {
+    for (int n = 1;; ++n) {
+        const std::string key = base + std::to_string(n);
+        bool taken = false; for (auto& e : world.ents) taken |= e.type == type && key == e.key;
+        if (!taken) return key;
+    }
 }
 // ---------------------------------------------------------------- boxes to carry (world.json "carries")
 WCarry* CarryByKey(const std::string& key) { for (auto& c : world.carries) if (key == c.key) return &c; return nullptr; }
@@ -956,6 +1089,8 @@ void ScanLogic(const std::string& m) {
     }
     // Every mode has it: where players choose their skin (player:customize() takes them there).
     if (!FindDecl("wardrobe")) logicDecls.push_back({"wardrobe", false, false, false, 5});
+    // And the spawn points: the server puts joining and respawning players on one of them (else server.ini's).
+    if (!FindDecl("spawn")) logicDecls.push_back({"spawn", true, false, false, 5});
 }
 fs::path WorldFile(const std::string& m) { return fs::path(profile::Root()) / L"modes" / m / L"world.json"; }
 
@@ -1093,6 +1228,20 @@ void UpdateLogicVisuals(UObject* pawn) {
                 }
             }
         if (mode == 0 && !worldMode.empty())
+            for (auto& e : world.ents) for (int end = 0; end < (e.type == 1 ? 2 : 1); ++end) {
+                static const char* const marks[] = {"[car] ", "[door] ", "[loot] "};
+                std::string text = marks[e.type] + std::string(e.key);
+                if (e.type == 0) text += std::string("  ") + e.model;
+                if (e.type == 1) text += end ? "  (in)" : "  (out)";
+                if (e.type == 2 && e.item[0]) text += std::string("  ") + e.item;
+                const int inWorld = end ? e.world2 : e.world;
+                if (inWorld) text += "  w" + std::to_string(inWorld);
+                const std::string id = EntId(e, end == 1);
+                Want want{"ent#" + id, text, {}, false, wsel.kind == 7 && wsel.id == id ? 2 : 5 + e.type, 0};
+                want.item.t = end ? e.t2 : e.t;
+                wants.push_back(want);
+            }
+        if (mode == 0 && !worldMode.empty())
             for (int i = 0; i < int(world.zones.size()); ++i) {
                 const WZone& z = world.zones[size_t(i)];
                 Want w{"zone#" + std::to_string(i), std::string(z.name) + (z.pvp ? "  (PvP)" : "  (PvE)") + (z.enabled ? "" : " -"), {}, true,
@@ -1164,7 +1313,9 @@ void UpdateLogicVisuals(UObject* pawn) {
             Params p(f); p.Set("NewLocation", FVector{w.item.t.x, w.item.t.y, w.item.t.z}); p.Set("NewRotation", FRotator{0, w.item.t.yaw, 0}); p.SetBool("bTeleport", true);
             Call(v.actor, "K2_SetActorLocationAndRotation", &p);
         }
-        static const float colors[5][4] = {{0.15f, 0.75f, 0.9f, 1}, {1.f, 0.5f, 0.15f, 1}, {1.f, 0.85f, 0.2f, 1}, {0.2f, 0.85f, 0.35f, 1}, {0.95f, 0.25f, 0.2f, 1}};
+        // 0 trigger, 1 point, 2 selected, 3 PvE, 4 PvP, 5 vehicle, 6 door, 7 loot
+        static const float colors[8][4] = {{0.15f, 0.75f, 0.9f, 1}, {1.f, 0.5f, 0.15f, 1}, {1.f, 0.85f, 0.2f, 1}, {0.2f, 0.85f, 0.35f, 1}, {0.95f, 0.25f, 0.2f, 1},
+                                           {0.7f, 0.35f, 0.95f, 1}, {0.25f, 0.9f, 0.8f, 1}, {0.95f, 0.7f, 0.25f, 1}};
         if (v.color != w.color && IsValid(v.material)) if (auto f = Fn(v.material, "SetVectorParameterValue")) {
             Params p(f); p.Set("ParameterName", colorName);
             struct { float r, g, b, a; } c{colors[w.color][0], colors[w.color][1], colors[w.color][2], colors[w.color][3]};
@@ -1354,7 +1505,7 @@ void LoadWorld(const std::string& m) {
     if (!ss.str().empty() && json::Value::Parse(ss.str(), v) && v.isObject()) WorldFrom(v, world);
     ScanLogic(m);
     LoadSkinLists(m);
-    placeLogic.clear(); placeZone = 0; placeCarry = false;
+    placeLogic.clear(); placeZone = 0; placeCarry = false; placeEnt = 0; doorPending.clear();
     if (world.env.set) {  // the mode's own time and weather
         DGMP_SetTimeOfDay(world.env.time); DGMP_SetTimePaused(world.env.paused);
         if (world.env.weather < 0) DGMP_SetWeatherAutomatic(1); else DGMP_SetWeather(uint32_t(world.env.weather));
@@ -1431,6 +1582,30 @@ void WorldClick(UObject* pawn, UObject* controller) {
         SelectZone(int(world.zones.size()) - 1);
         Toast(T("Поставлена зона ") + std::string(z.name));
         if (!repeatPlace) placeZone = 0;
+        return;
+    }
+    if (!doorPending.empty()) {  // the door placed last: its inside end
+        WEnt* d = EntOf("d:" + doorPending + ":b");
+        if (d) { d->t2.x = pick.at.X; d->t2.y = pick.at.Y; d->t2.z = pick.at.Z; d->t2.yaw = std::round(cam.rot.Yaw); SelectEnt(*d, true); Toast(T("Вход") + std::string(" ") + d->key); }
+        doorPending.clear(); placeEnt = 0;
+        return;
+    }
+    if (placeEnt) {
+        WEnt e; e.type = placeEnt - 1;
+        static const char* const bases[] = {"car", "door", "loot"};
+        Copy(e.key, sizeof e.key, FreeEntKey(e.type, bases[e.type]));
+        e.t.x = pick.at.X; e.t.y = pick.at.Y; e.t.z = pick.at.Z; e.t.yaw = std::round(cam.rot.Yaw);
+        if (WEnt* sel = wsel.kind == 7 ? EntOf(wsel.id) : nullptr; sel && sel->type == e.type) {  // like the selected one
+            Copy(e.model, sizeof e.model, sel->model); e.world = sel->world; e.world2 = sel->world2; e.blip = sel->blip; e.locked = sel->locked;
+            Copy(e.item, sizeof e.item, sel->item); e.count = sel->count; e.respawn = sel->respawn; Copy(e.tag, sizeof e.tag, sel->tag);
+        }
+        if (e.type == 1) { e.t2 = e.t; e.world2 = std::max(1, e.world2); }
+        if (e.type == 2) { e.world = -1; if (placeItem[0]) Copy(e.item, sizeof e.item, placeItem); }
+        world.ents.push_back(e);
+        SelectEnt(world.ents.back());
+        if (e.type == 1) { doorPending = e.key; Toast(T("Теперь ЛКМ ставит вторую сторону (внутри)")); return; }
+        Toast(T("Поставлено: ") + std::string(e.key));
+        if (!repeatPlace) placeEnt = 0;
         return;
     }
     if (placeCarry) {
@@ -1620,6 +1795,9 @@ void WorldDelete() {
         world.actors.erase(std::remove_if(world.actors.begin(), world.actors.end(), [](const WActor& a) { return wsel.id == a.id; }), world.actors.end());
     } else if (wsel.kind == 6) {
         world.carries.erase(std::remove_if(world.carries.begin(), world.carries.end(), [](const WCarry& c) { return wsel.id == c.key; }), world.carries.end());
+    } else if (wsel.kind == 7) {
+        const WEnt* e = EntOf(wsel.id);
+        if (e) world.ents.erase(world.ents.begin() + (e - world.ents.data()));
     } else return;
     wsel = {}; worldDirty = true;
 }
@@ -1630,6 +1808,16 @@ void WorldDuplicate() {
             Copy(copy.id, sizeof copy.id, FreeActorId(copy.group[0] ? std::string(copy.group) + "_" : std::string("npc")));
             copy.t.x += 100; copy.t.y += 100;
             world.actors.push_back(copy); SelectActor(copy.id); Toast(T("Копия"));
+        }
+        return;
+    }
+    if (wsel.kind == 7) {
+        if (WEnt* e = EntOf(wsel.id)) {
+            WEnt copy = *e;
+            std::string base = copy.key; while (!base.empty() && isdigit(static_cast<unsigned char>(base.back()))) base.pop_back();
+            Copy(copy.key, sizeof copy.key, FreeEntKey(copy.type, base.empty() ? "x" : base));
+            copy.t.x += 150; copy.t.y += 150; copy.t2.x += 150; copy.t2.y += 150;
+            world.ents.push_back(copy); SelectEnt(world.ents.back()); Toast(T("Копия"));
         }
         return;
     }
@@ -1704,7 +1892,7 @@ void DrawLogicList() {
             ImGui::PushID(name.c_str());
             const bool armed = placeActor == name;
             if (ImGui::SmallButton(armed ? T("отмена") : !d->list ? (mine.empty() ? T("поставить") : T("переставить")) : T("добавить"))) {
-                placeActor = armed ? "" : name; placeProp.clear(); placeLogic.clear(); placeZone = 0; placeCarry = false;
+                placeActor = armed ? "" : name; placeProp.clear(); placeLogic.clear(); placeZone = 0; placeCarry = false; placeEnt = 0;
                 if (!armed) Toast(T("ЛКМ в мире ставит NPC: ") + name);
             }
             ImGui::SameLine();
@@ -1722,7 +1910,7 @@ void DrawLogicList() {
         ImGui::PushID(name.c_str());
         const bool armed = placeLogic == name;
         if (ImGui::SmallButton(armed ? T("отмена") : d && !d->list ? (count ? T("переставить") : T("поставить")) : T("добавить"))) {
-            placeLogic = armed ? "" : name; placeProp.clear(); placeActor.clear(); placeZone = 0; placeCarry = false;
+            placeLogic = armed ? "" : name; placeProp.clear(); placeActor.clear(); placeZone = 0; placeCarry = false; placeEnt = 0;
             if (!armed) Toast(T("ЛКМ в мире ставит: ") + name);
         }
         ImGui::SameLine();
@@ -1756,7 +1944,7 @@ void DrawZones() {
         const bool armed = placeZone == kind;
         if (kind == 2) ImGui::SameLine();
         if (ImGui::Button(armed ? (std::string(T("отмена")) + "##zone" + std::to_string(kind)).c_str() : kind == 1 ? T("+ PvE зона") : T("+ PvP зона"))) {
-            placeZone = armed ? 0 : kind; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeCarry = false;
+            placeZone = armed ? 0 : kind; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeCarry = false; placeEnt = 0;
             if (!armed) Toast(T("ЛКМ в мире ставит центр зоны"));
         }
     }
@@ -1847,6 +2035,62 @@ void DrawCarryProps() {
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt(T("Мир (-1 — во всех)"), &c->world)) c->world = std::max(-1, c->world);
     ImGui::TextDisabled(c->tag[0] ? "Lua: getCarry(\"%s\")  /  carries(\"%s\")" : "Lua: getCarry(\"%s\")", c->key, c->tag);
+    if (ImGui::Button(T("Удалить"))) { ImGui::PopID(); WorldDelete(); return; }
+    ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
+    ImGui::PopID();
+}
+// The selected vehicle, door or loot (World > Selected).
+char entKeyEdit[48] = "";
+std::string entKeyFor;
+void DrawEntProps() {
+    bool inside = false;
+    WEnt* e = EntOf(wsel.id, &inside);
+    if (!e) { wsel = {}; return; }
+    ImGui::PushID("ent");
+    static const char* const names[] = {"Транспорт", "Вход", "Лут"};
+    ImGui::TextWrapped("%s  %s%s", T(names[e->type]), e->key, e->type == 1 ? (inside ? T("  — Внутри") : T("  — Снаружи")) : "");
+    WT& t = inside ? e->t2 : e->t;
+    bool moved = false;
+    moved |= ImGui::DragFloat3(T("Позиция"), &t.x, 5.f, 0, 0, "%.0f");
+    moved |= ImGui::DragFloat(T("Поворот"), &t.yaw, 1.f, -360, 360, "%.0f°");
+    if (moved) wsel.t = t;
+    const std::string id = EntId(*e, inside);
+    if (entKeyFor != id) { entKeyFor = id; Copy(entKeyEdit, sizeof entKeyEdit, e->key); }
+    ImGui::InputText(T("Ключ"), entKeyEdit, sizeof entKeyEdit);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        bool taken = false; for (auto& o : world.ents) taken |= &o != e && o.type == e->type && std::strcmp(o.key, entKeyEdit) == 0;
+        if (!ValidId(entKeyEdit)) Toast(T("Ключ: латиница, цифры, _ и -"));
+        else if (taken) Toast(T("Такой ключ уже есть"));
+        else { Copy(e->key, sizeof e->key, entKeyEdit); wsel.id = EntId(*e, inside); entKeyFor = wsel.id; }
+        Copy(entKeyEdit, sizeof entKeyEdit, e->key);
+    }
+    ImGui::SetNextItemWidth(120);
+    if (e->type == 0) {
+        int model = IndexOf(kVehicleModels, 4, e->model, 0);
+        static const char* const models[] = {"Мотоцикл", "Гольф-кар", "Самосвал (эксп.)", "Военный грузовик (эксп.)"};
+        if (ImGui::Combo(T("Модель"), &model, TArr(models, 4), 4)) Copy(e->model, sizeof e->model, kVehicleModels[model]);
+        ImGui::Checkbox(T("Заперт"), &e->locked);
+        ImGui::InputText(T("Владелец (ник)"), e->owner, sizeof e->owner);
+        static const char* const blips[] = {"Владельцу", "Всем", "Никому"};
+        ImGui::Combo(T("Метка на карте"), &e->blip, TArr(blips, 3), 3);
+        ImGui::SliderFloat(T("Бензин"), &e->fuel, 0, 1, "%.2f");
+        ImGui::SetNextItemWidth(120); if (ImGui::InputInt(T("Мир"), &e->world)) e->world = std::max(0, e->world);
+        ImGui::TextDisabled("Lua: getVehicle(\"%s\")", e->key);
+    } else if (e->type == 1) {
+        ImGui::InputText(T("Надпись [F]"), e->text, sizeof e->text);
+        ImGui::Checkbox(T("Заперт"), &e->locked);
+        ImGui::SetNextItemWidth(120); if (ImGui::InputInt(T("Мир снаружи"), &e->world)) e->world = std::max(0, e->world);
+        ImGui::SetNextItemWidth(120); if (ImGui::InputInt(T("Мир внутри"), &e->world2)) e->world2 = std::max(0, e->world2);
+        if (ImGui::Button(T("К другой стороне"))) SelectEnt(*e, !inside);
+        ImGui::TextDisabled("Lua: getDoor(\"%s\"), setDoor(\"%s\", {locked = true})", e->key, e->key);
+    } else {
+        ImGui::InputText(T("Предмет"), e->item, sizeof e->item);
+        ImGui::SameLine(); if (ImGui::SmallButton(T("из библиотеки")) && placeItem[0]) Copy(e->item, sizeof e->item, placeItem);
+        ImGui::SetNextItemWidth(120); if (ImGui::InputInt(T("Количество"), &e->count)) e->count = std::max(1, e->count);
+        ImGui::SetNextItemWidth(120); if (ImGui::InputInt(T("Возвращается через, с (0 — один раз)"), &e->respawn)) e->respawn = std::max(0, e->respawn);
+        ImGui::InputText(T("Метка"), e->tag, sizeof e->tag);
+        ImGui::TextDisabled("Lua: loot()");
+    }
     if (ImGui::Button(T("Удалить"))) { ImGui::PopID(); WorldDelete(); return; }
     ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
     ImGui::PopID();
@@ -1965,7 +2209,7 @@ void DrawWorld() {
         const char* label = std::strcmp(kind, "light:spot") == 0 ? T("Прожектор") : T("Точечный свет");
         if (std::strcmp(kind, "light:spot") == 0) ImGui::SameLine();
         if (ImGui::Button(armed ? (std::string(T("отмена")) + "##" + kind).c_str() : (std::string("+ ") + label).c_str())) {
-            placeProp = armed ? "" : kind; placeLogic.clear(); placeZone = 0; placeCarry = false;
+            placeProp = armed ? "" : kind; placeLogic.clear(); placeZone = 0; placeCarry = false; placeEnt = 0;
             if (!armed) Toast(T("ЛКМ в мире ставит: ") + std::string(label));
         }
     }
@@ -1975,7 +2219,7 @@ void DrawWorld() {
     {
         const bool armed = placeActor == "*";
         if (ImGui::Button(armed ? T("отмена##npc") : "+ NPC")) {
-            placeActor = armed ? "" : "*"; placeProp.clear(); placeLogic.clear(); placeZone = 0; placeCarry = false;
+            placeActor = armed ? "" : "*"; placeProp.clear(); placeLogic.clear(); placeZone = 0; placeCarry = false; placeEnt = 0;
             if (!armed) Toast(T("ЛКМ в мире ставит NPC"));
         }
         ImGui::SameLine(); ImGui::TextDisabled("(?)");
@@ -1994,7 +2238,7 @@ void DrawWorld() {
     ImGui::SeparatorText(T("Переноска"));
     {
         if (ImGui::Button(placeCarry ? T("отмена##carry") : T("+ Ящик"))) {
-            placeCarry = !placeCarry; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeZone = 0;
+            placeCarry = !placeCarry; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeZone = 0; placeEnt = 0;
             if (placeCarry) Toast(T("ЛКМ в мире ставит ящик"));
         }
         ImGui::SameLine(); ImGui::TextDisabled("(?)");
@@ -2007,11 +2251,46 @@ void DrawWorld() {
             }
         }
     }
+    {
+        static const char* const titles[] = {"Транспорт", "Входы", "Лут"};
+        static const char* const adds[] = {"+ Транспорт", "+ Вход", "+ Лут"};
+        static const char* const cancels[] = {"отмена##veh", "отмена##door", "отмена##loot"};
+        static const char* const hints[] = {"ЛКМ в мире ставит транспорт", "ЛКМ в мире ставит вход (снаружи)", "ЛКМ в мире кладёт предмет (выбранный в библиотеке)"};
+        static const char* const helps[] = {"Транспорт режима: мотоциклы, гольф-кары. Сервер создаёт его при запуске режима; код находит его по ключу: getVehicle(\"ключ\").",
+                                           "Двери в интерьеры, как входы в дома на RP-серверах SA-MP: [F] у одной стороны переносит к другой и в её виртуальный мир. Код режима может запереть вход (setDoor) или решить сам (событие door).",
+                                           "Предметы, которые лежат в мире и возвращаются через заданное время после того, как их подобрали."};
+        static const char* const lists[] = {"Поставленный транспорт", "Поставленные входы", "Поставленный лут"};
+        for (int type = 0; type < 3; ++type) {
+            ImGui::SeparatorText(T(titles[type]));
+            const bool armed = placeEnt == type + 1;
+            if (ImGui::Button(armed ? T(cancels[type]) : T(adds[type]))) {
+                placeEnt = armed ? 0 : type + 1; doorPending.clear();
+                placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeZone = 0; placeCarry = false;
+                if (!armed) Toast(T(hints[type]));
+            }
+            ImGui::SameLine(); ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T(helps[type]));
+            bool any = false; for (auto& e : world.ents) any |= e.type == type;
+            if (!any) continue;
+            ImGui::SameLine();
+            if (ImGui::TreeNode(T(lists[type]))) {
+                for (auto& e : world.ents) if (e.type == type) {
+                    std::string label = e.key;
+                    if (type == 0) label += std::string("  —  ") + e.model;
+                    if (type == 1 && e.text[0]) label += std::string("  —  ") + e.text;
+                    if (type == 2) label += std::string("  —  ") + e.item;
+                    if (ImGui::Selectable((label + "##ent" + std::to_string(type)).c_str(), wsel.kind == 7 && EntOf(wsel.id) == &e)) SelectEnt(e);
+                }
+                ImGui::TreePop();
+            }
+        }
+    }
     ImGui::SeparatorText(T("Выделено"));
     if (wsel.kind == 0) ImGui::TextDisabled(placeProp.empty() ? T("Кликните по объекту в мире") : T("Кликните в мире, чтобы поставить проп"));
     else if (wsel.kind == 4) DrawActorProps();
     else if (wsel.kind == 5) DrawZoneProps();
     else if (wsel.kind == 6) DrawCarryProps();
+    else if (wsel.kind == 7) DrawEntProps();
     else {
         ImGui::TextWrapped("%s", wsel.kind == 2 ? (T("Проп ") + wsel.id).c_str() : wsel.id.c_str());
         if (!wsel.cls.empty()) ImGui::TextDisabled("%s", wsel.cls.c_str());
@@ -2558,6 +2837,7 @@ void DrawWorldTools() {
             else if (wsel.kind == 4) { if (WActor* a = ActorById(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; a->t = wsel.t; } }
             else if (wsel.kind == 5) { if (WZone* z = ZoneOf(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; z->t = wsel.t; } }
             else if (wsel.kind == 6) { if (WCarry* c = CarryByKey(wsel.id)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; c->t = wsel.t; } }
+            else if (wsel.kind == 7) { bool inside = false; if (WEnt* e = EntOf(wsel.id, &inside)) { wsel.t.pitch = wsel.t.roll = 0; wsel.t.scale = 1; (inside ? e->t2 : e->t) = wsel.t; } }
             else for (auto& a : world.add) if (a.uid == wsel.id) a.t = wsel.t;
             worldDirty = true;
         }
@@ -2615,9 +2895,18 @@ void DrawWorldTools() {
         const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
         if (dx * dx + dy * dy < std::max(hoverBest, 25.f * 25.f)) { hoverBest = dx * dx + dy * dy; hoverCarry = i; hoverActor = -1; hoverIndex = -1; hoverZone = -1; }
     }
+    std::string hoverEnt;  // vehicles, doors, loot: their beam
+    for (auto& e : world.ents) for (int end = 0; end < (e.type == 1 ? 2 : 1); ++end) {
+        const WT& t = end ? e.t2 : e.t;
+        ImVec2 c;
+        if (!Project(view, proj, w, h, t.x, t.y, t.z + 200, c)) continue;
+        const float dx = c.x - io.MousePos.x, dy = c.y - io.MousePos.y;
+        if (dx * dx + dy * dy < hoverBest) { hoverBest = dx * dx + dy * dy; hoverEnt = EntId(e, end == 1); hoverCarry = hoverActor = hoverIndex = hoverZone = -1; }
+    }
     if (overlay::CursorMode() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse && !busy) {
-        const bool placing = !placeLogic.empty() || !placeProp.empty() || !placeActor.empty() || placeZone || placeCarry;
-        if (hoverCarry >= 0 && !placing) SelectCarry(world.carries[size_t(hoverCarry)].key);
+        const bool placing = !placeLogic.empty() || !placeProp.empty() || !placeActor.empty() || placeZone || placeCarry || placeEnt || !doorPending.empty();
+        if (!hoverEnt.empty() && !placing) { bool inside = false; if (WEnt* e = EntOf(hoverEnt, &inside)) SelectEnt(*e, inside); }
+        else if (hoverCarry >= 0 && !placing) SelectCarry(world.carries[size_t(hoverCarry)].key);
         else if (hoverActor >= 0 && !placing) SelectActor(world.actors[size_t(hoverActor)].id);
         else if (hoverZone >= 0 && !placing) SelectZone(hoverZone);
         else if (hoverIndex >= 0 && !placing) SelectLogic(hoverName, hoverIndex);

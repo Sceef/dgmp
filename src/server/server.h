@@ -85,6 +85,7 @@ struct Vehicle {
     uint32_t blipColor = 0;            // RGBA of its radar marker for others (0: light blue)
     std::string blipIcon;              // its texture: a MAP_* name of the game's map icons ("": the bike)
     std::string model;                 // "" the bike, "golfcart", "dumptruck", "militarytruck"
+    std::string key;                   // placed in the editor (world.json "vehicles"): getVehicle("key")
     bool npc = false;                  // an NPC of the mode drives it (players do not get on it)
     std::string npcLook, npcName;      // its look ("": the default one) and the name above it
     std::vector<float> route;          // x,y,z of the points its NPC drives through (driveVehicle; the first: where it set off)
@@ -122,6 +123,25 @@ struct Object {
     float tx = 0, ty = 0, tz = 0, tpitch = 0, tyaw = 0, troll = 0;
     double moveStart = 0, moveTime = 0;
     void At(double now, float out[6]) const;   // where it is now (x, y, z, pitch, yaw, roll)
+};
+
+// A door of the mode (world.json "doors", docs/API.md "Входы"): two ends; [F] at one takes the player to
+// the other end and into its virtual world. The mode may refuse it (event door) or lock it (setDoor).
+struct Door {
+    std::string key, text;
+    float a[4] = {0, 0, 0, 0}, b[4] = {0, 0, 0, 0};  // x, y, z (ground), yaw of the ends
+    int32_t worldA = 0, worldB = 0;
+    bool locked = false;
+    uint16_t useA = 0, useB = 0;                     // their interactions
+};
+// Loot of the mode (world.json "loot"): an item lying there; taken, it comes back after `respawn` seconds.
+struct Loot {
+    std::string key, item, tag;
+    int count = 1;
+    float x = 0, y = 0, z = 0, yaw = 0;
+    double respawn = 300;
+    uint16_t itemId = 0;                             // the world item while it lies there (0: taken)
+    double backAt = 0;
 };
 
 // An icon of the mode on the big map and the radar (createBlip): the game's map icons (MAP_*).
@@ -407,6 +427,14 @@ public:
     // Objects (docs/API.md "Объекты"): a moving one stops where it is when changed.
     uint16_t AddObject(Object o);
     uint16_t AddBlip(Blip b);
+    // Doors, vehicles, loot and spawn points placed in the editor (world.json), made before the mode's code.
+    Door* FindDoor(const std::string& key) { auto it = doors_.find(key); return it == doors_.end() ? nullptr : &it->second; }
+    const std::map<std::string, Door>& Doors() const { return doors_; }
+    void UpdateDoor(const Door& d);                // its text / lock (the ends stay)
+    Vehicle* FindVehicle(const std::string& key) { for (auto& [id, v] : vehicles_) if (!key.empty() && v.key == key) return &v; return nullptr; }
+    const std::vector<Loot>& LootList() const { return loot_; }
+    const std::vector<Spot>& SpawnPoints() const { return spawns_; }
+    Spot SpawnSpot() const;                        // a random spawn point of the mode, else server.ini's
     bool UpdateBlip(const Blip& b);
     bool RemoveBlip(uint16_t id);
     Blip* FindBlip(uint16_t id) { auto it = blips_.find(id); return it == blips_.end() ? nullptr : &it->second; }
@@ -493,6 +521,17 @@ private:
     void SendWatchedKeys(Player* to);  // null: everyone
     std::map<uint16_t, Object> objects_;
     std::map<uint16_t, Blip> blips_;
+    std::map<std::string, Door> doors_;
+    std::vector<Loot> loot_;
+    std::vector<uint16_t> worldVehicles_;          // made from world.json (removed on a reload)
+    std::vector<Spot> spawns_;                     // world.json logic "spawn"
+    double nextLootTick_ = 0;
+    void LoadDoors(const json::Value& world);
+    void LoadWorldVehicles(const json::Value& world);
+    void LoadLoot(const json::Value& world);
+    void TickLoot();
+    bool UseDoor(Player& p, uint16_t interaction);   // true: it was a door's
+    void LootTaken(uint16_t worldItem);
     uint16_t nextBlip_ = 1;
     void SendBlip(Player* to, const Blip& b);       // to null: every player it is for
     uint16_t nextObject_ = 1;

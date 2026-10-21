@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <sstream>
@@ -143,6 +144,7 @@ void Server::Run() {
         TickMarkers();
         TickVehicles();
         TickObjects();
+        if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
         if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
@@ -243,11 +245,12 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
             Log("%s respawned", p->nick.c_str());
             p->inventoryGraceUntil = now + 8;  // the game reloaded the save's backpack: what the server did not give is taken again
             p->inventorySettling = true;
-            if (!script_->PlayerRespawn(*p)) Teleport(p, cfg_.spawnX, cfg_.spawnY, cfg_.spawnZ, cfg_.spawnYaw);
+            if (!script_->PlayerRespawn(*p)) { const Spot s = SpawnSpot(); Teleport(p, s.x, s.y, s.z, s.yaw); }
             break;
         }
         if (e.type == uint8_t(net::GameEventType::Pickup)) PickedUp(*p, e);
         script_->GameEvent(*p, e);
+        if (e.type == uint8_t(net::GameEventType::Pickup) && StartsWith(e.id, "dgmp_item_")) LootTaken(static_cast<uint16_t>(std::atoi(e.id.c_str() + 10)));
         break;
     }
     case net::Msg::DialogResponse: {
@@ -271,6 +274,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         if (in.world >= 0 && in.world != p->world) break;
         const float dx = p->state.x - in.x, dy = p->state.y - in.y, dz = p->state.z - in.z;
         if (dx * dx + dy * dy > (in.radius + 300.f) * (in.radius + 300.f) || std::fabs(dz) > 500.f) break;  // not there
+        if (UseDoor(*p, id)) break;
         script_->Use(*p, id);
         break;
     }
@@ -627,7 +631,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     if (timeHours_ >= 0) { net::Writer t; t.Op(net::Msg::SetTime); t.F32(timeHours_); t.U8(timePaused_); SendTo(peer, t, true); }
     if (weather_ != -2) { net::Writer t; t.Op(net::Msg::SetWeather); t.I32(weather_); SendTo(peer, t, true); }
     SendWorldEdits(peer);
-    Teleport(p, cfg_.spawnX, cfg_.spawnY, cfg_.spawnZ, cfg_.spawnYaw);
+    { const Spot s = SpawnSpot(); Teleport(p, s.x, s.y, s.z, s.yaw); }
     // The shared world save comes with the story's weapons: everyone starts with only the knife, rock
     // and taser, and the mode hands out the rest (playerJoin runs after this).
     if (!cfg_.saveWeapons) Item(p, net::ItemAction::TakeWeapons, "", 0);
@@ -733,7 +737,15 @@ void Server::LoadEnvironment(const std::string& mode) {
     std::ifstream in(root_ / "modes" / mode / "world.json", std::ios::binary);
     std::stringstream ss; ss << in.rdbuf();
     json::Value v;
-    if (ss.str().empty() || !json::Value::Parse(ss.str(), v) || !v.isObject()) return;
+    if (!ss.str().empty() && (!json::Value::Parse(ss.str(), v) || !v.isObject())) v = json::Value();
+    LoadDoors(v); LoadWorldVehicles(v); LoadLoot(v);
+    spawns_.clear();
+    if (const json::Value& s = v["logic"]["spawn"]; s.isObject() || s.isArray()) {
+        auto add = [&](const json::Value& at) { spawns_.push_back({true, float(at["x"].asNumber()), float(at["y"].asNumber()), float(at["z"].asNumber()), float(at["yaw"].asNumber())}); };
+        if (s.isArray()) for (auto& at : s.elements()) add(at); else add(s);
+        Log("Spawn points: %zu", spawns_.size());
+    }
+    if (!v.isObject()) return;
     const json::Value& env = v["environment"];
     if (!env.isObject()) return;
     if (env["time"].isNumber()) SetTime(float(env["time"].asNumber()), env["paused"].asBool(false));
@@ -1913,6 +1925,111 @@ void Server::SendObject(ENetPeer* peer, const Object& o) {
     m.F32(o.tx); m.F32(o.ty); m.F32(o.tz); m.F32(o.tpitch); m.F32(o.tyaw); m.F32(o.troll); m.F32(float(o.moveTime)); m.F32(float(Now() - o.moveStart));
     if (peer) SendTo(peer, m, true); else Send(nullptr, m, true);
 }
+// ---------------------------------------------------------------- doors, vehicles, loot, spawn points (world.json)
+Spot Server::SpawnSpot() const {
+    if (spawns_.empty()) return {true, cfg_.spawnX, cfg_.spawnY, cfg_.spawnZ, cfg_.spawnYaw};
+    Spot s = spawns_[size_t(std::rand()) % spawns_.size()];
+    s.z += 100.f;  // logic points stand on the ground
+    return s;
+}
+void Server::LoadDoors(const json::Value& world) {
+    for (auto& [key, d] : doors_) { RemoveInteraction(d.useA); RemoveInteraction(d.useB); }
+    doors_.clear();
+    for (auto& e : world["doors"].elements()) {
+        Door d; d.key = e["key"].asString().substr(0, 64); d.text = e["text"].asString().substr(0, 128); d.locked = e["locked"].asBool(false);
+        if (d.key.empty() || doors_.count(d.key)) continue;
+        auto end = [](const json::Value& j, float* at, int32_t& world) {
+            at[0] = float(j["x"].asNumber()); at[1] = float(j["y"].asNumber()); at[2] = float(j["z"].asNumber()); at[3] = float(j["yaw"].asNumber());
+            world = j["world"].isNumber() ? int32_t(j["world"].asNumber()) : 0;
+            return j.isObject();
+        };
+        if (!end(e["a"], d.a, d.worldA) || !end(e["b"], d.b, d.worldB)) continue;
+        Interaction in; in.key = 'F'; in.radius = 150; in.text = d.text.empty() ? "Enter" : d.text;
+        in.x = d.a[0]; in.y = d.a[1]; in.z = d.a[2]; in.world = d.worldA; d.useA = AddInteraction(in);
+        in.x = d.b[0]; in.y = d.b[1]; in.z = d.b[2]; in.world = d.worldB; d.useB = AddInteraction(in);
+        doors_[d.key] = d;
+    }
+    if (!doors_.empty()) Log("Mode doors: %zu", doors_.size());
+}
+void Server::UpdateDoor(const Door& d) {
+    Door* old = FindDoor(d.key);
+    if (!old) return;
+    old->locked = d.locked;
+    if (old->text != d.text) {
+        old->text = d.text;
+        for (uint16_t id : {old->useA, old->useB}) if (auto it = interactions_.find(id); it != interactions_.end()) {
+            it->second.text = d.text.empty() ? "Enter" : d.text;
+            for (auto& [pid, p] : players_) if (p->ready && p->peer) SendInteraction(p->peer, it->second);
+        }
+    }
+}
+bool Server::UseDoor(Player& p, uint16_t interaction) {
+    for (auto& [key, d] : doors_) {
+        if (interaction != d.useA && interaction != d.useB) continue;
+        const bool fromA = interaction == d.useA;
+        const std::string doorKey = key;
+        const int verdict = script_->DoorUse(p, doorKey, fromA ? "a" : "b");
+        Door* door = FindDoor(doorKey);
+        if (verdict == 1 || !door || !Find(p.id)) return true;  // refused (or the handler changed things)
+        if (door->locked && verdict != 2) { Message(&p, kErrorColor, p.lang == "ru" ? "Заперто" : "Locked"); return true; }
+        const float* to = fromA ? door->b : door->a;
+        SetWorld(&p, fromA ? door->worldB : door->worldA);
+        Teleport(&p, to[0], to[1], to[2] + 100.f, to[3]);
+        return true;
+    }
+    return false;
+}
+void Server::LoadWorldVehicles(const json::Value& world) {
+    for (auto id : worldVehicles_) RemoveVehicle(id);
+    worldVehicles_.clear();
+    for (auto& e : world["vehicles"].elements()) {
+        Vehicle v;
+        v.key = e["key"].asString().substr(0, 64);
+        if (!v.key.empty() && FindVehicle(v.key)) continue;
+        v.model = e["model"].asString(); if (v.model == "bike") v.model.clear();
+        v.state.x = float(e["x"].asNumber()); v.state.y = float(e["y"].asNumber()); v.state.z = float(e["z"].asNumber()) + 60.f; v.state.yaw = float(e["yaw"].asNumber());
+        v.state.fuel = std::clamp(float(e["fuel"].asNumber(1)), 0.f, 1.f); v.state.health = 1;
+        v.world = e["world"].isNumber() ? int32_t(e["world"].asNumber()) : 0;
+        v.locked = e["locked"].asBool(false);
+        v.owner = NickKey(e["owner"].asString());
+        const std::string blip = e["blip"].asString();
+        v.blip = blip == "all" ? 2 : blip == "none" ? 0 : 1;
+        worldVehicles_.push_back(AddVehicle(v));
+    }
+    if (!worldVehicles_.empty()) Log("Mode vehicles: %zu", worldVehicles_.size());
+}
+void Server::LoadLoot(const json::Value& world) {
+    for (auto& l : loot_) if (l.itemId) RemoveWorldItem(l.itemId);
+    loot_.clear();
+    for (auto& e : world["loot"].elements()) {
+        Loot l;
+        l.key = e["key"].asString().substr(0, 64); l.item = e["item"].asString().substr(0, net::kItemKeyMax); l.tag = e["tag"].asString().substr(0, 64);
+        l.count = std::max(1, e["count"].asInt(1));
+        l.x = float(e["x"].asNumber()); l.y = float(e["y"].asNumber()); l.z = float(e["z"].asNumber()); l.yaw = float(e["yaw"].asNumber());
+        l.respawn = std::max(0.0, e["respawn"].asNumber(300));
+        if (l.item.empty()) continue;
+        WorldItem w; w.key = l.item; w.count = l.count; w.x = l.x; w.y = l.y; w.z = l.z; w.yaw = l.yaw;
+        l.itemId = AddWorldItem(w);
+        loot_.push_back(l);
+    }
+    if (!loot_.empty()) Log("Mode loot: %zu", loot_.size());
+}
+void Server::LootTaken(uint16_t worldItem) {
+    for (auto& l : loot_) if (l.itemId == worldItem) {
+        RemoveWorldItem(worldItem);
+        l.itemId = 0; l.backAt = l.respawn > 0 ? Now() + l.respawn : 0;  // 0: once only
+        return;
+    }
+}
+void Server::TickLoot() {
+    const double now = Now();
+    for (auto& l : loot_) {
+        if (l.itemId || !l.backAt || now < l.backAt) continue;
+        WorldItem w; w.key = l.item; w.count = l.count; w.x = l.x; w.y = l.y; w.z = l.z; w.yaw = l.yaw;
+        l.itemId = AddWorldItem(w); l.backAt = 0;
+    }
+}
+
 void Server::SendBlip(Player* to, const Blip& b) {
     net::Writer w; w.Op(net::Msg::Blip); w.U16(b.id); w.U8(1); w.F32(b.x); w.F32(b.y); w.F32(b.z); w.Str(b.icon); w.U32(b.color); w.F32(b.scale);
     w.U8(uint8_t((b.map ? net::BlipMap : 0) | (b.radar ? net::BlipRadar : 0) | (b.edge ? net::BlipEdge : 0))); w.I32(b.world);
