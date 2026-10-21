@@ -412,7 +412,10 @@ const char* T(const char* ru) {
     {"Выдаёт работу", "Gives the job"}, {"Место NPC работы", "Job NPC spot"}, {"Погрузка → ", "Pick-up → "}, {"Разгрузка → ", "Drop-off → "},
     {": погрузка", ": pick-up"}, {": разгрузка", ": drop-off"}, {"Выберите этап «Перенести ящики»", "Select a \"Carry boxes\" step"},
     {"Погрузка", "Pick-up"}, {"Разгрузка", "Drop-off"}, {"Кто даёт работу", "Who gives the job"}, {"Форма и оплата", "Uniform and pay"},
-    {"без формы", "no uniform"}
+    {"без формы", "no uniform"},
+    {"Поговорить", "Talk"}, {"+ Поговорить", "+ Talk"}, {"NPC (id из «Мир» → NPC)", "NPC (id from World > NPC)"},
+    {"пусто — точка ниже", "empty: the point below"}, {"Кто говорит", "Speaker"},
+    {"Реплики (по очереди, в окне диалога):", "Lines (one after another, in a dialog):"}, {"+ реплика", "+ line"}
     };
     if (!english) return ru;
     auto it = en.find(ru);
@@ -429,9 +432,9 @@ const char* const* TArr(const char* const* arr, int count) {
 std::recursive_mutex lock;
 
 // ---------------------------------------------------------------- quest model (docs/quests.md)
-const char* kStepTypes[] = {"Дойти до точки", "Удерживать зону", "Сделать N раз", "Перенести ящики"};
-const char* kStepKeys[] = {"goto", "hold", "collect", "deliver"};
-constexpr int kStepCount = 4;
+const char* kStepTypes[] = {"Дойти до точки", "Удерживать зону", "Сделать N раз", "Перенести ящики", "Поговорить"};
+const char* kStepKeys[] = {"goto", "hold", "collect", "deliver", "talk"};
+constexpr int kStepCount = 5;
 const char* kKinds[] = {"Квест (один раз)", "Работа (повторяется)"};
 const char* kPayouts[] = {"Сразу, за каждый раз", "При сдаче работы"};  // "each", "end"
 const char* const kCarryRolls[] = {"keep", "drop", "break"};          // a box's dodge roll (world.json carries, deliver steps)
@@ -472,6 +475,8 @@ struct Step {
     // deliver: boxes from the pick-up area to the drop-off area (docs/quests.md); count = boxes to deliver
     bool hasPickup = false; float px = 0, py = 0, pz = 0, pr = 3; int boxes = 4; char model[32] = "crate"; int roll = 0; char tag[48] = ""; LT pickName;
     bool hasDrop = false; float dx = 0, dy = 0, dz = 0, dr = 4; LT dropName;
+    // talk: at an NPC of world.json ("actor") or at the point (hasPoint); the lines show one after another
+    char actor[48] = ""; LT speaker; std::vector<LT> lines;
 };
 struct Reward { char item[96] = ""; int count = 1; };
 struct Quest {
@@ -655,6 +660,15 @@ json::Value ToJson(const Quest& q) {
             j.set("radius", double(s.radius));
             if (s.type == 0 && !s.route) j.set("route", false);
             if (s.type == 1) { j.set("seconds", double(s.seconds)); if (s.meter.en[0] || s.meter.ru[0]) j.set("meter", LJson(s.meter)); }
+        } else if (s.type == 4) {
+            if (s.actor[0]) j.set("actor", std::string(s.actor));
+            else if (s.hasPoint) { j.set("x", double(std::round(s.x))); j.set("y", double(std::round(s.y))); j.set("z", double(std::round(s.z))); }
+            j.set("radius", double(s.radius));
+            if (!s.route) j.set("route", false);
+            if (s.speaker.en[0] || s.speaker.ru[0]) j.set("speaker", LJson(s.speaker));
+            json::Value lines = json::Value::Array();
+            for (auto& l : s.lines) if (l.en[0] || l.ru[0]) lines.push(LJson(l));
+            j.set("lines", lines);
         } else if (s.type == 3) {
             json::Value pu = s.hasPickup ? Point(s.px, s.py, s.pz) : json::Value::Object();
             pu.set("radius", double(s.pr));
@@ -755,6 +769,12 @@ void FromJson(const json::Value& v, Quest& q) {
             LFrom(d["name"], s.dropName);
         }
         if (s.type == 3 && s.count < 1) s.count = 1;
+        if (s.type == 4) {
+            Copy(s.actor, sizeof(s.actor), j["actor"].asString());
+            LFrom(j["speaker"], s.speaker);
+            for (auto& l : j["lines"].elements()) { s.lines.emplace_back(); LFrom(l, s.lines.back()); }
+            if (!j["radius"].isNumber()) s.radius = 3;
+        }
         q.steps.push_back(s);
     }
 }
@@ -2482,6 +2502,29 @@ void DrawStepEditor(Step& s, int index) {
         return;
     }
     if (s.type == 3) { DrawDeliver(s, index); return; }
+    if (s.type == 4) {
+        ImGui::InputTextWithHint(T("NPC (id из «Мир» → NPC)"), T("пусто — точка ниже"), s.actor, sizeof(s.actor));
+        if (!s.actor[0]) {
+            if (s.hasPoint) {
+                char point[120]; snprintf(point, sizeof(point), T("Точка: %.0f  %.0f  %.0f"), s.x, s.y, s.z);
+                if (ImGui::Selectable(point, picked.step == index && picked.kind == 0)) picked = {index, 0, 0};
+            } else ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), T("Точка не задана — ЛКМ в мире"));
+            if (ImGui::Button(clickMode == kPoint ? T("Кликните в мире…") : T("Поставить точку"))) clickMode = clickMode == kPoint ? kSelect : kPoint;
+        }
+        if (ImGui::SliderFloat(T("Радиус, м"), &s.radius, 1, 20, "%.0f")) previewDirty = true;
+        ImGui::Checkbox(T("Маршрут по дорогам"), &s.route);
+        ImGui::InputText(T("Кто говорит"), Cur(s.speaker), sizeof(s.speaker.en));
+        ImGui::TextUnformatted(T("Реплики (по очереди, в окне диалога):"));
+        for (size_t i = 0; i < s.lines.size(); ++i) {
+            ImGui::PushID(2000 + int(i));
+            if (ImGui::SmallButton("×")) { s.lines.erase(s.lines.begin() + long(i)); ImGui::PopID(); break; }
+            ImGui::SameLine();
+            ImGui::InputTextMultiline("##line", Cur(s.lines[i]), sizeof(s.lines[i].en), ImVec2(-1, ImGui::GetTextLineHeight() * 3));
+            ImGui::PopID();
+        }
+        if (ImGui::SmallButton(T("+ реплика"))) s.lines.emplace_back();
+        return;
+    }
     ImGui::TextUnformatted(T("Что засчитывать:"));
     for (int i = 0; i < 8; ++i) {
         bool on = (s.events & (1u << i)) != 0;
@@ -2635,13 +2678,14 @@ void DrawQuest() {
         const std::string label = std::to_string(i + 1) + ". " + T(kStepTypes[s.type]) + ": " + Shown(s.text) + "##step" + std::to_string(i);
         if (ImGui::Selectable(label.c_str(), selected == int(i))) { selected = int(i); previewDirty = true; }
     }
-    const char* adds[] = {T("+ Дойти"), T("+ Удерживать"), T("+ Сделать N раз"), T("+ Перенести ящики")};
+    const char* adds[] = {T("+ Дойти"), T("+ Удерживать"), T("+ Сделать N раз"), T("+ Перенести ящики"), T("+ Поговорить")};
     for (int t = 0; t < kStepCount; ++t) {
         if (t) ImGui::SameLine();
         if (ImGui::Button(adds[t])) {
             Step s; s.type = t;
             if (t == 2) s.events = 1;
             if (t == 3) s.count = 1;
+            if (t == 4) { s.radius = 3; s.lines.emplace_back(); }
             quest.steps.push_back(s); selected = int(quest.steps.size()) - 1; previewDirty = true;
         }
     }
@@ -2765,7 +2809,7 @@ float* RefPosition(const Ref& ref, float** yaw) {
     if (ref.kind == 5) { if (quest.job && quest.giverHasPoint) { *yaw = &quest.gyaw; return &quest.gx; } return nullptr; }
     if (ref.step < 0 || ref.step >= int(quest.steps.size())) return nullptr;
     Step& s = quest.steps[ref.step];
-    if (ref.kind == 0 && (s.type == 0 || s.type == 1) && s.hasPoint) return &s.x;
+    if (ref.kind == 0 && (s.type == 0 || s.type == 1 || (s.type == 4 && !s.actor[0])) && s.hasPoint) return &s.x;
     if (ref.kind == 3 && s.type == 3 && s.hasPickup) return &s.px;
     if (ref.kind == 4 && s.type == 3 && s.hasDrop) return &s.dx;
     if (ref.kind == 1 && s.type == 2 && s.hasArea) return &s.ax;
@@ -2778,7 +2822,7 @@ std::vector<std::pair<Ref, std::string>> Selectables() {
     for (int i = 0; i < int(quest.steps.size()); ++i) {
         const Step& s = quest.steps[i];
         const std::string n = std::to_string(i + 1);
-        if ((s.type == 0 || s.type == 1) && s.hasPoint) out.push_back({{i, 0, 0}, T("Этап ") + n});
+        if ((s.type == 0 || s.type == 1 || (s.type == 4 && !s.actor[0])) && s.hasPoint) out.push_back({{i, 0, 0}, T("Этап ") + n});
         if (s.type == 3 && s.hasPickup) out.push_back({{i, 3, 0}, T("Этап ") + n + T(": погрузка")});
         if (s.type == 3 && s.hasDrop) out.push_back({{i, 4, 0}, T("Этап ") + n + T(": разгрузка")});
         if (s.type == 2 && s.hasArea) out.push_back({{i, 1, 0}, T("Этап ") + n + T(": зона")});

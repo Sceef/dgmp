@@ -48,6 +48,7 @@
 | `hold` | `text, x, y, z, radius = 6, seconds = 10, meter = "Поиск"` | пробыл в зоне `seconds` секунд (шкала растёт только внутри) |
 | `collect` | `text, event, count, item, class, ids, area, marker, route, spawn` | случилось `count` игровых событий, подходящих под фильтры |
 | `deliver` | `text, pickup, dropoff, count = 1, route = true` | игрок отнёс `count` ящиков с погрузки и поставил их (зажать F) в зоне разгрузки |
+| `talk` | `text, actor` (id NPC из `world.json`) или `x, y, z`, `radius = 3, route = true, speaker, lines` | игрок подошёл к NPC и прочитал реплики `lines` (окна диалога одно за другим: «Далее», последнее — «OK»; Esc пропускает остальные). `speaker` — заголовок окна. Тексты, как везде, строкой или `{"en": ..., "ru": ...}` |
 
 Фильтры `collect` — как в `q:collect` (`docs/API.md`):
 - `event` — `pickup`, `carry`, `search`, `body`, `interact`, `door`, `explosion`, `fire` или список;

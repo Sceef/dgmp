@@ -1746,7 +1746,7 @@ void LoadPreview(const std::filesystem::path& file) {
         const json::Value& tv = st["text"];
         const std::string type = st["type"].asString(), text = tv.isObject() ? (tv["en"].asString().empty() ? tv["ru"].asString() : tv["en"].asString()) : tv.asString();
         const std::string title = lang::Pick("Этап ", "Step ") + std::to_string(i + 1);
-        if (type == "goto") add(st, int(i), 0, title, text);
+        if (type == "goto" || type == "talk") add(st, int(i), 0, title, text);  // (a talk at an NPC has no point here)
         else if (type == "hold") add(st, int(i), 5, title, text);                     // search
         else if (type == "deliver") {                                                  // boxes: pick-up (search look) and drop-off
             if (st["pickup"].isObject()) add(st["pickup"], int(i), 5, title, text);

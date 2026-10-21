@@ -7,6 +7,7 @@
 --   q:hold("Обыщите место", { x = ..., y = ..., z = ..., radius = 6, seconds = 10,
 --          onDone = function(q, player) q:complete(150) end })   -- meter fills only inside the zone
 --   q:deliver("Отнесите ящики", { pickup = {...}, dropoff = {...}, count = 3, onDone = ... })  -- boxes to carry
+--   q:talk("Поговорите с Авой", { actor = "shopkeeper", speaker = "Ava", lines = { "Привет.", "Есть работа." }, onDone = ... })
 --   q:complete()        -- or q:fail()
 --   Quest.runJob(Quest.load("loader"))   -- a repeatable job from a file (see "jobs" below)
 --
@@ -74,6 +75,41 @@ function Quest:step(text, target)
             onEnter = target.onEnter and function(player) if quest.active then target.onEnter(quest, player) end end,
         })
     end
+end
+
+-- A conversation: the player comes to the NPC (or the point) and its lines show one after another in a
+-- dialog ("Next", the last one "OK"; Esc skips the rest). spec: {actor = "id" (an NPC placed in the editor,
+-- world.json "actors") or x, y, z; radius = 3 (m); speaker = "Ava" (the dialog's title); lines = {"...", ...};
+-- route = true; onDone = function(quest, player) end}.
+function Quest:talk(text, spec)
+    if not self.active or not self.player.valid then return end
+    local at = spec
+    if spec.actor then
+        local a = getActor(spec.actor)
+        if a then at = { x = a.x, y = a.y, z = a.z } else log("quest talk: no NPC \"" .. tostring(spec.actor) .. "\" in world.json") end
+    end
+    local quest, lines = self, spec.lines or {}
+    local function finish(player) if quest.active and spec.onDone then spec.onDone(quest, player) end end
+    local function say(player, i)
+        if not quest.active or not player.valid then return end
+        if i > #lines then return finish(player) end
+        local last = i == #lines
+        player:dialog({
+            style = "msgbox", title = spec.speaker or "", text = lines[i],
+            button1 = last and "OK" or (player.lang == "ru" and "Далее" or "Next"),
+            onResponse = function(p, ok) if ok then say(p, i + 1) else finish(p) end end,
+        })
+    end
+    local talking = false
+    self:step(text, {
+        x = at.x, y = at.y, z = at.z, radius = spec.radius or 3, route = spec.route, style = spec.style,
+        onEnter = function(q, player)
+            if talking then return end
+            talking = true
+            q:clearMarker()
+            say(player, 1)
+        end,
+    })
 end
 
 -- A step that fills a meter only while the player stays in the zone ("search the place",
@@ -474,7 +510,7 @@ function Quest:fail() self:finish("failed") end
 function Quest.load(id) return quests.load(id) end
 function Quest.list() return quests.list() end
 
-local STEP_TYPES = { ["goto"] = true, hold = true, collect = true, deliver = true }
+local STEP_TYPES = { ["goto"] = true, hold = true, collect = true, deliver = true, talk = true }
 
 -- Starts step `s` of a quest file on q; onDone() when it is done. pool: the boxes of a deliver step (jobs).
 local function runStep(q, s, onDone, pool)
@@ -491,6 +527,11 @@ local function runStep(q, s, onDone, pool)
     elseif s.type == "deliver" then
         q:deliver(L(s.text), { pickup = s.pickup, dropoff = s.dropoff, count = s.count, route = s.route, style = s.style, pool = pool, step = s,
                             onDone = function() onDone() end })
+    elseif s.type == "talk" then
+        local lines = {}
+        for i, line in ipairs(s.lines or {}) do lines[i] = L(line) end
+        q:talk(L(s.text), { actor = s.actor, x = s.x, y = s.y, z = s.z, radius = s.radius or 3, speaker = L(s.speaker), lines = lines,
+                         route = s.route ~= false, style = s.style, onDone = function() onDone() end })
     else
         log("quest " .. tostring(q.id) .. ": unknown step type " .. tostring(s.type))
         onDone()
