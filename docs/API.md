@@ -985,5 +985,6 @@ end)
 | `Nametags` | `visible`, `walls` или `hidden` |
 | `SpawnX/Y/Z/Yaw` | точка появления, в единицах Unreal |
 | `Bind` | IP для прослушивания (по умолчанию все интерфейсы) |
+| `Master` | мастер-сервер, на котором сервер виден во вкладке «Интернет» (`host` или `host:port`); пусто — не объявляется. См. [`docs/master.md`](master.md) |
 
-Ключи командной строки `--name`, `--mode`, `--port`, `--max`, `--password`, `--bind`, `--config` переопределяют файл.
+Ключи командной строки `--name`, `--mode`, `--port`, `--max`, `--password`, `--bind`, `--master-server`, `--config` переопределяют файл.

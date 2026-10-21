@@ -56,6 +56,51 @@ std::vector<QueryResult> RunQuery(const std::vector<ENetAddress>& addresses, con
 }
 }  // namespace
 
+std::vector<std::pair<std::string, uint16_t>> QueryMaster(const std::string& master, int timeoutMs, std::string& error) {
+    std::vector<std::pair<std::string, uint16_t>> out;
+    std::string host; uint16_t port = kMasterPort;
+    if (!ParseAddress(master, host, port)) { error = "no master server set"; return out; }
+    if (master.find(':') == std::string::npos) port = kMasterPort;
+    if (!InitNetwork()) { error = "network"; return out; }
+    ENetAddress a{}; a.port = port;
+    if (enet_address_set_host(&a, host.c_str()) != 0) { error = "cannot resolve " + host; return out; }
+    ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    if (s == ENET_SOCKET_NULL) { error = "socket"; return out; }
+    enet_socket_set_option(s, ENET_SOCKOPT_NONBLOCK, 1);
+    ENetAddress any{}; any.host = ENET_HOST_ANY; enet_socket_bind(s, &any);
+    std::mt19937 rng(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const uint32_t token = rng();
+    Writer w; w.Raw(kListMagic, 4); w.U32(token); w.U16(kProtocolVersion);
+    std::vector<bool> got; int parts = -1, have = 0;
+    for (int attempt = 0; attempt < 2 && parts != have; ++attempt) {  // a lost datagram: ask once more
+        ENetBuffer b{}; b.data = w.buf.data(); b.dataLength = w.buf.size();
+        enet_socket_send(s, &a, &b, 1);
+        const double until = Seconds() + timeoutMs / 2000.0;
+        while (Seconds() < until && (parts < 0 || have < parts)) {
+            enet_uint32 cond = ENET_SOCKET_WAIT_RECEIVE;
+            if (enet_socket_wait(s, &cond, 20) != 0 || !(cond & ENET_SOCKET_WAIT_RECEIVE)) continue;
+            uint8_t buf[1500]; ENetAddress from{};
+            ENetBuffer rb{}; rb.data = buf; rb.dataLength = sizeof(buf);
+            const int n = enet_socket_receive(s, &from, &rb, 1);
+            if (n < 14 || std::memcmp(buf, kListReplyMagic, 4) != 0) continue;
+            Reader r(buf + 4, size_t(n) - 4);
+            const uint32_t tok = r.U32(); const uint16_t part = r.U16(), total = r.U16(), count = r.U16();
+            if (!r.ok() || tok != token || !total || part >= total) continue;
+            if (parts < 0) { parts = total; got.assign(total, false); }
+            if (got[part]) continue;
+            got[part] = true; ++have;
+            for (int i = 0; i < count && r.ok(); ++i) {
+                ENetAddress e{}; e.host = r.U32(); e.port = r.U16();
+                if (r.ok()) out.push_back({Ip(e), e.port});
+            }
+        }
+    }
+
+    enet_socket_destroy(s);
+    if (parts < 0) error = "the master server did not answer";
+    return out;
+}
+
 bool InitNetwork() {
     static int state = 0;  // 0 untried, 1 ok, -1 failed
     if (state == 0) state = enet_initialize() == 0 ? 1 : -1;

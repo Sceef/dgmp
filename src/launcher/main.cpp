@@ -37,6 +37,8 @@ constexpr UINT WM_SERVER_EXIT = WM_APP + 3; // wParam: process id of the local s
 constexpr UINT WM_RUN = WM_APP + 4;         // lParam: std::function<void()>* to run on the UI thread
 constexpr int kMaxRecent = 15;
 constexpr const char* kQuestTestMode = "questtest";
+// The public server list (dgmp-server --master); launcher.json "master" overrides it.
+constexpr const char* kDefaultMaster = "";
 
 fs::path g_root;
 HWND g_window = nullptr;
@@ -458,6 +460,20 @@ void HandleMessage(const std::string& text) {
             auto found = net::QueryServers(targets, 1500);
             for (size_t i = 0; i < found.size() && i < valid.size(); ++i) results.push(ResultJson(found[i], valid[i]));
             ToUi(json::Value::Object().set("type", "query").set("tag", tag).set("results", results));
+        }).detach();
+    } else if (cmd == "internet") {
+        // The master server's list, then every listed server is asked for its name, players and ping.
+        const std::string master = g_settings.str("master", kDefaultMaster);
+        std::thread([master] {
+            json::Value results = json::Value::Array();
+            std::string error;
+            const auto list = master.empty() ? decltype(net::QueryMaster("", 0, error)){} : net::QueryMaster(master, 2500, error);
+            if (master.empty()) error = g_english ? "no master server is set (\"master\" in profiles/launcher.json)" : "не задан мастер-сервер (\"master\" в profiles/launcher.json)";
+            for (size_t at = 0; at < list.size(); at += 100) {  // the query socket waits for every answer: batches
+                std::vector<std::pair<std::string, uint16_t>> batch(list.begin() + at, list.begin() + std::min(list.size(), at + 100));
+                for (auto& r : net::QueryServers(batch, 1500)) if (r.pingMs >= 0) results.push(ResultJson(r, r.host + ":" + std::to_string(r.port)));
+            }
+            ToUi(json::Value::Object().set("type", "internet").set("results", results).set("error", error));
         }).detach();
     } else if (cmd == "lan") {
         std::thread([] {

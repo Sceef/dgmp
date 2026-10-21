@@ -24,6 +24,8 @@ struct QueryResult {
 // Queries the given servers in parallel and waits up to timeoutMs for answers.
 std::vector<QueryResult> QueryServers(const std::vector<std::pair<std::string, uint16_t>>& targets, int timeoutMs);
 // Broadcasts a query on the local network (ports kDefaultPort .. +kLanPortSpan-1).
+// The servers a master server lists ("host[:port]", port kMasterPort by default); error: why none came.
+std::vector<std::pair<std::string, uint16_t>> QueryMaster(const std::string& master, int timeoutMs, std::string& error);
 std::vector<QueryResult> ScanLan(int timeoutMs);
 // "host", "host:port" or "[v6]:port" -> host + port (port defaults to kDefaultPort).
 bool ParseAddress(const std::string& text, std::string& host, uint16_t& port);

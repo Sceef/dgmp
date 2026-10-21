@@ -1,0 +1,27 @@
+# systemd unit for the DGMP master server (the public server list) on Linux (see docs/master.md).
+#   sudo cp dgmp-master.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now dgmp-master
+[Unit]
+Description=DGMP master server (public server list)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dgmp
+Group=dgmp
+WorkingDirectory=/opt/dgmp
+ExecStart=/opt/dgmp/dgmp-server --master --port 7700
+KillSignal=SIGTERM
+TimeoutStopSec=5
+Restart=on-failure
+RestartSec=5
+StandardInput=null
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/dgmp
+
+[Install]
+WantedBy=multi-user.target

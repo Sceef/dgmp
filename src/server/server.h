@@ -15,6 +15,7 @@
 namespace json { class Value; }
 struct _ENetHost;
 struct _ENetPeer;
+struct _ENetAddress;
 
 namespace srv {
 
@@ -39,6 +40,7 @@ struct Config {
     bool localAdmin = true;           // a player joining from this computer (127.0.0.1) is an admin
     std::string rconPassword;         // "/rcon login <password>" makes a player an admin ("": off)
     std::vector<std::string> admins;  // SteamIDs; nicknames count only with SteamAuth=off
+    std::string master;               // master server host[:port] to be listed on ("": not listed)
     // Anti-cheat (docs/API.md "Античит"): limits of the hits a client reports, strikes before a kick.
     float maxHitDamage = 500;         // one hit, before the hit zone multiplier
     float meleeRange = 600;           // units
@@ -392,6 +394,10 @@ private:
     uint64_t nextPending_ = 1;
     SteamTicketCheck ticketCheck_;
     void TickAuth();
+    void TickMaster();                             // heartbeat to the master server every minute
+    double nextHeartbeat_ = 0, nextResolve_ = 0;
+    int heartbeats_ = 0;
+    _ENetAddress* masterAddress_ = nullptr;        // resolved Master= (null: not resolved)
     void RejectPeer(_ENetPeer* peer, const std::string& nick, const std::string& why);
     // Lets the player in (bans, nicknames, the mode's playerConnecting); steamId 0: not confirmed by Steam.
     void Admit(_ENetPeer* peer, const std::string& nick, const std::string& lang, const std::string& ip, uint64_t claimed, uint64_t steamId);

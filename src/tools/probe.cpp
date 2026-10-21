@@ -1,6 +1,7 @@
 // dgmp-probe.exe — test client for dgmp-server without the game.
 //   dgmp-probe query <host[:port]> [...]     server status
 //   dgmp-probe lan                           LAN discovery
+//   dgmp-probe master <host[:port]>          the master server's list, each server queried
 //   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text] [--auto]
 //       stays connected, walks a small circle, prints server events; stdin lines are sent as chat, except:
 //       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
@@ -50,6 +51,14 @@ int main() {
         bool any = false;
         for (auto& r : net::QueryServers(targets, 1500)) { Print(r); any |= r.pingMs >= 0; }
         return any ? 0 : 1;
+    }
+    if (cmd == "master" && argc >= 3) {
+        std::string error;
+        const auto list = net::QueryMaster(argv[2], 2500, error);
+        if (!error.empty()) std::printf("master: %s\n", error.c_str());
+        std::printf("%zu servers listed\n", list.size());
+        for (auto& r : net::QueryServers(list, 1500)) Print(r);
+        return error.empty() ? 0 : 1;
     }
     if (cmd == "lan") {
         auto found = net::ScanLan(1000);

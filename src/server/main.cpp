@@ -1,9 +1,12 @@
 // dgmp-server — standalone DGMP game server (no game client required): dgmp-server.exe on Windows,
 // dgmp-server on Linux.
 //   dgmp-server [--config server.ini] [--name "My server"] [--mode freeroam] [--port 7777]
-//               [--max 16] [--password secret] [--bind 0.0.0.0]
+//               [--max 16] [--password secret] [--bind 0.0.0.0] [--master-server host[:port]]
+//   dgmp-server --master [--port 7700]      the master server (public server list), docs/master.md
 #include "server.h"
 #include "platform.h"
+#include "master.h"
+#include <atomic>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -27,6 +30,7 @@
 
 namespace {
 srv::Server* g_server = nullptr;
+std::atomic<bool> g_quitMaster{false};  // dgmp-server --master
 
 std::string Ini(const std::filesystem::path& file, const char* key, const char* fallback) { return srv::IniValue(file, "Server", key, fallback); }
 
@@ -56,6 +60,7 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* info) {
 BOOL WINAPI OnCtrl(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT) {
         if (g_server) g_server->PushConsole("quit");
+        g_quitMaster = true;
         if (type == CTRL_CLOSE_EVENT) Sleep(2000);  // let the server notify clients before the console closes
         return TRUE;
     }
@@ -100,7 +105,7 @@ void OnCrash(int sig, siginfo_t* info, void*) {
 
 // Ctrl+C, kill and systemctl stop quit like the console command, so clients are told first.
 void SignalThread(sigset_t set) {
-    for (int sig = 0;;) if (sigwait(&set, &sig) == 0 && g_server) g_server->PushConsole("quit");
+    for (int sig = 0;;) if (sigwait(&set, &sig) == 0) { g_quitMaster = true; if (g_server) g_server->PushConsole("quit"); }
 }
 
 void InstallSignals() {
@@ -127,6 +132,18 @@ void ConsoleThread() {
 
 // Settings from server.ini, then the command line (UTF-8 on both systems).
 int Run(const std::vector<std::string>& args, const std::filesystem::path& root) {
+    // dgmp-server --master [--port 7700]: the public server list instead of a game server.
+    if (std::find(args.begin(), args.end(), "--master") != args.end()) {
+        uint16_t port = net::kMasterPort;
+        for (size_t i = 1; i + 1 < args.size(); ++i) if (args[i] == "--port") port = static_cast<uint16_t>(std::atoi(args[i + 1].c_str()));
+#ifdef _WIN32
+        SetConsoleTitleW((L"DGMP Master - " + std::to_wstring(port)).c_str());
+        SetConsoleCtrlHandler(&OnCtrl, TRUE);
+#else
+        InstallSignals();
+#endif
+        return srv::RunMaster(port ? port : net::kMasterPort, root, g_quitMaster);
+    }
     auto ini = root / "server.ini";
     for (size_t i = 1; i + 1 < args.size(); ++i) if (args[i] == "--config") ini = std::filesystem::absolute(srv::Utf8Path(args[i + 1]));
 
@@ -157,6 +174,7 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
     cfg.reserveNicks = Ini(ini, "ReserveNicks", "1") != "0";
     cfg.localAdmin = Ini(ini, "LocalAdmin", "1") != "0";
     cfg.rconPassword = Ini(ini, "RconPassword", "");
+    cfg.master = Ini(ini, "Master", "");
     cfg.maxHitDamage = static_cast<float>(std::atof(Ini(ini, "MaxHitDamage", "500").c_str()));
     cfg.meleeRange = static_cast<float>(std::atof(Ini(ini, "MeleeRange", "6").c_str())) * 100.f;
     cfg.maxHitsPerSecond = std::max(1, std::atoi(Ini(ini, "MaxHitsPerSecond", "30").c_str()));
@@ -175,6 +193,7 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
         else if (k == "--max") cfg.maxPlayers = std::atoi(v.c_str());
         else if (k == "--password") cfg.password = v;
         else if (k == "--bind") cfg.bind = v;
+        else if (k == "--master-server") cfg.master = v;
         else continue;
         ++i;
     }

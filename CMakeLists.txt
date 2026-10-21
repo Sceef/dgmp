@@ -68,7 +68,7 @@ endif()
 
 # ---- dedicated server ----
 find_package(Threads REQUIRED)
-add_executable(dgmp-server src/server/main.cpp src/server/server.cpp src/server/script.cpp src/server/platform.cpp src/server/security.cpp)
+add_executable(dgmp-server src/server/main.cpp src/server/server.cpp src/server/script.cpp src/server/platform.cpp src/server/security.cpp src/server/master.cpp)
 target_link_libraries(dgmp-server PRIVATE lua enet Threads::Threads)
 if(NOT WIN32)  # on Windows build.bat owns dgmp-server.exe in the project folder
   set_target_properties(dgmp-server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -95,4 +95,4 @@ install(CODE "
   endif()")
 install(DIRECTORY modes quests DESTINATION .)
 install(FILES data/looks.txt DESTINATION data)
-install(FILES docs/server-linux.md tools/dgmp-server.service DESTINATION docs OPTIONAL)  # a copy without them still installs
+install(FILES docs/server-linux.md docs/master.md tools/dgmp-server.service tools/dgmp-master.service DESTINATION docs OPTIONAL)  # a copy without them still installs

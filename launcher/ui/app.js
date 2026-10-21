@@ -19,6 +19,7 @@ const bridge = (() => {
         addresses: [{ ip: "192.168.1.20", adapter: "Ethernet" }] }, 50);
       if (m.cmd === "query") later({ type: "query", tag: m.tag, results: m.addresses.map((a) => sample[a] ? { address: a, ...sample[a] } : { address: a, ping: -1 }) }, 400);
       if (m.cmd === "lan") later({ type: "lan", results: [{ address: "192.168.1.20:7777", ...sample["127.0.0.1:7777"] }] }, 600);
+      if (m.cmd === "internet") later({ type: "internet", results: [{ address: "95.31.4.18:7777", ...sample["95.31.4.18:7777"] }] }, 700);
       if (m.cmd === "setNick") later({ type: "nickResult", ok: true, nick: m.nick }, 10);
       if (m.cmd === "connect") later({ type: "status", text: t("mock.launch"), busy: true });
     },
@@ -38,7 +39,7 @@ const I18N = {
     "nick.label": "Nickname", "nick.placeholder": "Enter a nickname", "nick.help": "3–24 characters: letters, digits, _ - . [ ] ( )",
     "nav.servers": "Servers", "nav.host": "Host a server", "nav.editor": "Editor",
     "foot.modes": "Modes folder", "foot.logs": "Logs", "version": "Version {v} · protocol {p}",
-    "list.favorites": "Favorites", "list.recent": "Recent", "list.lan": "LAN",
+    "list.favorites": "Favorites", "list.recent": "Recent", "list.lan": "LAN", "list.internet": "Internet",
     "address.placeholder": "IP:port, e.g. 192.168.1.20:7777", "fav.add": "Add to favorites", "fav.remove": "Remove from favorites",
     "connect": "Connect", "refresh": "Refresh (F5)", "play": "Play",
     "th.name": "Name", "mode": "Mode", "th.players": "Players", "th.ping": "Ping",
@@ -46,6 +47,8 @@ const I18N = {
     "empty.favorites": "No favorites yet.<br>Enter a server address above and press “Add to favorites”.",
     "empty.recent": "Servers you've played on will show up here.",
     "empty.lanSearch": "Searching the local network…", "empty.lan": "No LAN servers found.<br>Ports 7777–7786.",
+    "empty.internetSearch": "Loading the server list…", "empty.internet": "No public servers right now.",
+    "empty.internetError": "The server list is unavailable: {e}.",
     "detail.players": "{n}/{max} players", "detail.password": "password", "detail.incompatible": "incompatible version",
     "detail.offline": "server not responding",
     "err.nick": "Enter a valid nickname first", "err.gameRunning": "The game is already running",
@@ -69,7 +72,7 @@ const I18N = {
     "nick.label": "Ник", "nick.placeholder": "Введите ник", "nick.help": "3–24 символа: буквы, цифры, _ - . [ ] ( )",
     "nav.servers": "Серверы", "nav.host": "Создать сервер", "nav.editor": "Редактор",
     "foot.modes": "Папка режимов", "foot.logs": "Логи", "version": "Версия {v} · протокол {p}",
-    "list.favorites": "Избранное", "list.recent": "Недавние", "list.lan": "Локальная сеть",
+    "list.favorites": "Избранное", "list.recent": "Недавние", "list.lan": "Локальная сеть", "list.internet": "Интернет",
     "address.placeholder": "IP:порт, например 192.168.1.20:7777", "fav.add": "В избранное", "fav.remove": "Убрать из избранного",
     "connect": "Подключиться", "refresh": "Обновить (F5)", "play": "Играть",
     "th.name": "Название", "mode": "Режим", "th.players": "Игроки", "th.ping": "Пинг",
@@ -77,6 +80,8 @@ const I18N = {
     "empty.favorites": "В избранном пока пусто.<br>Введите адрес сервера сверху и нажмите «В избранное».",
     "empty.recent": "Здесь появятся серверы, на которых вы играли.",
     "empty.lanSearch": "Поиск серверов в локальной сети…", "empty.lan": "Серверы в локальной сети не найдены.<br>Порты 7777–7786.",
+    "empty.internetSearch": "Загрузка списка серверов…", "empty.internet": "Сейчас нет открытых серверов.",
+    "empty.internetError": "Список серверов недоступен: {e}.",
     "detail.players": "{n}/{max} игроков", "detail.password": "пароль", "detail.incompatible": "несовместимая версия",
     "detail.offline": "сервер не отвечает",
     "err.nick": "Сначала введите корректный ник", "err.gameRunning": "Игра уже запущена",
@@ -107,6 +112,8 @@ const app = {
   list: "favorites",
   info: {},          // address -> last query result
   lan: [],
+  internet: [],      // listed by the master server
+  internetError: "",
   selected: null,
   querying: false,
   serverRunning: false,
@@ -117,7 +124,7 @@ const app = {
 
 // ---------------- rendering ----------------
 function entries() {
-  if (app.list === "lan") return app.lan.map((r) => ({ address: r.address, name: r.name }));
+  if (app.list === "lan" || app.list === "internet") return app[app.list].map((r) => ({ address: r.address, name: r.name }));
   return (app.state?.[app.list] || []);
 }
 function isFavorite(address) { return (app.state?.favorites || []).some((f) => f.address === address); }
@@ -145,8 +152,9 @@ function renderServers() {
   }).join("");
   const empty = $("#empty");
   empty.hidden = rows.length > 0;
-  empty.innerHTML = t(app.list === "favorites" ? "empty.favorites" : app.list === "recent" ? "empty.recent"
-    : app.querying ? "empty.lanSearch" : "empty.lan");
+  empty.innerHTML = app.list === "internet"
+    ? (app.querying ? t("empty.internetSearch") : app.internetError ? t("empty.internetError", { e: esc(app.internetError) }) : t("empty.internet"))
+    : t(app.list === "favorites" ? "empty.favorites" : app.list === "recent" ? "empty.recent" : app.querying ? "empty.lanSearch" : "empty.lan");
   renderDetail();
 }
 
@@ -175,7 +183,7 @@ function setStatus(text, busy = false, error = false) {
 
 // ---------------- actions ----------------
 function refresh() {
-  if (app.list === "lan") { app.querying = true; app.lan = []; renderServers(); bridge.send({ cmd: "lan" }); return; }
+  if (app.list === "lan" || app.list === "internet") { app.querying = true; app[app.list] = []; renderServers(); bridge.send({ cmd: app.list }); return; }
   const addresses = entries().map((e) => e.address);
   if (!addresses.length) return;
   for (const a of addresses) delete app.info[a];
@@ -315,10 +323,12 @@ bridge.listen((m) => {
       if (m.tag === app.list) renderServers();
       break;
     case "lan":
-      app.querying = false;
-      app.lan = m.results;
+    case "internet":
+      if (app.list === m.type) app.querying = false;
+      app[m.type] = m.results;
+      if (m.type === "internet") app.internetError = m.error || "";
       for (const r of m.results) app.info[r.address] = r;
-      if (app.list === "lan") renderServers();
+      if (app.list === m.type) renderServers();
       break;
     case "nickResult":
       $("#nick-state").textContent = m.ok ? "✓" : "✕";

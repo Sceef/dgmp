@@ -57,6 +57,7 @@ int OnRawPacket(ENetHost* host, ENetEvent*) {
 Server::Server() { g_server = this; }
 Server::~Server() {
     script_.reset();
+    delete masterAddress_;
     if (host_) enet_host_destroy(host_);
     if (log_) std::fclose(log_);
     g_server = nullptr;
@@ -124,6 +125,7 @@ void Server::Run() {
             }
         }
         TickAuth();
+        TickMaster();
         std::vector<std::string> lines;
         { std::lock_guard<std::mutex> g(consoleLock_); lines.swap(consoleQueue_); }
         for (auto& l : lines) HandleConsole(l);
@@ -475,6 +477,29 @@ void Server::OnHello(ENetPeer* peer, net::Reader& r) {
     pending_[tag] = j;
     ticketCheck_.Start(tag, cfg_.steamApiKey, cfg_.steamAppId, ticket);
     Log("Checking the Steam account of %s (%s)", nick.c_str(), SteamIdText(claimed).c_str());
+}
+
+// The master server lists us while heartbeats come (from the game port, so it can query us back).
+void Server::TickMaster() {
+    if (cfg_.master.empty()) return;
+    const double now = Now();
+    if (now >= nextResolve_) {
+        nextResolve_ = now + 600;  // DNS may change; blocking lookups stay rare
+        std::string host; uint16_t port = net::kMasterPort;
+        const auto colon = cfg_.master.rfind(':');
+        host = cfg_.master.substr(0, colon);
+        if (colon != std::string::npos) port = static_cast<uint16_t>(std::atoi(cfg_.master.c_str() + colon + 1));
+        ENetAddress a{}; a.port = port ? port : net::kMasterPort;
+        if (enet_address_set_host(&a, host.c_str()) == 0) {
+            if (!masterAddress_) { masterAddress_ = new ENetAddress(a); Log("Listed on the master server %s", cfg_.master.c_str()); }
+            else *masterAddress_ = a;
+        } else Log("Cannot resolve the master server %s", cfg_.master.c_str());
+    }
+    if (!masterAddress_ || now < nextHeartbeat_) return;
+    nextHeartbeat_ = now + (++heartbeats_ < 4 ? 15 : 60);  // the first minute more often: listed soon after a start
+    net::Writer w; w.Raw(net::kHeartbeatMagic, 4); w.U16(cfg_.port); w.U16(net::kProtocolVersion);
+    ENetBuffer b{}; b.data = w.buf.data(); b.dataLength = w.buf.size();
+    enet_socket_send(host_->socket, masterAddress_, &b, 1);
 }
 
 // Answers from Steam for the players waiting to join; checks again a ticket Steam had not activated yet.

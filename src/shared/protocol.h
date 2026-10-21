@@ -23,6 +23,15 @@ constexpr size_t kTicketMax = 4096;    // Steam auth session ticket as hex (the 
 // Raw query datagram: "DGMQ" + u32 token  ->  reply "DGMR" + u32 token + ServerInfo
 constexpr char kQueryMagic[4] = {'D', 'G', 'M', 'Q'};
 constexpr char kReplyMagic[4] = {'D', 'G', 'M', 'R'};
+// Master server (public server list), raw UDP like the query:
+//   server -> master  "DGMH" + u16 gamePort + u16 protocol   (heartbeat, from the game port, every minute)
+//   client -> master  "DGML" + u32 token + u16 protocol       (list request; 0: any protocol)
+//   master -> client  "DGMS" + u32 token + u16 part + u16 parts + u16 n + n x (u32 IPv4 as on the wire, u16 port)
+constexpr uint16_t kMasterPort = 7700;
+constexpr char kHeartbeatMagic[4] = {'D', 'G', 'M', 'H'};
+constexpr char kListMagic[4] = {'D', 'G', 'M', 'L'};
+constexpr char kListReplyMagic[4] = {'D', 'G', 'M', 'S'};
+constexpr int kListPerPacket = 200;
 
 enum class Msg : uint8_t {
     // client -> server
