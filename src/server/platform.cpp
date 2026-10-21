@@ -61,7 +61,13 @@ FILE* OpenAppend(const std::filesystem::path& file) {
 std::tm LocalTime(std::time_t t) { std::tm tm{}; localtime_s(&tm, &t); return tm; }
 
 bool HttpGet(const std::string& url, std::string& body, std::string& error, int timeoutSec) {
-    body.clear(); error.clear();
+    int status = 0;
+    return HttpRequest("GET", url, "", "", body, status, error, timeoutSec) && status == 200;
+}
+
+bool HttpRequest(const std::string& method, const std::string& url, const std::string& requestBody, const std::string& contentType,
+                 std::string& body, int& statusOut, std::string& error, int timeoutSec) {
+    body.clear(); error.clear(); statusOut = 0;
     const int wn = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
     std::wstring wurl(wn > 0 ? wn - 1 : 0, L'\0');
     if (wn > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), wn);
@@ -76,10 +82,14 @@ bool HttpGet(const std::string& url, std::string& body, std::string& error, int 
     WinHttpSetTimeouts(session, ms, ms, ms, ms);
     HINTERNET connection = WinHttpConnect(session, host, parts.nPort, 0);
     const std::wstring target = std::wstring(path) + extra;
-    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", target.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+    const std::wstring verb(method.begin(), method.end());
+    HINTERNET request = connection ? WinHttpOpenRequest(connection, verb.c_str(), target.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                                         parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0) : nullptr;
     DWORD status = 0, size = sizeof(status);
-    const bool sent = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+    const std::wstring header = contentType.empty() ? std::wstring() : L"Content-Type: " + std::wstring(contentType.begin(), contentType.end());
+    const bool sent = request &&
+                      WinHttpSendRequest(request, header.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : header.c_str(), header.empty() ? 0 : DWORD(-1),
+                                         requestBody.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(requestBody.data()), DWORD(requestBody.size()), DWORD(requestBody.size()), 0) &&
                       WinHttpReceiveResponse(request, nullptr) &&
                       WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
     if (!sent) error = "request failed (" + std::to_string(GetLastError()) + ")";
@@ -89,12 +99,13 @@ bool HttpGet(const std::string& url, std::string& body, std::string& error, int 
             if (!WinHttpReadData(request, chunk.data(), avail, &got) || !got) break;
             body.append(chunk.data(), got);
         }
-        if (status != 200) error = "HTTP " + std::to_string(status);
+        if (status < 200 || status > 299) error = "HTTP " + std::to_string(status);
     }
     if (request) WinHttpCloseHandle(request);
     if (connection) WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
-    return sent && status == 200;
+    statusOut = int(status);
+    return sent && status >= 200 && status <= 299;
 }
 
 // The system parser, as before the port (a file without a BOM is read in the ANSI code page).
@@ -124,6 +135,8 @@ struct Curl {
     int (*getinfo)(void*, int, ...) = nullptr;
     void (*cleanup)(void*) = nullptr;
     const char* (*strerror)(int) = nullptr;
+    void* (*slistAppend)(void*, const char*) = nullptr;
+    void (*slistFree)(void*) = nullptr;
     bool ok = false;
 };
 const Curl& LoadCurl() {
@@ -140,7 +153,9 @@ const Curl& LoadCurl() {
         c.getinfo = reinterpret_cast<int (*)(void*, int, ...)>(dlsym(lib, "curl_easy_getinfo"));
         c.cleanup = reinterpret_cast<void (*)(void*)>(dlsym(lib, "curl_easy_cleanup"));
         c.strerror = reinterpret_cast<const char* (*)(int)>(dlsym(lib, "curl_easy_strerror"));
-        c.ok = globalInit && c.init && c.setopt && c.perform && c.getinfo && c.cleanup && c.strerror && globalInit(3) == 0;  // CURL_GLOBAL_DEFAULT
+        c.slistAppend = reinterpret_cast<void* (*)(void*, const char*)>(dlsym(lib, "curl_slist_append"));
+        c.slistFree = reinterpret_cast<void (*)(void*)>(dlsym(lib, "curl_slist_free_all"));
+        c.ok = globalInit && c.init && c.setopt && c.perform && c.getinfo && c.cleanup && c.strerror && c.slistAppend && c.slistFree && globalInit(3) == 0;  // CURL_GLOBAL_DEFAULT
     });
     return c;
 }
@@ -153,7 +168,13 @@ size_t CurlWrite(char* data, size_t size, size_t count, void* user) {
 }  // namespace
 
 bool HttpGet(const std::string& url, std::string& body, std::string& error, int timeoutSec) {
-    body.clear(); error.clear();
+    int status = 0;
+    return HttpRequest("GET", url, "", "", body, status, error, timeoutSec) && status == 200;
+}
+
+bool HttpRequest(const std::string& method, const std::string& url, const std::string& requestBody, const std::string& contentType,
+                 std::string& body, int& statusOut, std::string& error, int timeoutSec) {
+    body.clear(); error.clear(); statusOut = 0;
     const Curl& c = LoadCurl();
     if (!c.ok) { error = "libcurl not found (install libcurl4)"; return false; }
     void* h = c.init();
@@ -165,12 +186,20 @@ bool HttpGet(const std::string& url, std::string& body, std::string& error, int 
     c.setopt(h, 13, long(timeoutSec));
     c.setopt(h, 99, 1L);
     c.setopt(h, 10018, "dgmp-server");
+    // CURLOPT_CUSTOMREQUEST, _POSTFIELDS + _POSTFIELDSIZE, _HTTPHEADER
+    if (method != "GET") c.setopt(h, 10036, method.c_str());
+    if (!requestBody.empty() || method == "POST") { c.setopt(h, 10015, requestBody.c_str()); c.setopt(h, 60, long(requestBody.size())); }
+    void* headers = nullptr;
+    const std::string header = "Content-Type: " + contentType;
+    if (!contentType.empty()) { headers = c.slistAppend(nullptr, header.c_str()); c.setopt(h, 10023, headers); }
     const int rc = c.perform(h);
     long status = 0;
     if (rc == 0) c.getinfo(h, 0x200002, &status);  // CURLINFO_RESPONSE_CODE
     c.cleanup(h);
+    if (headers) c.slistFree(headers);
+    statusOut = int(status);
     if (rc != 0) { error = c.strerror(rc); return false; }
-    if (status != 200) { error = "HTTP " + std::to_string(status); return false; }
+    if (status < 200 || status > 299) { error = "HTTP " + std::to_string(status); return false; }
     return true;
 }
 

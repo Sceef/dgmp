@@ -114,7 +114,10 @@ end)
 | `after(ms, fn)` → id | один раз через `ms` миллисекунд |
 | `every(ms, fn)` → id | повторять каждые `ms` (не чаще 10 мс) |
 | `cancelTimer(id)` | отменить таймер |
-| `sha256(text)` | hex-хеш (например, для паролей аккаунтов) |
+| `sha256(text)` | hex-хеш. Для паролей не годится — используйте `passwordHash` |
+| `passwordHash(password)` / `passwordCheck(password, hash)` | хеш пароля для хранения (PBKDF2-SHA256 с солью, ~30 мс) / проверка |
+| `http.get(url, cb)`, `http.post(url, body, cb [, type])`, `http.request{...}` | запросы в интернет (см. «HTTP и JSON») |
+| `json.encode(value)` / `json.decode(text)` | таблица ↔ текст JSON |
 | `ban(target [, minutes [, reason]])` | бан: игрок, SteamID, IP или ник (см. «Steam, админы и баны») |
 | `unban(text)` → число | снять баны по SteamID, IP или нику; вернёт, сколько снято |
 | `bans()` | список банов: `{steamId, ip, name, reason, by, at, expires}` (время Unix; `expires` 0 — навсегда) |
@@ -177,6 +180,7 @@ end)
 | `kick([reason])` | выгнать с сервера |
 | `setHealth(percent)` | здоровье в процентах от максимума; `0` — смерть (как от любой причины: `playerDeath`, экран «Возрождение», `playerRespawn`) |
 | `heal([percent = 100])` / `kill()` | вылечить / убить |
+| `setTime(hours [, paused])` / `setWeather(id or "auto")` | время суток / погода только у этого игрока (интерьер, сон, сцена); общий `setTime`/`setWeather` потом заменит их |
 | `damage(amount [, attacker])` | урон через игру (реакция на попадание); `attacker` станет убийцей |
 | `ban([reason [, minutes]])` | забанить и выгнать: по нику и Steam-аккаунту, а без подтверждённого Steam — ещё и по IP; без `minutes` или 0 — навсегда |
 | `hint(title, text [, image [, pause]])` | окно подсказки |
@@ -889,12 +893,60 @@ q:step("Доберитесь до заправки", { x = .., y = .., z = .., r
 ```lua
 command("register", function(player, args, password)
     if storage.get("acc:" .. player.name) then return player:message("Аккаунт уже существует.") end
-    storage.set("acc:" .. player.name, { pass = sha256(password or ""), money = 100 })
+    storage.set("acc:" .. player.name, { pass = passwordHash(password or ""), money = 100 })
     player:message("Аккаунт создан.")
+end)
+command("login", function(player, args, password)
+    local acc = storage.get("acc:" .. player.name)
+    if not acc or not passwordCheck(password or "", acc.pass) then return player:message("Неверный пароль.") end
+    player.data.logged = true
 end)
 ```
 
-Ники игроков не защищены паролем Steam. Если на сервере важны аккаунты, делайте вход (`/login`) в самом режиме, как в примере выше.
+С проверкой Steam (`SteamApiKey`) ник закреплён за аккаунтом Steam, и пароль нужен только если вы хотите отдельные аккаунты-персонажи. Без неё ники не защищены — делайте вход (`/login`) в самом режиме, как в примере выше.
+
+## HTTP и JSON
+
+Запросы на сайт, в API, вебхуки Discord. Выполняются в фоне, ответ приходит в функцию на следующем тике сервера. Одновременно — до 16 запросов, тело — до 1 МБ, тайм-аут по умолчанию 10 с. Выключается в `server.ini`: `Http=0`.
+
+```lua
+http.get("https://example.com/api/status", function(ok, status, body, err)
+    if ok then local data = json.decode(body) end
+end)
+
+-- Сообщение в канал Discord через вебхук (таблица уходит как JSON)
+http.post("https://discord.com/api/webhooks/<id>/<token>", { content = player.name .. " зашёл на сервер" })
+
+http.request({ method = "PUT", url = "https://...", body = json.encode(t), type = "application/json", timeout = 20 },
+             function(ok, status, body, err) end)
+```
+
+`ok` — ответ 2xx; `status` — код HTTP (0 — ответа нет); `err` — что пошло не так. `json.decode` при ошибке возвращает `nil, "invalid JSON"`.
+
+## RP-чат — библиотека `rpchat`
+
+Чат как на RP-серверах SA-MP: обычное сообщение слышно только рядом, и чем дальше, тем бледнее; игроки в разных виртуальных мирах друг друга не слышат.
+
+```lua
+local rpchat = require("rpchat")
+rpchat.install()                                     -- радиус 20 м, /o включён
+rpchat.install({ radius = 15, ooc = false, names = "underscores", adminSees = true })
+rpchat.near(player, "* Рация шипит", "#C2A2DA", 10)  -- своё сообщение по тем же правилам
+```
+
+| Команда | |
+|---|---|
+| обычный текст | «Mark Twain говорит: …» в радиусе, цвет тускнеет с расстоянием |
+| `/me действие` | `* Mark Twain достаёт рацию` |
+| `/do описание` | `* Дверь заперта (( Mark Twain ))` |
+| `/try действие` | `* Mark Twain открыть дверь \| удачно` — случайно, 50 на 50 |
+| `/b текст` | локальный OOC `(( Mark Twain: … ))` |
+| `/s текст` | крик — вдвое дальше |
+| `/w текст` | шёпот — 2 м |
+| `/pm id или ник текст` | личное сообщение |
+| `/o текст` | общий OOC для всех (`ooc = false` — выключен) |
+
+`names = "spaces"` (по умолчанию) показывает `Mark_Twain` как `Mark Twain`. `adminSees = true` — админы видят и дальние локальные сообщения (серым, с пометкой `[far]`). Тексты «говорит», «кричит» и т. п. — на языке слушателя (`player.lang`), свои — `prefix = { says = { en = "...", ru = "..." } }`.
 
 ## Steam, админы и баны
 
@@ -981,6 +1033,7 @@ end)
 | `ReserveNicks` | `1` — ник закрепляется за Steam-аккаунтом |
 | `LocalAdmin` | `1` — вошедший с этого компьютера — админ |
 | `RconPassword` | пароль для `/rcon login` (пусто — RCON выключен) |
+| `Http` | `1` (по умолчанию) — режимам доступен `http.request`; `0` — нет |
 | `MaxHitDamage`, `MeleeRange`, `MaxHitsPerSecond`, `CheatKick` | античит: урон одного попадания, дальность ближнего боя (м), попаданий в секунду, страйков в минуту до кика (0 — не кикать) |
 | `Nametags` | `visible`, `walls` или `hidden` |
 | `SpawnX/Y/Z/Yaw` | точка появления, в единицах Unreal |

@@ -23,6 +23,9 @@ std::string Sha256Hex(const void* data, size_t size);       // lowercase hex dig
 // `body` holds the answer also for other statuses; `error` says what went wrong. WinHTTP on Windows,
 // libcurl (loaded at run time: libcurl.so.4) elsewhere.
 bool HttpGet(const std::string& url, std::string& body, std::string& error, int timeoutSec);
+// Any method (GET, POST, PUT, DELETE...) with a body; `status` is the HTTP status (0: no answer). True: 2xx.
+bool HttpRequest(const std::string& method, const std::string& url, const std::string& requestBody, const std::string& contentType,
+                 std::string& body, int& status, std::string& error, int timeoutSec);
 #ifdef _WIN32
 std::string Utf8(const std::wstring& w);
 #endif

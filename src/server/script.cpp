@@ -14,6 +14,7 @@ extern "C" {
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <thread>
 #include <chrono>
 #include <functional>
 
@@ -224,6 +225,13 @@ struct Api {
     static int PHeal(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, float(luaL_optnumber(L, 2, 100))); return 0; }
     static int PKill(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetHealth(&p, 0); return 0; }
     static int PKick(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).Kick(&p, luaL_optstring(L, 2, "Kicked")); return 0; }
+    // player:setTime(hours [, paused]) / player:setWeather(id or "auto"): only this player's sky.
+    static int PSetTime(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetPlayerTime(&p, float(luaL_checknumber(L, 2)), lua_toboolean(L, 3)); return 0; }
+    static int PSetWeather(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        const int id = lua_type(L, 2) == LUA_TSTRING && std::strcmp(lua_tostring(L, 2), "auto") == 0 ? -1 : static_cast<int>(luaL_checkinteger(L, 2));
+        Srv(L).SetPlayerWeather(&p, id); return 0;
+    }
     // player:ban([reason [, minutes]]): by its Steam account and address; minutes nil or 0: for ever.
     static int PBan(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
@@ -1074,6 +1082,71 @@ struct Api {
         Srv(L).SetNametags(m == "walls" ? net::NametagMode::ThroughWalls : m == "hidden" ? net::NametagMode::Hidden : net::NametagMode::Visible);
         return 0;
     }
+    // ---- http.request / http.get / http.post: asynchronous, the callback runs on the server thread ----
+    // http.request{url, method = "GET", body, type (Content-Type), timeout = 10}, callback(ok, status, body, error)
+    static int HttpStart(lua_State* L, const std::string& method, const std::string& url, const std::string& body, const std::string& type, int timeout, int callbackIdx) {
+        auto& s = Self(L);
+        if (!s.server_.config().http) return luaL_error(L, "http is off on this server (server.ini Http=0)");
+        if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) return luaL_error(L, "http: the url must start with http:// or https://");
+        if (body.size() > (1u << 20)) return luaL_error(L, "http: the body is larger than 1 MB");
+        if (s.httpInFlight_ >= 16) return luaL_error(L, "http: 16 requests are already running");
+        const int id = s.nextHttp_++;
+        if (callbackIdx) {
+            luaL_checktype(L, callbackIdx, LUA_TFUNCTION);
+            lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.http");
+            lua_pushvalue(L, callbackIdx); lua_rawseti(L, -2, id);
+            lua_pop(L, 1);
+        }
+        ++s.httpInFlight_;
+        std::thread([box = s.http_, id, method, url, body, type, timeout] {
+            Script::HttpBox::Done d{id, false, 0, {}, {}};
+            d.ok = HttpRequest(method, url, body, type, d.body, d.status, d.error, timeout);
+            std::lock_guard<std::mutex> g(box->lock);
+            box->done.push_back(std::move(d));
+        }).detach();
+        lua_pushinteger(L, id); return 1;
+    }
+    static int HttpRequestLua(lua_State* L) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        auto field = [&](const char* name, const char* def) {
+            lua_getfield(L, 1, name);
+            std::string v = lua_isstring(L, -1) ? lua_tostring(L, -1) : def;
+            lua_pop(L, 1); return v;
+        };
+        const std::string url = field("url", ""), method = field("method", "GET"), body = field("body", ""), type = field("type", "");
+        lua_getfield(L, 1, "timeout"); const int timeout = int(luaL_optinteger(L, -1, 10)); lua_pop(L, 1);
+        std::string m = method; for (auto& c : m) c = char(std::toupper(static_cast<unsigned char>(c)));
+        return HttpStart(L, m, url, body, type, std::clamp(timeout, 1, 60), lua_isnoneornil(L, 2) ? 0 : 2);
+    }
+    static int HttpGetLua(lua_State* L) { return HttpStart(L, "GET", luaL_checkstring(L, 1), "", "", 10, lua_isnoneornil(L, 2) ? 0 : 2); }
+    // http.post(url, body [, callback [, contentType]]): a table body is sent as JSON.
+    static int HttpPostLua(lua_State* L) {
+        std::string body, type = luaL_optstring(L, 4, "");
+        if (lua_istable(L, 2)) { body = ToJson(L, 2, 0).dump(); if (type.empty()) type = "application/json"; }
+        else body = luaL_checkstring(L, 2);
+        if (type.empty()) type = !body.empty() && (body[0] == '{' || body[0] == '[') ? "application/json" : "application/x-www-form-urlencoded";
+        return HttpStart(L, "POST", luaL_checkstring(L, 1), body, type, 10, lua_isnoneornil(L, 3) ? 0 : 3);
+    }
+    // json.encode(value) -> text; json.decode(text) -> value or nil, error
+    static int JsonEncode(lua_State* L) {
+        const std::string text = ToJson(L, 1, 0).dump();
+        lua_pushlstring(L, text.data(), text.size()); return 1;
+    }
+    static int JsonDecode(lua_State* L) {
+        json::Value v;
+        if (!json::Value::Parse(luaL_checkstring(L, 1), v)) { lua_pushnil(L); lua_pushstring(L, "invalid JSON"); return 2; }
+        PushJson(L, v); return 1;
+    }
+    // passwordHash(password) -> "pbkdf2-sha256$iterations$salt$hash"; passwordCheck(password, hash) -> bool
+    static int PasswordHashLua(lua_State* L) {
+        size_t n; const char* pw = luaL_checklstring(L, 1, &n);
+        const std::string h = PasswordHash(std::string(pw, n));
+        lua_pushlstring(L, h.data(), h.size()); return 1;
+    }
+    static int PasswordCheckLua(lua_State* L) {
+        size_t n; const char* pw = luaL_checklstring(L, 1, &n);
+        lua_pushboolean(L, PasswordCheck(std::string(pw, n), luaL_checkstring(L, 2))); return 1;
+    }
     static int Sha256(lua_State* L) {
         size_t n; const char* data = luaL_checklstring(L, 1, &n);
         const auto hex = Sha256Hex(data, n);
@@ -1357,7 +1430,7 @@ bool Script::Load(const std::string& modeId) {
     lua_pushcfunction(L_, &Api::PEq); lua_setfield(L_, -2, "__eq");
     lua_pushcfunction(L_, &Api::PToString); lua_setfield(L_, -2, "__tostring");
     const luaL_Reg methods[] = {{"message", &Api::PMessage}, {"position", &Api::PPosition}, {"velocity", &Api::PVelocity}, {"setPosition", &Api::PSetPosition},
-                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
+                                {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
                                 {"giveItem", &Api::PGiveItem}, {"takeItem", &Api::PTakeItem}, {"giveWeapon", &Api::PGiveWeapon}, {"setAmmo", &Api::PSetAmmo},
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
                                 {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
@@ -1370,7 +1443,7 @@ bool Script::Load(const std::string& modeId) {
     const luaL_Reg globals[] = {{"print", &Api::Log}, {"log", &Api::Log}, {"on", &Api::On}, {"command", &Api::Command}, {"players", &Api::Players},
                                 {"getPlayer", &Api::GetPlayer}, {"broadcast", &Api::Broadcast}, {"setTime", &Api::SetTime}, {"setWeather", &Api::SetWeather},
                                 {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
-                                {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256},
+                                {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256}, {"passwordHash", &Api::PasswordHashLua}, {"passwordCheck", &Api::PasswordCheckLua},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
@@ -1380,6 +1453,12 @@ bool Script::Load(const std::string& modeId) {
     luaL_newlib(L_, storage); lua_setglobal(L_, "storage");
     const luaL_Reg quests[] = {{"load", &Api::QuestsLoad}, {"list", &Api::QuestsList}, {"watch", &Api::QuestsWatch}, {nullptr, nullptr}};
     luaL_newlib(L_, quests); lua_setglobal(L_, "quests");
+    const luaL_Reg http[] = {{"request", &Api::HttpRequestLua}, {"get", &Api::HttpGetLua}, {"post", &Api::HttpPostLua}, {nullptr, nullptr}};
+    luaL_newlib(L_, http); lua_setglobal(L_, "http");
+    const luaL_Reg jsonLib[] = {{"encode", &Api::JsonEncode}, {"decode", &Api::JsonDecode}, {nullptr, nullptr}};
+    luaL_newlib(L_, jsonLib); lua_setglobal(L_, "json");
+    http_ = std::make_shared<HttpBox>(); httpInFlight_ = 0;
+    lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.http");
 
     // Persistent storage survives reloads and restarts: data/<mode>/storage.json
     storageFile_ = server_.root() / "data" / mode_ / "storage.json";
@@ -1808,9 +1887,32 @@ bool Script::Console(const std::string& line) {
     return result & 2;
 }
 
+// Finished http requests: their callbacks (ok, status, body, error).
+void Script::TickHttp() {
+    if (!http_) return;
+    std::vector<HttpBox::Done> done;
+    { std::lock_guard<std::mutex> g(http_->lock); done.swap(http_->done); }
+    for (auto& d : done) {
+        if (!L_) return;
+        --httpInFlight_;
+        lua_getfield(L_, LUA_REGISTRYINDEX, "dgmp.http");
+        lua_rawgeti(L_, -1, d.id);
+        lua_pushnil(L_); lua_rawseti(L_, -3, d.id);
+        if (!lua_isfunction(L_, -1)) { lua_pop(L_, 2); continue; }
+        lua_pushboolean(L_, d.ok); lua_pushinteger(L_, d.status); lua_pushlstring(L_, d.body.data(), d.body.size());
+        if (d.error.empty()) lua_pushnil(L_); else lua_pushstring(L_, d.error.c_str());
+        g_deadline = Clock() + kCallBudget;
+        if (lua_pcall(L_, 4, 0, 0) != LUA_OK) { server_.Log("[%s] http callback error: %s", mode_.c_str(), lua_tostring(L_, -1)); lua_pop(L_, 1); }
+        g_deadline = 0;
+        lua_pop(L_, 1);  // dgmp.http
+    }
+}
+
 void Script::Tick(float dt) {
     if (!L_) return;
     const double now = server_.Now();
+    TickHttp();
+    if (!L_) return;
     if (storageDirty_ && now >= nextStorageSave_) { nextStorageSave_ = now + 5.0; SaveStorage(); }
     // Copy due timers first: callbacks may add or cancel timers.
     std::vector<Timer> due;

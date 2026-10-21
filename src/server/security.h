@@ -46,6 +46,11 @@ private:
     std::vector<std::pair<std::string, std::string>> names_;  // sorted by nick
 };
 
+// Player passwords for modes (passwordHash / passwordCheck): PBKDF2-HMAC-SHA256 with a random salt,
+// "pbkdf2-sha256$<iterations>$<salt hex>$<hash hex>".
+std::string PasswordHash(const std::string& password);
+bool PasswordCheck(const std::string& password, const std::string& stored);
+
 // Checks auth session tickets with ISteamUserAuth/AuthenticateUserTicket on worker threads.
 class SteamTicketCheck {
 public:

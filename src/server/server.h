@@ -41,6 +41,7 @@ struct Config {
     std::string rconPassword;         // "/rcon login <password>" makes a player an admin ("": off)
     std::vector<std::string> admins;  // SteamIDs; nicknames count only with SteamAuth=off
     std::string master;               // master server host[:port] to be listed on ("": not listed)
+    bool http = true;                 // modes may use http.request (Http=0: not)
     // Anti-cheat (docs/API.md "Античит"): limits of the hits a client reports, strikes before a kick.
     float maxHitDamage = 500;         // one hit, before the hit zone multiplier
     float meleeRange = 600;           // units
@@ -252,6 +253,9 @@ public:
     void Message(Player* to, uint32_t rgba, const std::string& text);  // to=null: everyone
     void SetTime(float hours, bool paused);
     void SetWeather(int id);
+    // Only this player's sky (an interior, a dream, a cutscene); the next server-wide setTime / setWeather replaces it.
+    void SetPlayerTime(Player* p, float hours, bool paused);
+    void SetPlayerWeather(Player* p, int id);
     void Teleport(Player* p, float x, float y, float z, float yaw);
     void Hint(Player* to, const std::string& title, const std::string& text, const std::string& image, bool pause, float seconds = 0);
     void Kick(Player* p, const std::string& reason);

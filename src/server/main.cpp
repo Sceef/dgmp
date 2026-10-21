@@ -175,6 +175,7 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
     cfg.localAdmin = Ini(ini, "LocalAdmin", "1") != "0";
     cfg.rconPassword = Ini(ini, "RconPassword", "");
     cfg.master = Ini(ini, "Master", "");
+    cfg.http = Ini(ini, "Http", "1") != "0";
     cfg.maxHitDamage = static_cast<float>(std::atof(Ini(ini, "MaxHitDamage", "500").c_str()));
     cfg.meleeRange = static_cast<float>(std::atof(Ini(ini, "MeleeRange", "6").c_str())) * 100.f;
     cfg.maxHitsPerSecond = std::max(1, std::atoi(Ini(ini, "MaxHitsPerSecond", "30").c_str()));

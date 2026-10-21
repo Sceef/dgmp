@@ -2,6 +2,8 @@
 #include "server.h"
 #include "../shared/json.h"
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -75,6 +77,16 @@ private:
     struct Timer { int id; int ref; double due; double every; };
     std::vector<Timer> timers_;
     int nextTimer_ = 1;
+    // http.request: answers from worker threads, handed to their callbacks in Tick. A new load gets a new
+    // box; threads of the old one finish into theirs.
+    struct HttpBox {
+        struct Done { int id; bool ok; int status; std::string body, error; };
+        std::mutex lock;
+        std::vector<Done> done;
+    };
+    std::shared_ptr<HttpBox> http_;
+    int nextHttp_ = 1, httpInFlight_ = 0;
+    void TickHttp();
     json::Value storage_ = json::Value::Object();
     std::filesystem::path storageFile_;
     bool storageDirty_ = false;

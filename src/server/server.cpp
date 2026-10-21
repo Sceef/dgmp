@@ -1601,6 +1601,14 @@ void Server::SetTime(float hours, bool paused) {
     net::Writer w; w.Op(net::Msg::SetTime); w.F32(timeHours_); w.U8(paused); Send(nullptr, w, true);
 }
 void Server::SetWeather(int id) { weather_ = id; net::Writer w; w.Op(net::Msg::SetWeather); w.I32(id); Send(nullptr, w, true); }
+void Server::SetPlayerTime(Player* p, float hours, bool paused) {
+    if (!p || p->bot) return;
+    net::Writer w; w.Op(net::Msg::SetTime); w.F32(std::fmod(std::fmod(hours, 24.f) + 24.f, 24.f)); w.U8(paused); Send(p, w, true);
+}
+void Server::SetPlayerWeather(Player* p, int id) {
+    if (!p || p->bot) return;
+    net::Writer w; w.Op(net::Msg::SetWeather); w.I32(id); Send(p, w, true);
+}
 void Server::Teleport(Player* p, float x, float y, float z, float yaw) {
     if (!p) return;
     p->state.x = x; p->state.y = y; p->state.z = z; p->state.yaw = yaw;
