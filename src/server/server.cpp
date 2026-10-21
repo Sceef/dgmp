@@ -2,6 +2,7 @@
 #include "../shared/json.h"
 #include "platform.h"
 #include "script.h"
+#include "../shared/version.h"
 #include <enet/enet.h>
 #include <algorithm>
 #include <cctype>
@@ -1586,7 +1587,7 @@ net::ServerInfo Server::Info() const {
     info.password = cfg_.password.empty() ? 0 : 1;
     info.name = cfg_.name;
     info.mode = script_ ? script_->title() : cfg_.mode;
-    info.version = "0.6.0";
+    info.version = dgmp::kVersion;
     return info;
 }
 int Server::PlayerCount() const {

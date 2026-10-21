@@ -7,6 +7,7 @@
 #include "environment.h"
 #include "devmenu.h"
 #include "mp.h"
+#include "shared/version.h"
 #include "devcmd.h"
 #include "audio.h"
 #include "hud.h"
@@ -612,7 +613,7 @@ void Status(double now) {
         file << "]}\n";
     }
     MoveFileExW(tmp.c_str(),dest.c_str(),MOVEFILE_REPLACE_EXISTING);
-    wchar_t text[1024]; swprintf_s(text,L"DGMP v0.5.2 | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str());
+    wchar_t text[1024]; swprintf_s(text,L"DGMP v%hs | %hs | Fly: %ls | %.0f m/s\nX %.2f  Y %.2f  Z %.2f  Yaw %.1f\nF2 fly | WASD move | Space/Ctrl up/down | Shift boost\n[ / ] speed | F5 save spawn | F6 marker | F8 return\n%ls",dgmp::kVersion,stage.c_str(),flying?L"ON":L"OFF",speed/100,pos.X,pos.Y,pos.Z,rotation.Yaw,note.c_str());
     // In the editor the status lives in the in-game UI (bottom left, folded); the old panel only if that is not up.
     if(!multiplayer && overlay::Visible()) { editorui::SetStatus(text); panel::Text(L""); }
     else panel::Text(multiplayer?L"":text);
@@ -751,7 +752,7 @@ void DGMPInitThread() {
     const auto logPath=fs::path(profile::Root())/L"logs"/L"DGMP.log";
     dg::LogOpen(logPath.string().c_str()); panel::Start();
     if(overlay::Install()) overlay::SetCover(&panel::DrawCover);  // the loading cover lives in the game's frames
-    dg::Log("DGMP v0.5.2 loading; built %s %s; profile imports patched=%d",__DATE__,__TIME__,profile::PatchedCount());
+    dg::Log("DGMP v%s loading; built %s %s; profile imports patched=%d",dgmp::kVersion,__DATE__,__TIME__,profile::PatchedCount());
     dg::Log("Isolated profile: %ls",profile::Saved().c_str());
     panel::Loading(true,0.1f,lang::Pick(L"Подготовка DGMP",L"Preparing DGMP"));
     if(!ue::Init()) { panel::Text(L"DGMP: unsupported game build; see log"); panel::Loading(true,0,lang::Pick(L"Эта сборка игры не поддерживается",L"This game build is not supported")); return; }

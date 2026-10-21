@@ -5,6 +5,8 @@
 //   DGMP.exe [--editor] [--prepare-only] [--refresh-seed] [--dev]
 #include "../shared/json.h"
 #include "../shared/netclient.h"
+#include "../shared/version.h"
+#include "../server/platform.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -39,6 +41,9 @@ constexpr int kMaxRecent = 15;
 constexpr const char* kQuestTestMode = "questtest";
 // The public server list (dgmp-server --master); launcher.json "master" overrides it.
 constexpr const char* kDefaultMaster = "";
+// Update manifest: {"version": "0.7.1", "url": "https://...download page", "notes": {"en": "...", "ru": "..."}};
+// launcher.json "updateUrl" overrides it. "": no check.
+constexpr const char* kDefaultUpdateUrl = "";
 
 fs::path g_root;
 HWND g_window = nullptr;
@@ -155,6 +160,33 @@ json::Value LocalAddresses() {
     }
     return out;
 }
+// "0.7.10" > "0.7.9": numbers compared one by one.
+bool NewerVersion(const std::string& a, const std::string& b) {
+    std::istringstream x(a), y(b);
+    for (int i = 0; i < 4; ++i) {
+        int p = 0, q = 0; char dot = 0;
+        x >> p; y >> q; x >> dot; y >> dot;
+        if (p != q) return p > q;
+    }
+    return false;
+}
+// Once per launch: a newer version in the update manifest shows a download link in the sidebar.
+void CheckForUpdate() {
+    static std::atomic<bool> checked{false};
+    const std::string url = g_settings.str("updateUrl", kDefaultUpdateUrl);
+    if (url.rfind("https://", 0) != 0 || checked.exchange(true)) return;
+    std::thread([url] {
+        std::string body, error;
+        json::Value m;
+        if (!srv::HttpGet(url, body, error, 10) || !json::Value::Parse(body, m)) { g_log << "Update check: " << (error.empty() ? "unreadable manifest" : error) << std::endl; return; }
+        const std::string version = m.str("version"), link = m.str("url");
+        if (!NewerVersion(version, dgmp::kVersion) || link.rfind("https://", 0) != 0) return;
+        const auto& notes = m["notes"];
+        const std::string text = notes.isString() ? notes.asString() : notes.str(g_english ? "en" : "ru");
+        ToUi(json::Value::Object().set("type", "update").set("version", version).set("url", link).set("notes", text));
+    }).detach();
+}
+
 json::Value StateMessage() {
     json::Value s = json::Value::Object();
     s.set("type", "state");
@@ -165,7 +197,7 @@ json::Value StateMessage() {
     s.set("host", g_settings["host"]);
     s.set("modes", Modes());
     s.set("addresses", LocalAddresses());
-    s.set("version", "0.6.0");
+    s.set("version", dgmp::kVersion);
     s.set("protocol", static_cast<int>(net::kProtocolVersion));
     s.set("gameRunning", g_game != nullptr);
     s.set("serverRunning", g_server.process != nullptr);
@@ -433,6 +465,7 @@ void HandleMessage(const std::string& text) {
     const auto cmd = m.str("cmd");
     if (cmd == "init") {
         ToUi(StateMessage());
+        CheckForUpdate();
     } else if (cmd == "setLang") {
         // Kept in launcher.json.
         const auto lang = m.str("lang");

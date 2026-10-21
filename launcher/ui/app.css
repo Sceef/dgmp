@@ -62,6 +62,8 @@ button { cursor: pointer; }
 .side-foot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
 .link { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12.5px; }
 .link:hover { color: var(--accent-hi); }
+.update { width: 100%; margin-bottom: 6px; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent-hi); font-size: 12.5px; text-decoration: none; }
+.update:hover { background: #d2652d26; }
 .foot-row { width: 100%; display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .version { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dim); }
 .lang { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }

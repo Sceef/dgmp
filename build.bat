@@ -37,5 +37,5 @@ cl %CXXFLAGS% /Ithird_party\enet\include /Fo"build\probe\\" src\tools\probe.cpp 
 
 rem ---- player launcher (WebView2 UI in launcher\ui) ----
 if not exist build\launcher mkdir build\launcher
-cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\webview2\build\native\include /Fo"build\launcher\\" src\launcher\main.cpp src\shared\netclient.cpp /Fe"DGMP.exe" /link /SUBSYSTEM:WINDOWS build\enet.lib third_party\webview2\build\native\x64\WebView2LoaderStatic.lib ws2_32.lib winmm.lib user32.lib shell32.lib ole32.lib advapi32.lib iphlpapi.lib dwmapi.lib version.lib gdi32.lib || exit /b 1
+cl %CXXFLAGS% /Ithird_party\enet\include /Ithird_party\webview2\build\native\include /Fo"build\launcher\\" src\launcher\main.cpp src\shared\netclient.cpp src\server\platform.cpp /Fe"DGMP.exe" /link /SUBSYSTEM:WINDOWS build\enet.lib third_party\webview2\build\native\x64\WebView2LoaderStatic.lib ws2_32.lib winmm.lib user32.lib shell32.lib ole32.lib advapi32.lib iphlpapi.lib dwmapi.lib version.lib gdi32.lib winhttp.lib || exit /b 1
 echo DGMP BUILD OK

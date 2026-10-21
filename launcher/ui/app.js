@@ -64,7 +64,7 @@ const I18N = {
       + "Quests and jobs are made in the game's own editor windows. Story, saves and photo mode are disabled.",
     "editor.refresh": "Restore the original world template before launch", "editor.run": "Open editor",
     "status.ready": "Ready", "game.running": "Game running",
-    "pass.title": "Password required", "cancel": "Cancel",
+    "pass.title": "Password required", "cancel": "Cancel", "update.available": "Version {v} is out — download",
     "mock.launch": "Launching Days Gone…",
   },
   ru: {
@@ -83,7 +83,7 @@ const I18N = {
     "empty.internetSearch": "Загрузка списка серверов…", "empty.internet": "Сейчас нет открытых серверов.",
     "empty.internetError": "Список серверов недоступен: {e}.",
     "detail.players": "{n}/{max} игроков", "detail.password": "пароль", "detail.incompatible": "несовместимая версия",
-    "detail.offline": "сервер не отвечает",
+    "detail.offline": "сервер не отвечает", "update.available": "Вышла версия {v} — скачать",
     "err.nick": "Сначала введите корректный ник", "err.gameRunning": "Игра уже запущена",
     "err.version": "Версия сервера не совпадает с вашей", "err.noGame": "Days Gone не найден: DGMP должен лежать в папке игры",
     "host.name": "Название сервера", "host.port": "Порт (UDP)", "host.slots": "Слоты", "password": "Пароль", "optional": "(необязательно)",
@@ -330,6 +330,16 @@ bridge.listen((m) => {
       for (const r of m.results) app.info[r.address] = r;
       if (app.list === m.type) renderServers();
       break;
+    case "update": {
+      // A newer DGMP (launcher.json "updateUrl" manifest): a link to its download page.
+      if (!(m.url || "").startsWith("https://")) break;
+      const u = $("#update");
+      u.href = m.url;
+      u.textContent = t("update.available", { v: m.version });
+      u.title = m.notes || "";
+      u.hidden = false;
+      break;
+    }
     case "nickResult":
       $("#nick-state").textContent = m.ok ? "✓" : "✕";
       $("#nick-state").className = "nick-state " + (m.ok ? "ok" : "bad");
