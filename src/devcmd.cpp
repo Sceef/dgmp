@@ -279,7 +279,7 @@ std::string Run(const std::string& line) {
             const FVector p = ActorPos(o); const float dx = p.X - me.X, dy = p.Y - me.Y, dz = p.Z - me.Z, d = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (d > radius) continue;
             auto ctrl = Field<UObject*>(o, off::Pawn_Controller);
-            UObject* hp = FindProperty(o->Class, "Health"); const float health = hp ? Field<float>(o, OffsetOf(hp)) : -1.f;
+            const float health = zombies::Health(o);
             char b[256]; std::snprintf(b, sizeof(b), "%s %s%s ctrl=%s hp=%g d=%.0fm at (%.0f %.0f %.0f)\n", Hex(uintptr_t(o)).c_str(), GetName(o).c_str(), hidden ? " [hidden]" : "",
                 IsValid(ctrl) ? GetName(ctrl->Class).c_str() : "-", health, d / 100.f, p.X, p.Y, p.Z);
             out << b; if (++shown >= 80) break;

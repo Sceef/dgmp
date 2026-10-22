@@ -32,6 +32,7 @@ struct Driven {
     std::deque<Sample> samples;
     UObject* lastMontage = nullptr;
     float speed = 0;                                                 // wanted ground speed (units/s), 0: walk speed as is
+    FVector ordered{}; double orderedAt = -1; int moveSpeed = -1;   // the last MoveToLocation and SetMoveSpeed given
 };
 std::map<UObject*, Driven> driven;
 
@@ -114,16 +115,27 @@ void Step(UObject* pawn, Driven& d, double now, float dt) {
     const FVector at = ActorPos(pawn);
     const float dx = d.to.X - at.X, dy = d.to.Y - at.Y, dist = std::sqrt(dx * dx + dy * dy);
     if (dist > kTeleportDistance || std::fabs(d.to.Z - at.Z) > 400.f) { Teleport(pawn, d.to, d.yaw); return; }
-    Face(pawn, dist > 60.f ? std::atan2(dy, dx) * 57.2957795f : d.yaw);
-    if (dist < kArriveDistance) return;
-    if (UObject* m = Movement(pawn)) {
-        // Catch up when behind: the reported speed plus what closes the gap in about half a second.
-        const float want = std::fmax(d.speed, 150.f) + dist * 1.5f;
-        SetProp<float>(m, "MaxWalkSpeed", std::fmin(want, 900.f));
+    UObject* c = Controller(pawn);
+    if (dist < kArriveDistance) { Face(pawn, d.yaw); return; }
+    if (!c) return;
+    // The game's own locomotion: a straight move order (no pathfinding) at one of the AI's speeds. Bend's
+    // movement is animation driven and ignores plain movement input until the behaviour tree has run once.
+    // Behind by more than 2 m: one speed faster to catch up.
+    const float want = d.speed + (dist > 200.f ? 120.f : 0.f);
+    const int speed = want < 235 ? 0 : want < 370 ? 1 : want < 430 ? 2 : want < 475 ? 3 : 4;  // EAIMoveSpeed Walk..Sprint
+    if (speed != d.moveSpeed) {
+        d.moveSpeed = speed;
+        if (auto f = Fn(c, "SetMoveSpeed")) { Params p(f); p.Set<uint8_t>("moveType", uint8_t(speed)); Call(c, "SetMoveSpeed", &p); }
     }
-    if (auto f = Fn(pawn, "AddMovementInput")) {
-        Params p(f); p.Set("WorldDirection", FVector{dx / dist, dy / dist, 0}); p.Set("ScaleValue", 1.f); p.SetBool("bForce", true);
-        Call(pawn, "AddMovementInput", &p);
+    const float ox = d.to.X - d.ordered.X, oy = d.to.Y - d.ordered.Y;
+    if (now - d.orderedAt > 0.5 || ox * ox + oy * oy > 50.f * 50.f) {
+        d.ordered = d.to; d.orderedAt = now;
+        if (auto f = Fn(c, "MoveToLocation")) {
+            Params p(f); p.Set("Dest", d.to); p.Set("AcceptanceRadius", kArriveDistance); p.SetBool("bStopOnOverlap", false);
+            p.SetBool("bUsePathfinding", false); p.SetBool("bProjectDestinationToNavigation", false); p.SetBool("bCanStrafe", false);
+            p.SetBool("bAllowPartialPath", true);
+            Call(c, "MoveToLocation", &p);
+        }
     }
     (void)dt;
 }
@@ -197,6 +209,7 @@ std::string Describe() {
 
 void Spawned(uint16_t tag, UObject* pawn);
 void SpawnFailed(uint16_t tag);
+bool Claimed(UObject* pawn);
 
 void Update(double now, float dt, UObject* localPawn) {
     (void)localPawn;
@@ -206,7 +219,7 @@ void Update(double now, float dt, UObject* localPawn) {
         for (auto it = pending.begin(); it != pending.end();) {
             UObject* found = nullptr;
             for (UObject* o : visible) {
-                if (it->before.count(o) || (it->pawnClass && !IsA(o, it->pawnClass))) continue;
+                if (it->before.count(o) || (it->pawnClass && !IsA(o, it->pawnClass)) || Claimed(o)) continue;
                 const FVector p = ActorPos(o); const float dx = p.X - it->at.X, dy = p.Y - it->at.Y;
                 if (dx * dx + dy * dy < 1500.f * 1500.f) { found = o; break; }
             }
@@ -271,7 +284,9 @@ void BePuppet(Zed& z) {
 }
 void BeOwned(Zed& z) {
     Release(z.pawn); SetBrain(z.pawn, true); z.brain = 1;
-    if (z.health > 0) SetProp<float>(z.pawn, "Health", z.health);  // the last the previous owner reported
+    // The last health the previous owner reported; none (or nonsense): a fresh one.
+    const float full = Prop<float>(z.pawn, "MaxHealth", 200.f);
+    SetProp<float>(z.pawn, "Health", z.health > 0 && z.health <= full ? z.health : full);
 }
 }  // namespace
 
@@ -295,9 +310,13 @@ void Spawned(uint16_t tag, UObject* pawn) {
 }
 void SpawnFailed(uint16_t tag) { if (auto it = zeds.find(tag); it != zeds.end()) { it->second.spawning = false; it->second.retryAt = Clock() + 5; } }
 
-bool IsOurs(UObject* pawn) {
+bool Claimed(UObject* pawn) {
     if (driven.count(pawn)) return true;
     for (auto& [id, z] : zeds) if (z.pawn == pawn) return true;
+    return false;
+}
+bool IsOurs(UObject* pawn) {
+    if (Claimed(pawn)) return true;
     // Not claimed yet (Update finds new pawns every 0.25 s): anything showing up at a spawn we asked for.
     for (const auto& ps : pending) {
         if (ps.pawnClass && !IsA(pawn, ps.pawnClass)) continue;
@@ -396,9 +415,11 @@ void Net(double now, UObject* localPawn, net::Client& client, int world) {
             ++reported;
         } else {
             // A local hit on the puppet: its damage goes to the owner, the puppet is healed back.
+            // The game resets a fresh pool pawn's health once after the spawn: a drop that large is no hit.
             const float health = Health(z.pawn);
             if (health >= 0 && health < kPuppetHealth - 0.5f) {
-                net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(id); w.F32(kPuppetHealth - health); client.SendZombie(w, true);
+                const float hit = kPuppetHealth - health;
+                if (hit < kPuppetHealth / 2) { net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(id); w.F32(hit); client.SendZombie(w, true); dg::Log("zombies: hit zombie %u (puppet) for %.0f", unsigned(id), hit); }
                 SetPuppetHealth(z.pawn);
             }
         }
