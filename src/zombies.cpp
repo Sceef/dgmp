@@ -275,9 +275,21 @@ void BeOwned(Zed& z) {
 }
 }  // namespace
 
+void BoolCall(UObject* o, const char* fn, const char* param, bool v) {
+    if (auto f = IsValid(o) ? Fn(o, fn) : nullptr) { Params p(f); p.SetBool(param, v); Call(o, fn, &p); }
+}
+// The AI sweep (SuppressAI) may have hidden this pool pawn and stopped its ticks in an earlier life.
+void Revive(UObject* pawn) {
+    BoolCall(pawn, "SetActorHiddenInGame", "bNewHidden", false);
+    BoolCall(pawn, "SetActorEnableCollision", "bNewActorEnableCollision", true);
+    BoolCall(pawn, "SetActorTickEnabled", "bEnabled", true);
+    BoolCall(Controller(pawn), "SetActorTickEnabled", "bEnabled", true);
+}
+
 void Spawned(uint16_t tag, UObject* pawn) {
     auto it = zeds.find(tag);
     if (it == zeds.end() || it->second.dead) { Despawn(pawn); return; }
+    Revive(pawn);
     Zed& z = it->second; z.spawning = false; z.pawn = pawn; z.brain = -1;
     dg::Log("zombies: zombie %u is %s here", unsigned(tag), GetName(pawn).c_str());
 }
@@ -286,6 +298,12 @@ void SpawnFailed(uint16_t tag) { if (auto it = zeds.find(tag); it != zeds.end())
 bool IsOurs(UObject* pawn) {
     if (driven.count(pawn)) return true;
     for (auto& [id, z] : zeds) if (z.pawn == pawn) return true;
+    // Not claimed yet (Update finds new pawns every 0.25 s): anything showing up at a spawn we asked for.
+    for (const auto& ps : pending) {
+        if (ps.pawnClass && !IsA(pawn, ps.pawnClass)) continue;
+        const FVector p = ActorPos(pawn); const float dx = p.X - ps.at.X, dy = p.Y - ps.at.Y;
+        if (dx * dx + dy * dy < 1500.f * 1500.f) return true;
+    }
     return false;
 }
 bool Active() { return !zeds.empty(); }
