@@ -19,9 +19,9 @@ command("zclear", function(player)
 end)
 command("zlist", function(player)
     for _, z in ipairs(zombies()) do
-        player:message(("%d %s hp %s owner %s%s"):format(z.id, z.type, tostring(z.health), z.owner and z.owner.nick or "-", z.dead and " dead" or ""))
+        player:message(("%d %s hp %s owner %s%s"):format(z.id, z.type, tostring(z.health), z.owner and z.owner.name or "-", z.dead and " dead" or ""))
     end
 end)
 on("zombieDeath", function(z, killer)
-    broadcast(("Zombie %d killed by %s"):format(z.id, killer and killer.nick or "nobody"), "#F2D16B")
+    broadcast(("Zombie %d killed by %s"):format(z.id, killer and killer.name or "nobody"), "#F2D16B")
 end)

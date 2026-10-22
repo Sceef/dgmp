@@ -9,6 +9,8 @@
 //       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
 //       !ui <name> [json] (the mode's page sent dgmp.send(name, data)),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
+//       Zombies (docs/zombies.md): the ones it owns walk toward it and are reported 10 times a second; !zhit <id> <damage>
+//       (we hurt its puppet), !zdie <id> (the one we own died); zombie messages are printed.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 //       Voice: !voice <seconds> [radio] sends dummy frames (20 a second) with the talk / radio key; voice heard is
 //       counted per speaker and route. --voice-echo [delay] [radio]: what others say near it, it says again after `delay`
@@ -196,6 +198,33 @@ int main() {
             }
             report();
         };
+        // Zombies: what the server said about them; the owned ones walk toward the probe (a stand-in for the game's AI).
+        struct ProbeZombie { float x = 0, y = 0, z = 0, health = 200; uint16_t owner = 0xFFFF; bool dead = false; int moves = 0; };
+        std::map<uint16_t, ProbeZombie> zombies;
+        double nextZombieReport = 0;
+        c.on.zombie = [&](net::Msg op, const uint8_t* data, size_t size) {
+            net::Reader r(data, size);
+            if (op == net::Msg::ZombieMoves) {
+                const int n = r.U8();
+                for (int i = 0; i < n && r.ok(); ++i) {
+                    const uint16_t id = r.U16(); const float x = r.F32(), y = r.F32(), z = r.F32(); r.F32(); r.F32(); const float hp = r.F32(); r.U8(); r.Str();
+                    if (!r.ok()) break;
+                    auto& zb = zombies[id]; zb.x = x; zb.y = y; zb.z = z; zb.health = hp;
+                    if (++zb.moves == 1 || zb.moves % 50 == 0) std::printf("* zombie %u moves (%d): %.0f %.0f %.0f hp %.0f\n", id, zb.moves, x, y, z, hp);
+                }
+                return;
+            }
+            const uint16_t id = r.U16(); const auto zop = net::ZombieOp(r.U8());
+            auto& zb = zombies[id];
+            switch (zop) {
+            case net::ZombieOp::Add: { const auto type = r.Str(); zb.x = r.F32(); zb.y = r.F32(); zb.z = r.F32(); r.F32(); r.I32(); zb.owner = r.U16(); r.F32();
+                std::printf("* zombie %u %s at %.0f %.0f %.0f, owner %u\n", id, type.c_str(), zb.x, zb.y, zb.z, zb.owner); break; }
+            case net::ZombieOp::Owner: zb.owner = r.U16(); std::printf("* zombie %u owner %u%s\n", id, zb.owner, zb.owner == c.localId() ? " (us)" : ""); break;
+            case net::ZombieOp::Damage: { const float d = r.F32(); const uint16_t by = r.U16(); zb.health -= d; std::printf("* zombie %u damage %.0f from %u -> hp %.0f\n", id, d, by, zb.health); break; }
+            case net::ZombieOp::Died: { const uint16_t killer = r.U16(); zb.dead = true; std::printf("* zombie %u died, killer %u\n", id, killer); break; }
+            case net::ZombieOp::Remove: std::printf("* zombie %u removed\n", id); zombies.erase(id); break;
+            }
+        };
         c.SetIdentity(steamId, ticket);
         if (!c.Connect(host, port, nick, password)) return 1;
 
@@ -233,6 +262,8 @@ int main() {
                             voiceOutUntil = Now() + secs; voiceOutKey = std::string(how) == "radio" ? net::VoiceKey::Radio : net::VoiceKey::Talk;
                         }
                     }
+                    else if (std::sscanf(s.c_str(), "!zhit %u %f", &id, &x) == 2) { net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(uint16_t(id)); w.F32(x); c.SendZombie(w, true); }
+                    else if (std::sscanf(s.c_str(), "!zdie %u", &id) == 1) { net::Writer w; w.Op(net::Msg::ZombieDied); w.U16(uint16_t(id)); c.SendZombie(w, true); }
                     else if (s == "!dead") { dead = true; nextState = 0; }
                     else if (s == "!alive") { dead = false; nextState = 0; }
                     else if (s.rfind("!inv", 0) == 0) {
@@ -262,6 +293,20 @@ int main() {
                     std::vector<net::QBone> bones(224); w.Raw(bones.data(), bones.size() * sizeof(net::QBone));
                     c.SendPose(w.buf);
                 }
+            }
+            if (c.status() == net::Client::Status::Connected && now >= nextZombieReport) {
+                nextZombieReport = now + 0.1;
+                net::Writer w; int n = 0;
+                for (auto& [id, zb] : zombies) {
+                    if (zb.owner != c.localId() || zb.dead || n >= int(net::kZombiesPerPacket)) continue;
+                    const float dx = px - zb.x, dy = py - zb.y, d = std::sqrt(dx * dx + dy * dy);
+                    if (d > 150.f) { zb.x += dx / d * 45.f; zb.y += dy / d * 45.f; }  // 4.5 m/s toward us
+                    if (!n) { w.Op(net::Msg::ZombieStates); w.U8(0); }
+                    w.U16(id); w.F32(zb.x); w.F32(zb.y); w.F32(zb.z); w.F32(std::atan2(dy, dx) * 57.3f); w.F32(d > 150.f ? 450.f : 0.f); w.F32(zb.health);
+                    w.U8(0); w.Str("");
+                    ++n;
+                }
+                if (n) { w.buf[1] = uint8_t(n); c.SendZombie(w, false); }
             }
             if (c.status() == net::Client::Status::Connected && now < voiceOutUntil && now >= nextVoiceOut) {
                 nextVoiceOut = now + 0.05;
