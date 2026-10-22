@@ -64,6 +64,9 @@ public:
     // [F] at a door of the mode: 0 no say (its lock decides), 1 refused, 2 allowed even when locked.
     int DoorUse(Player& p, const std::string& door, const char* side);
     void PlayerShot(Player& p, const std::string& weaponClass, float x, float y, float z);  // playerShot (at most twice a second per player)  // the animation of playAnim is over: "done", "moved"
+    // A player started (on) or stopped talking with the talk / radio key (how "talk" / "radio"): false at
+    // the start when a handler refused it (nobody hears this talk).
+    bool Voice(Player& p, bool on, const char* how);
     void SaveStorage();  // flushes the mode's persistent storage (also done every few seconds)
     bool ChangedOnDisk() const;
 

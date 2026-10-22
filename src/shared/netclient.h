@@ -67,6 +67,10 @@ public:
         std::function<void(const std::string& path, uint8_t flags, float rate)> playAnim;  // path "": stop
         std::function<void(const std::string& path, const float* at, float volume, float pitch)> sound;  // at null: 2D
         std::function<void(uint16_t id, const std::string& weaponClass, float x, float y, float z)> playerShot;
+        // Voice chat: a frame of that player's voice (VoiceRoute; range: where Near fades out, units) and
+        // this server's voice setup (VoiceFlags, the channel names the radio key / a call talk to).
+        std::function<void(uint16_t id, VoiceRoute route, VoiceCodec codec, float range, const uint8_t* frame, size_t size)> voice;
+        std::function<void(uint8_t flags, const std::string& radio, const std::string& call)> voiceSetup;
         // choices: (name, look) to pick from; empty: the full character creator
         // place: x, y, z, yaw where the server put the player to choose (null: where it is)
         std::function<void(bool cancel, const std::string& title, const std::string& families, const std::string& current,
@@ -123,6 +127,7 @@ public:
     void SendKey(uint8_t virtualKey);
     void SendAnimEnd(uint8_t reason);
     void SendShot(const std::string& weaponClass, float x, float y, float z);
+    void SendVoice(VoiceKey key, VoiceCodec codec, const uint8_t* frame, size_t size);  // unreliable, kChanVoice
     void SendImageRequest(const std::string& name);
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
     void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);

@@ -1454,6 +1454,56 @@ struct Api {
         p.pvp = lua_isnoneornil(L, 2) ? int8_t(-1) : int8_t(lua_toboolean(L, 2) ? 1 : 0);
         return 0;
     }
+    // ---- voice chat (docs/API.md "Голосовой чат") ----
+    static VoiceJoin CheckJoin(lua_State* L, int idx) {
+        static const char* const names[] = {"radio", "call", "listen", nullptr};
+        return VoiceJoin(luaL_checkoption(L, idx, "radio", names) + 1);
+    }
+    // player:setVoiceChannel(name [, "radio" | "call" | "listen"]): only this channel; nil: none
+    static int PSetVoiceChannel(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        if (lua_isnoneornil(L, 2)) { Srv(L).LeaveVoiceChannel(p, ""); return 0; }
+        const std::string name = luaL_checkstring(L, 2); const VoiceJoin how = CheckJoin(L, 3);
+        if (name.empty() || name.size() > net::kVoiceNameMax) return luaL_error(L, "bad voice channel name (1-%d bytes)", int(net::kVoiceNameMax));
+        p.voiceChannels.clear();
+        Srv(L).JoinVoiceChannel(p, name, how);
+        return 0;
+    }
+    static int PJoinVoiceChannel(lua_State* L) {
+        auto& p = CheckPlayer(L, 1); const std::string name = luaL_checkstring(L, 2); const VoiceJoin how = CheckJoin(L, 3);
+        lua_pushboolean(L, Srv(L).JoinVoiceChannel(p, name, how)); return 1;
+    }
+    static int PLeaveVoiceChannel(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).LeaveVoiceChannel(p, luaL_optstring(L, 2, "")); return 0; }
+    static const char* JoinName(VoiceJoin how) { return how == VoiceJoin::Call ? "call" : how == VoiceJoin::Listen ? "listen" : "radio"; }
+    static int PVoiceChannels(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        lua_createtable(L, 0, int(p.voiceChannels.size()));
+        for (auto& [name, how] : p.voiceChannels) { lua_pushstring(L, JoinName(how)); lua_setfield(L, -2, name.c_str()); }
+        return 1;
+    }
+    // player:setVoiceRange(metres): how far it is heard (0: only its channels); nil: the server's
+    static int PSetVoiceRange(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        Srv(L).SetVoiceRange(&p, lua_isnoneornil(L, 2) ? -1.f : std::max(0.f, float(luaL_checknumber(L, 2)) * 100.f));
+        return 0;
+    }
+    static int PVoiceRange(lua_State* L) { lua_pushnumber(L, Srv(L).VoiceRange(CheckPlayer(L, 1)) / 100.0); return 1; }
+    static int PSetVoiceMuted(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetVoiceMuted(p, lua_isnone(L, 2) || lua_toboolean(L, 2)); return 0; }
+    static int PIsVoiceMuted(lua_State* L) { lua_pushboolean(L, CheckPlayer(L, 1).voiceMuted); return 1; }
+    static int PIsTalking(lua_State* L) {
+        const char* how = Server::Talking(CheckPlayer(L, 1));
+        if (how) lua_pushstring(L, how); else lua_pushboolean(L, false);
+        return 1;
+    }
+    static int SetVoiceRangeAll(lua_State* L) { Srv(L).SetVoiceRange(nullptr, float(luaL_checknumber(L, 1)) * 100.f); return 0; }
+    static int VoiceRangeAll(lua_State* L) { lua_pushnumber(L, Srv(L).DefaultVoiceRange() / 100.0); return 1; }
+    // voiceChannelPlayers(name) -> the players in that channel
+    static int VoiceChannelPlayers(lua_State* L) {
+        const std::string name = luaL_checkstring(L, 1);
+        lua_newtable(L); int n = 0;
+        for (auto p : Srv(L).Players()) if (p->voiceChannels.count(name)) { PushPlayer(L, *p); lua_rawseti(L, -2, ++n); }
+        return 1;
+    }
     static int PZones(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
         lua_createtable(L, int(p.zones.size()), 0);
@@ -1664,6 +1714,9 @@ bool Script::Load(const std::string& modeId) {
                                 {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
                                 {"setAdmin", &Api::PSetAdmin}, {"objective", &Api::PObjective}, {"objectiveMeter", &Api::PObjectiveMeter}, {"setLook", &Api::PSetLook}, {"tip", &Api::PTip}, {"restoreInventory", &Api::PRestoreInventory},
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
+                                {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
+                                {"voiceChannels", &Api::PVoiceChannels}, {"setVoiceRange", &Api::PSetVoiceRange}, {"voiceRange", &Api::PVoiceRange},
+                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
                                 {"giveCarry", &Api::PGiveCarry}, {"dropCarry", &Api::PDropCarry}, {"giveMoney", &Api::PGiveMoney}, {"setMoney", &Api::PSetMoney}, {nullptr, nullptr}};
     luaL_newlib(L_, methods); lua_setfield(L_, -2, "methods");
     lua_pop(L_, 1);
@@ -1676,6 +1729,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
                                 {"playSound", &Api::PlaySoundAll},
+                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
                                 {"getDoor", &Api::GetDoor}, {"doors", &Api::DoorsList}, {"setDoor", &Api::SetDoor}, {"getVehicle", &Api::GetVehicleByKey}, {"loot", &Api::LootList},
                                 {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
                                 {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
@@ -1861,6 +1915,14 @@ void Script::PlayerShot(Player& p, const std::string& weaponClass, float x, floa
     lua_pushnumber(L_, y); lua_setfield(L_, -2, "y");
     lua_pushnumber(L_, z); lua_setfield(L_, -2, "z");
     Fire("playerShot", 2);
+}
+
+bool Script::Voice(Player& p, bool on, const char* how) {
+    if (!L_) return true;
+    Api::PushPlayer(L_, p); lua_pushboolean(L_, on); lua_pushstring(L_, how);
+    int result = 0;
+    Fire("voice", 3, &result);
+    return !(on && (result & 1));
 }
 
 int Script::DoorUse(Player& p, const std::string& door, const char* side) {

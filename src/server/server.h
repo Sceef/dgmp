@@ -48,7 +48,19 @@ struct Config {
     float meleeRange = 600;           // units
     int maxHitsPerSecond = 30;
     int cheatKick = 10;               // strikes within a minute that kick (0: never)
+    // Voice chat (docs/API.md "Голосовой чат"): on/off, how far a player is heard (units), the bytes a second
+    // one player may send, how many speakers one player hears at once, all voice the server sends (bytes a
+    // second, 0: no limit).
+    bool voice = true;
+    float voiceRange = 2500;
+    int voiceRate = 8000;
+    int voiceListeners = 8;
+    int voiceBandwidth = 0;
 };
+
+// How a player is in a voice channel: talks to it with the radio key and hears it as a radio; everything it
+// says goes there and it hears it as a phone; it only hears it (as a radio).
+enum class VoiceJoin : uint8_t { Radio = 1, Call = 2, Listen = 3 };
 
 // A quest marker shown on the map, the minimap and in the world (the game's own waypoint actor).
 struct Marker {
@@ -274,6 +286,15 @@ struct Player {
     std::string anim;                              // the animation the mode plays on it (asset path; "": none)
     double shotWindow = 0; int shotCount = 0;      // shots relayed this second (flood guard)
     double lastShotEvent = 0;                      // the mode heard playerShot then
+    // Voice chat (src/server/voice.cpp)
+    bool voiceMuted = false;                       // setVoiceMuted: what it says goes nowhere
+    float voiceRange = -1;                         // units it is heard within (-1: the server's)
+    std::map<std::string, VoiceJoin> voiceChannels;
+    double voiceTokens = 0, voiceTokensAt = 0;     // bytes it may still send (VoiceRate)
+    double voiceUntil[2] = {0, 0};                 // talking with the talk / radio key until then (0: silent)
+    bool voiceBlocked[2] = {false, false};         // the mode refused this talk (voice event returned false)
+    std::map<uint16_t, double> voiceHeard;         // speakers it hears now -> their last frame (VoiceListeners)
+    uint64_t voiceBytesIn = 0;                     // since it joined
 };
 
 // A point of the world (logic points: z on the ground). Outside Server: g++ cannot use a nested class
@@ -452,6 +473,15 @@ public:
     void SetLook(Player* p, const std::string& path);   // order: the player wears it, everyone sees it
     std::string ResolveLook(const std::string& nameOrPath) const;  // short name from data/looks.txt or full path; "" if unknown
     std::vector<std::string> LookNames(const std::string& filter) const;
+    // Voice chat (docs/API.md "Голосовой чат"): players hear who talks near them in their virtual world,
+    // and the channels the mode puts them in (radio frequencies, phone calls).
+    void SetVoiceRange(Player* p, float units);    // p null: the server's; p: its own (-1: the server's)
+    float VoiceRange(const Player& p) const { return p.voiceRange >= 0 ? p.voiceRange : voiceRange_; }
+    float DefaultVoiceRange() const { return voiceRange_; }
+    void SetVoiceMuted(Player& p, bool muted);
+    bool JoinVoiceChannel(Player& p, const std::string& name, VoiceJoin how);  // false: a bad name or too many
+    void LeaveVoiceChannel(Player& p, const std::string& name);              // "": all of them
+    static const char* Talking(const Player& p);   // "talk", "radio" or null
     Player* AddBot(const std::string& nick);
     void RemoveBots();
     bool ReloadMode();
@@ -504,6 +534,13 @@ private:
     void SendTo(_ENetPeer* peer, const net::Writer& w, bool reliable);
     void BroadcastStates();
     void RelayPose(Player& from, const uint8_t* payload, size_t size);
+    void OnVoice(Player& from, const uint8_t* payload, size_t size);
+    void TickVoice();                              // talks that ended (voice event), speakers no longer heard
+    void SendVoiceSetup(Player& p);
+    void VoiceStats();                             // console: voice
+    float voiceRange_ = 2500;
+    double voiceBudget_ = 0, voiceBudgetAt_ = 0;   // VoiceBandwidth
+    uint64_t voiceBytesOut_ = 0, voiceDropped_ = 0;
     void TickBots(float dt);
     void SendMarker(_ENetPeer* peer, const Marker& m);
     void TickMarkers();

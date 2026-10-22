@@ -80,6 +80,7 @@ void Server::Log(const char* fmt, ...) {
 bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
     cfg_ = cfg; root_ = root;
     cfg_.maxPlayers = std::clamp(cfg_.maxPlayers, 1, net::kMaxPlayersLimit);
+    voiceRange_ = cfg_.voiceRange;
     std::filesystem::create_directories(root_ / "logs");
     log_ = OpenAppend(root_ / "logs" / "server.log");
     if (enet_initialize() != 0) { Log("ENet initialisation failed"); return false; }
@@ -145,7 +146,7 @@ void Server::Run() {
         TickVehicles();
         TickObjects();
         if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
-        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); }
+        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
         if (now >= nextReloadCheck) {
@@ -207,6 +208,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
     case net::Msg::State: { auto s = r.State(); if (r.ok() && std::isfinite(s.x) && std::isfinite(s.y) && std::isfinite(s.z)) p->state = s; break; }
     case net::Msg::Chat: { auto text = r.Str(net::kChatMax); if (r.ok()) OnChat(*p, Trim(text)); break; }
     case net::Msg::Pose: RelayPose(*p, data + 1, size - 1); break;
+    case net::Msg::Voice: OnVoice(*p, data + 1, size - 1); break;
     case net::Msg::Look: {
         // The client reports what it actually wears (its own default, or after an order).
         auto path = r.Str(net::kLookPathMax);
@@ -617,6 +619,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
         if (other->peer) { net::Writer n; n.Op(net::Msg::PlayerJoin); n.U16(p->id); n.Str(p->nick); SendTo(other->peer, n, true); }
     }
     { net::Writer t; t.Op(net::Msg::Settings); t.U8(static_cast<uint8_t>(cfg_.nametags)); t.U8(cfg_.collisions); SendTo(peer, t, true); }
+    SendVoiceSetup(*p);
     for (auto& [mid, m] : markers_) if (m.only == 0xFFFF) SendMarker(peer, m);
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
@@ -2197,7 +2200,10 @@ bool Server::ReloadMode() {
     for (auto& [id, item] : items_) ids.push_back(id);
     for (auto id : ids) RemoveWorldItem(id);
     for (auto& [id, p] : players_) if (p->ready && p->peer) { Objective(p.get(), 4, 0, 0, "", ""); ObjectiveMeter(p.get(), false, "", 0); CloseDialog(p.get()); SetHud(p.get(), "", ""); }
-    for (auto& [id, p] : players_) { p->pvp = -1; p->zones.clear(); p->zoneHud.clear(); p->money = 0; }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
+    for (auto& [id, p] : players_) { p->pvp = -1; p->zones.clear(); p->zoneHud.clear(); p->money = 0; }
+    // Voice channels, ranges and mutes are the mode's: the new code sets them again.
+    voiceRange_ = cfg_.voiceRange;
+    for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
     ids.clear();
     for (auto& [id, in] : interactions_) ids.push_back(id);
     for (auto id : ids) RemoveInteraction(id);
@@ -2234,7 +2240,7 @@ void Server::HandleConsole(const std::string& raw) {
     std::istringstream in(line); std::string cmd; in >> cmd;
     std::string rest; std::getline(in, rest); rest = Trim(rest);
     if (cmd == "help") {
-        Log("Commands: status | say <text> | kick <id|nick> [reason] | ban <id|nick|steamid|ip> [minutes] [reason] | unban <steamid|ip|nick> | bans | admin <id|nick> [off] | hitstats | bot [count] | bots off | reload | mode <id> | time <hours> | weather <id|auto> | quit");
+        Log("Commands: status | say <text> | kick <id|nick> [reason] | ban <id|nick|steamid|ip> [minutes] [reason] | unban <steamid|ip|nick> | bans | admin <id|nick> [off] | hitstats | voice | bot [count] | bots off | reload | mode <id> | time <hours> | weather <id|auto> | quit");
     } else if (cmd == "status" || cmd == "players") {
         Log("%s | mode %s | %d/%d players", cfg_.name.c_str(), script_->title().c_str(), PlayerCount(), cfg_.maxPlayers);
         for (auto p : Players()) {
@@ -2266,6 +2272,8 @@ void Server::HandleConsole(const std::string& raw) {
         if (sid) b.steamId = who; else if (LooksLikeIp(who)) b.ip = who; else b.nick = who;
         for (auto q : Players()) if ((sid && (q->steamId == sid || q->claimedSteamId == sid)) || (!b.ip.empty() && q->ip == b.ip)) { BanPlayer(q, reason, mins, by); return; }
         AddBan(b);
+    } else if (cmd == "voice") {
+        VoiceStats();
     } else if (cmd == "hitstats") {  // to tune MaxHitDamage: the largest damage seen per weapon class
         if (hitStats_.empty()) Log("No hits yet");
         for (auto& [w, st] : hitStats_) Log("  %-48s max %.1f  (%d hits)", w.c_str(), st.max, st.count);

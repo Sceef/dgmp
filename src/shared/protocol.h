@@ -1,6 +1,7 @@
 #pragma once
 // DGMP network protocol shared by dgmp-server, the game client DLL and the launcher.
-// Transport: ENet over UDP. Channel 0 reliable+ordered, channel 1 unreliable (player state).
+// Transport: ENet over UDP. Channel 0 reliable+ordered, channel 1 unreliable (player state), 2 bone
+// poses, 3 voice (unreliable).
 // Server status queries are raw UDP datagrams on the same port, outside ENet (SA-MP style).
 #include <cstdint>
 #include <cstring>
@@ -9,11 +10,11 @@
 
 namespace net {
 
-constexpr uint16_t kProtocolVersion = 8;
+constexpr uint16_t kProtocolVersion = 9;
 constexpr uint16_t kDefaultPort = 7777;
 constexpr int kLanPortSpan = 10;        // LAN discovery probes kDefaultPort .. kDefaultPort+span-1
-constexpr int kChannels = 3;
-constexpr int kChanReliable = 0, kChanState = 1, kChanPose = 2;
+constexpr int kChannels = 4;
+constexpr int kChanReliable = 0, kChanState = 1, kChanPose = 2, kChanVoice = 3;
 constexpr float kPoseRelayRange = 25000.f;  // 250 m: bone poses only go to players this close
 constexpr int kMaxPlayersLimit = 64;
 constexpr size_t kNickMin = 3, kNickMax = 24;  // in UTF-8 code points
@@ -55,6 +56,7 @@ enum class Msg : uint8_t {
     CustomizeDone = 10, // u8 ok, str skin: the player closed the character creator (or picked one of the offered looks)
     Gear = 9,         // GearList payload: what the player carries (weapons in hand, on the back, holstered)
     Hit = 8,          // u16 victimId, f32 damage, u8 HitZone, str weapon: this player hit another one
+    Voice = 21,       // u8 VoiceKey, u8 VoiceCodec, bytes: a frame of the player's voice while a push-to-talk key is held (kChanVoice)
     GameEvent = 7,    // u8 GameEventType, str class, str detail, str id, f32 x, y, z: something the player did in the world
     // server -> client
     Welcome = 64,     // u16 yourId, str serverName, str modeName, u8 maxPlayers
@@ -108,8 +110,19 @@ enum class Msg : uint8_t {
     WorldEdits = 85,  // u16 part, u16 parts, str chunk: the mode's world.json (docs/world.md), split in chunks; "" = none
     Corpse = 84,      // u16 playerId: that player died where it stands now; leave a body there
     WorldItem = 83,   // u16 id, u8 op (1 add: str itemKey, i32 count, f32 x,y,z, f32 yaw; 2 remove): a pickup placed by the mode
+    PlayerVoice = 111, // u16 id, u8 VoiceRoute, u8 VoiceCodec, f32 range (units: Near fades out there), bytes: that player's voice (kChanVoice)
+    VoiceSetup = 112, // u8 VoiceFlags, str radio, str call: voice chat on this server and the channels you talk to (names for the HUD)
     Marker = 80,      // u16 id, u8 op (1 add/update: f32 x,y,z, u8 category, u8 style, u8 route, str icon, str title, str description; 2 remove)
 };
+
+// Voice chat (docs/API.md "Голосовой чат"): frames are Steam Voice (ISteamUser::GetVoice, Opus inside),
+// relayed by the server as they are to the players who hear the speaker.
+enum class VoiceCodec : uint8_t { Steam = 1 };
+enum class VoiceKey : uint8_t { Talk = 0, Radio = 1 };               // which push-to-talk key the speaker holds
+enum class VoiceRoute : uint8_t { Near = 0, Radio = 1, Call = 2 };   // heard at the speaker's body / over a radio / a phone
+enum VoiceFlags : uint8_t { VoiceOn = 1, VoiceMuted = 2, VoiceRadio = 4, VoiceCall = 8 };
+constexpr size_t kVoiceFrameMax = 2048;
+constexpr size_t kVoiceNameMax = 64;
 
 enum QuitReason : uint8_t { QuitLeft = 0, QuitTimeout = 1, QuitKicked = 2 };
 // Gameplay events the client reports (see src/gameevents.cpp for where each comes from).

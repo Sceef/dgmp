@@ -187,6 +187,11 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
     cfg.meleeRange = static_cast<float>(std::atof(Ini(ini, "MeleeRange", "6").c_str())) * 100.f;
     cfg.maxHitsPerSecond = std::max(1, std::atoi(Ini(ini, "MaxHitsPerSecond", "30").c_str()));
     cfg.cheatKick = std::atoi(Ini(ini, "CheatKick", "10").c_str());
+    cfg.voice = Ini(ini, "Voice", "1") != "0";
+    cfg.voiceRange = std::max(0.f, static_cast<float>(std::atof(Ini(ini, "VoiceRange", "25").c_str())) * 100.f);
+    cfg.voiceRate = std::max(500, std::atoi(Ini(ini, "VoiceRate", "8000").c_str()));
+    cfg.voiceListeners = std::max(1, std::atoi(Ini(ini, "VoiceListeners", "8").c_str()));
+    cfg.voiceBandwidth = std::max(0, std::atoi(Ini(ini, "VoiceBandwidth", "0").c_str()));
     if (auto x = Ini(ini, "SpawnX", ""); !x.empty()) {
         cfg.spawnX = static_cast<float>(std::atof(x.c_str()));
         cfg.spawnY = static_cast<float>(std::atof(Ini(ini, "SpawnY", "0").c_str()));

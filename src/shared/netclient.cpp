@@ -436,6 +436,17 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.sound) on.sound(path, threeD ? at : nullptr, volume, pitch);
         break;
     }
+    case Msg::PlayerVoice: {
+        const uint16_t id = r.U16(); const auto route = VoiceRoute(r.U8()); const auto codec = VoiceCodec(r.U8()); const float range = r.F32();
+        size_t n = 0; const uint8_t* frame = r.Rest(n);
+        if (r.ok() && n && on.voice) on.voice(id, route, codec, range, frame, n);
+        break;
+    }
+    case Msg::VoiceSetup: {
+        const uint8_t flags = r.U8(); const auto radio = r.Str(kVoiceNameMax), call = r.Str(kVoiceNameMax);
+        if (r.ok() && on.voiceSetup) on.voiceSetup(flags, radio, call);
+        break;
+    }
     case Msg::PlayerShot: {
         const uint16_t id = r.U16(); const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
         if (r.ok() && on.playerShot) on.playerShot(id, cls, x, y, z);
@@ -541,6 +552,11 @@ void Client::SendShot(const std::string& weaponClass, float x, float y, float z)
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::Shot); w.Str(weaponClass.substr(0, 128)); w.F32(x); w.F32(y); w.F32(z);
     enet_peer_send(peer_, kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
+}
+void Client::SendVoice(VoiceKey key, VoiceCodec codec, const uint8_t* frame, size_t size) {
+    if (status_ != Status::Connected || !size || size > kVoiceFrameMax) return;
+    Writer w; w.Op(Msg::Voice); w.U8(uint8_t(key)); w.U8(uint8_t(codec)); w.Raw(frame, size);
+    enet_peer_send(peer_, kChanVoice, enet_packet_create(w.buf.data(), w.buf.size(), 0));
 }
 void Client::SendAnimEnd(uint8_t reason) {
     if (status_ != Status::Connected) return;

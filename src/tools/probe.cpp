@@ -9,6 +9,9 @@
 //       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
+//       Voice: !voice <seconds> [radio] sends dummy frames (20 a second) with the talk / radio key; voice heard is
+//       counted per speaker and route. --voice-echo [delay]: what others say near it, it says again after `delay`
+//       seconds (1 by default): a game client next to the probe hears its own voice from the probe's body.
 #include "../shared/netclient.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -72,12 +75,14 @@ int main() {
         std::string nick = argv[3], password;
         double seconds = 0; std::vector<std::string> says; bool sendPose = false, autoUi = false; int posesIn = 0;
         uint64_t steamId = 0; std::string ticket;
+        double voiceEcho = 0;  // --voice-echo delay (0: off)
         for (int i = 4; i < argc; ++i) {
             const std::string a = argv[i];
             if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
             else if (a == "--say" && i + 1 < argc) says.push_back(argv[++i]);
             else if (a == "--pose") sendPose = true;
             else if (a == "--auto") autoUi = true;
+            else if (a == "--voice-echo") { voiceEcho = 1.0; if (i + 1 < argc && argv[i + 1][0] != '-') voiceEcho = std::atof(argv[++i]); }
             else if (a == "--steam" && i + 1 < argc) {
                 steamId = std::strtoull(argv[++i], nullptr, 10);
                 if (i + 1 < argc && argv[i + 1][0] != '-') ticket = argv[++i];
@@ -141,6 +146,20 @@ int main() {
             std::printf("* WATCH KEYS"); for (auto k : keys) std::printf(" %u", k); std::printf("\n");
             if (autoUi) for (auto k : keys) c.SendKey(k);
         };
+        // Voice: frames heard per speaker and route; echoed frames wait for their time.
+        struct Echo { double at; std::vector<uint8_t> frame; };
+        std::vector<Echo> echoes;
+        std::map<std::pair<uint16_t, int>, std::pair<int, size_t>> voiceIn;  // (id, route) -> frames, bytes
+        double voiceOutUntil = 0, nextVoiceOut = 0; net::VoiceKey voiceOutKey = net::VoiceKey::Talk;
+        c.on.voice = [&](uint16_t id, net::VoiceRoute route, net::VoiceCodec, float range, const uint8_t* frame, size_t size) {
+            auto& v = voiceIn[{id, int(route)}];
+            if (!v.first++) std::printf("* VOICE from %u route %d range %.0f m (%zu bytes)\n", id, int(route), range / 100.f, size);
+            v.second += size;
+            if (voiceEcho > 0 && route == net::VoiceRoute::Near) echoes.push_back({Now() + voiceEcho, std::vector<uint8_t>(frame, frame + size)});
+        };
+        c.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) {
+            std::printf("* VOICE SETUP on=%d muted=%d radio=[%s] call=[%s]\n", flags & net::VoiceOn ? 1 : 0, flags & net::VoiceMuted ? 1 : 0, radio.c_str(), call.c_str());
+        };
         // A backpack like the game's: the server's item orders change it, the snapshot goes back.
         std::map<std::string, int> backpack;
         bool dead = false;
@@ -188,6 +207,12 @@ int main() {
                         if (std::sscanf(s.c_str(), "!hit %u %f %u %127s", &id, &dmg, &zone, weapon) >= 2) c.SendHit(uint16_t(id), dmg, net::HitZone(zone), weapon);
                     }
                     else if (s.rfind("!shot ", 0) == 0) c.SendShot(s.substr(6), px, py, pz);
+                    else if (s.rfind("!voice ", 0) == 0) {
+                        float secs = 0; char how[16] = "";
+                        if (std::sscanf(s.c_str(), "!voice %f %15s", &secs, how) >= 1) {
+                            voiceOutUntil = Now() + secs; voiceOutKey = std::string(how) == "radio" ? net::VoiceKey::Radio : net::VoiceKey::Talk;
+                        }
+                    }
                     else if (s == "!dead") { dead = true; nextState = 0; }
                     else if (s == "!alive") { dead = false; nextState = 0; }
                     else if (s.rfind("!inv", 0) == 0) {
@@ -218,8 +243,20 @@ int main() {
                     c.SendPose(w.buf);
                 }
             }
+            if (c.status() == net::Client::Status::Connected && now < voiceOutUntil && now >= nextVoiceOut) {
+                nextVoiceOut = now + 0.05;
+                std::vector<uint8_t> frame(120, 0x5A);
+                c.SendVoice(voiceOutKey, net::VoiceCodec::Steam, frame.data(), frame.size());
+            }
+            for (size_t i = 0; i < echoes.size();) {
+                if (now < echoes[i].at) { ++i; continue; }
+                c.SendVoice(net::VoiceKey::Talk, net::VoiceCodec::Steam, echoes[i].frame.data(), echoes[i].frame.size());
+                echoes.erase(echoes.begin() + long(i));
+            }
             if (c.status() == net::Client::Status::Connected && now >= nextList) {
                 nextList = now + 5;
+                for (auto& [key, v] : voiceIn) std::printf("  voice from %u route %d: %d frames, %zu bytes\n", key.first, key.second, v.first, v.second);
+                voiceIn.clear();
                 for (auto& [id, p] : c.players())
                     std::printf("  - %s (id %u) at %.0f %.0f %.0f, %.1fs ago, ping %d\n", p.nick.c_str(), id, p.state.x, p.state.y, p.state.z, p.stateTime > 0 ? now - p.stateTime : -1.0, c.pingMs());
             }
