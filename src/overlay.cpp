@@ -25,6 +25,10 @@ WNDPROC gameProc = nullptr;
 bool ready = false, failed = false;
 std::atomic<bool> visible{false}, cursor{false}, typing{false}, overUi{false};
 std::atomic<DrawFn> draw{nullptr}, cover{nullptr}, hud{nullptr};
+std::atomic<DrawFn> page{nullptr};
+std::atomic<FocusFn> pageFocused{nullptr};
+std::atomic<InputFn> pageInput{nullptr};
+bool PageFocused() { const FocusFn f = pageFocused; return f && f(); }
 std::atomic<ULONGLONG> lastPresent{0};
 ImFont* large = nullptr;
 std::atomic<bool> keepFocus{false};
@@ -64,7 +68,7 @@ LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     ApplyCursor();
     // A key the multiplayer UI uses right now (an interaction's E): the game must not act on it too.
     if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && blockedKey && int(w) == blockedKey && !(visible && cursor)) return 0;
-    if (visible && msg == WM_KEYDOWN && w == VK_TAB && !(l & (1 << 30)) && !(cursor && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) {
+    if (visible && msg == WM_KEYDOWN && w == VK_TAB && !(l & (1 << 30)) && !(cursor && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput) && !PageFocused()) {
         cursor = !cursor;
         return 0;
     }
@@ -73,6 +77,20 @@ LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     if (!(visible && cursor) && ImGui::GetCurrentContext() && (msg == WM_KEYUP || msg == WM_SYSKEYUP)) ImGui_ImplWin32_WndProcHandler(h, msg, w, l);
     if (visible && cursor && ImGui::GetCurrentContext()) {
         const LRESULT handled = ImGui_ImplWin32_WndProcHandler(h, msg, w, l);
+        // The mode's page has the focus: what ImGui does not want (it has seen it) is the page's; a dialog
+        // over the page stays ImGui's.
+        if (PageFocused()) {
+            const ImGuiIO& io = ImGui::GetIO();
+            const bool mouse = (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_SETCURSOR;
+            const bool keys = msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
+            const bool alt4 = msg == WM_SYSKEYDOWN && w == VK_F4;
+            if ((mouse && !io.WantCaptureMouse && (msg != WM_SETCURSOR || LOWORD(l) == HTCLIENT)) || (keys && !io.WantCaptureKeyboard && !alt4)) {
+                if (const InputFn in = pageInput) in(h, msg, w, l);
+                if (msg == WM_SETCURSOR) return TRUE;
+                if (msg == WM_KEYUP || msg == WM_SYSKEYUP) return CallWindowProcW(gameProc, h, msg, w, l);  // releases: the game too
+                return 0;
+            }
+        }
         // The cursor's shape is ImGui's (the game would set none).
         if (msg == WM_SETCURSOR && LOWORD(l) == HTCLIENT) { if (!handled) SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512))); return TRUE; }
         switch (msg) {
@@ -125,8 +143,8 @@ bool Init(IDXGISwapChain* chain) {
 HRESULT __stdcall Present(IDXGISwapChain* chain, UINT sync, UINT flags) {
     if (!ready && !failed) { ready = Init(chain); failed = !ready; }
     lastPresent = GetTickCount64();
-    const DrawFn fn = visible ? DrawFn(draw) : nullptr, first = cover, layer = hud;
-    if (ready && (fn || first || layer)) {
+    const DrawFn fn = visible ? DrawFn(draw) : nullptr, first = cover, layer = hud, web = page;
+    if (ready && (fn || first || layer || web)) {
         if (!target) CreateTarget(chain);
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
@@ -138,6 +156,7 @@ HRESULT __stdcall Present(IDXGISwapChain* chain, UINT sync, UINT flags) {
         hadCursor = cursor;
         ImGui::NewFrame();
         if (layer) layer();
+        if (web) web();
         if (first) first();
         if (fn) fn();
         typing = fn && io.WantTextInput;
@@ -196,6 +215,9 @@ bool MouseOverUi() { return overUi; }
 void SetDraw(DrawFn fn) { draw = fn; }
 void SetCover(DrawFn fn) { cover = fn; }
 void SetHud(DrawFn fn) { hud = fn; }
+void SetPage(DrawFn fn, FocusFn focused, InputFn input) { pageFocused = focused; pageInput = input; page = fn; }
+void* Device() { return device; }
+void* Context() { return context; }
 bool Presenting() { return ready && GetTickCount64() - lastPresent < 500; }
 void* CreateTexture(const void* bgra, int width, int height) {
     if (!device || !bgra || width <= 0 || height <= 0) return nullptr;

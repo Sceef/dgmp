@@ -2,6 +2,7 @@
 #include "overlay.h"
 #include "images.h"
 #include "skins.h"
+#include "webui.h"
 #include "lang.h"
 #include "shared/json.h"
 #include "imgui.h"
@@ -328,7 +329,7 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
     }
     // The overlay belongs to the dialog while it is open.
     if (open) { if (!overlay::Visible()) overlay::SetVisible(true); if (!overlay::CursorMode()) overlay::SetCursorMode(true); owned = true; }
-    else if (owned && !skins::CreatorOpen()) { owned = false; overlay::SetVisible(false); }
+    else if (owned && !skins::CreatorOpen()) { owned = false; if (!webui::Focused()) overlay::SetVisible(false); }  // (a focused page keeps the cursor)
     // Key presses (edges), only while the game window has the focus.
     static bool down[256] = {};
     DWORD pid = 0; GetWindowThreadProcessId(GetForegroundWindow(), &pid);

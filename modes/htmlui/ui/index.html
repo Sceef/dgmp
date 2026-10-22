@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DGMP HTML UI demo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Always on screen: the page's background stays transparent, the game shows through. -->
+  <div id="status" class="panel">
+    <div class="name" id="who">…</div>
+    <div class="row"><span id="clock">--:--</span> · <span id="online">0</span> online</div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="phone" class="phone hidden">
+    <header><span>DGMP Phone</span><button id="close" title="Esc">✕</button></header>
+    <section>
+      <h2>Server</h2>
+      <button id="ping">Ping Lua</button>
+      <p id="pong" class="muted">No answer yet.</p>
+    </section>
+    <section>
+      <h2>Say in chat</h2>
+      <form id="say"><input id="sayText" maxlength="120" placeholder="Type, then Enter"><button>Send</button></form>
+    </section>
+    <section>
+      <h2>Players</h2>
+      <ul id="players"></ul>
+    </section>
+  </div>
+<script src="app.js"></script>
+</body>
+</html>

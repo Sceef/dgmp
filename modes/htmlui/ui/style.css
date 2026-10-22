@@ -1,0 +1,20 @@
+:root { --bg: rgba(18, 20, 22, 0.86); --line: rgba(255, 255, 255, 0.12); --text: #ECEAE4; --muted: #9A9890; --accent: #E0A030; }
+html, body { margin: 0; height: 100%; background: transparent; color: var(--text); font: 15px/1.4 "Segoe UI", sans-serif; overflow: hidden; user-select: none; }
+.hidden { display: none !important; }
+.panel { position: absolute; top: 24px; right: 28px; padding: 10px 16px; background: var(--bg); border-left: 3px solid var(--accent); border-radius: 4px; }
+.panel .name { font-weight: 600; font-size: 17px; }
+.panel .row { color: var(--muted); }
+.toast { position: absolute; top: 110px; right: 28px; max-width: 320px; padding: 10px 14px; background: var(--accent); color: #111; border-radius: 4px; font-weight: 600; }
+.phone { position: absolute; right: 60px; bottom: 60px; width: 340px; max-height: 70vh; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 22px; padding: 14px 18px 18px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+.phone header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 6px; }
+.phone h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 0 6px; }
+.phone section { border-top: 1px solid var(--line); }
+button { background: #2A2D30; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+button:hover { background: #383C40; border-color: var(--accent); }
+#close { padding: 2px 9px; }
+form { display: flex; gap: 6px; }
+input { flex: 1; background: #0E0F10; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; user-select: text; }
+input:focus { outline: none; border-color: var(--accent); }
+ul { list-style: none; margin: 0; padding: 0; }
+li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+.muted { color: var(--muted); margin: 6px 0 0; }

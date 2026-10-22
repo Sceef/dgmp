@@ -13,6 +13,7 @@
 #include "sounds.h"
 #include "voice.h"
 #include "images.h"
+#include "webui.h"
 #include "overlay.h"
 #include "imgui.h"
 #include <mutex>
@@ -1504,6 +1505,7 @@ void HookClient() {
         blips::Reset();
         sounds::Reset();
         voice::Reset();
+        webui::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1586,6 +1588,9 @@ void HookClient() {
     client.on.vehicleRoute = [](uint16_t id, const std::vector<float>& points, float speed, float elapsed, bool loop) { vehicles::OnRoute(id, points, speed, elapsed, loop); };
     client.on.imageList = [](const std::vector<std::pair<std::string, std::string>>& list) { images::OnList(list, client); };
     client.on.imageData = [](const std::string& name, int part, int parts, const std::string& bytes) { images::OnData(name, part, parts, bytes); };
+    client.on.uiList = [](const std::vector<std::pair<std::string, std::string>>& files) { webui::OnList(files, client); };
+    client.on.uiData = [](const std::string& path, int part, int parts, const std::string& bytes) { webui::OnData(path, part, parts, bytes); };
+    client.on.ui = [](net::UiOp op, const std::string& name, const std::string& text, bool focus) { webui::OnUi(op, name, text, focus); };
     client.on.icon = [](uint16_t id, const net::Client::Events::IconInfo* info) { if (info) worldIcons[id] = *info; else worldIcons.erase(id); };
     client.on.actor = [](uint16_t id, const net::Client::Events::ActorInfo* info) {
         if (!info) { if (auto it = npcs.find(id); it != npcs.end()) { it->second.Despawn(); npcs.erase(it); } return; }
@@ -1975,6 +1980,7 @@ bool Init() {
     policy::DisableMenuPause();
     overlay::SetHud(&DrawHudLayer);
     overlay::SetDraw(&mpui::DrawWindows);  // the mode's dialogs and the character creator
+    webui::Install();                      // the mode's HTML pages
     if (!net::ParseAddress(target, host, port) || !net::ValidNick(nick)) {
         dg::Log("MP: invalid launch parameters (address '%s', nick '%s')", target.c_str(), nick.c_str());
         enabled = true; phase = Phase::Failed; failReason = lang::Pick(L"Неверный адрес сервера или ник",L"Invalid server address or nickname");
@@ -2098,6 +2104,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning();
         voiceAllowed = playing && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen();
         mpui::Update(client, at, canAct, playing && !spec.on);
+        webui::Update(client);
         vehicles::Update(now, pawn, controller, client);
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen());
         objects::Update(now, pawn);

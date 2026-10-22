@@ -36,6 +36,17 @@ void* LargeFont();
 // A key the game does not get (key down) while set: 0 none. For a key the UI acts on (interactions).
 void SetBlockedKey(int vk);
 
+// The mode's HTML page (webui): drawn over the HUD layer and under the cover and the windows. While
+// `focused` says so, in cursor mode the page gets the mouse and keyboard messages ImGui does not want
+// (`input`; WM_SETCURSOR too) and Tab stays the page's.
+using FocusFn = bool (*)();
+using InputFn = void (*)(void* window, unsigned msg, unsigned long long w, long long l);
+void SetPage(DrawFn draw, FocusFn focused, InputFn input);
+
+// Inside a draw callback: the game's device and immediate context (ID3D11Device*, ID3D11DeviceContext*).
+void* Device();
+void* Context();
+
 // The game never hears that its window lost focus (no pause on alt-tab): for the editor.
 void SetKeepFocus(bool keep);
 
