@@ -254,6 +254,8 @@ struct Zed {
     bool spawning = false; double retryAt = 0;
     int brain = -1;                               // -1 not set up yet, 0 puppet, 1 our AI runs it
     bool diedSent = false;
+    double puppetSince = 0;                       // health changes right after becoming a puppet are resets, not hits
+    UObject* target = nullptr; double targetAt = 0;  // owner: the pawn its AI was last told to hunt (ours or a target pawn)
 };
 std::map<uint16_t, Zed> zeds;
 uint16_t myId = 0xFFFF;
@@ -281,7 +283,7 @@ void Montage(UObject* pawn, const std::string& path) {
     if (m) PlayMontage(pawn, m);
 }
 void BePuppet(Zed& z) {
-    SetBrain(z.pawn, false); SetPuppetHealth(z.pawn); z.brain = 0;
+    SetBrain(z.pawn, false); SetPuppetHealth(z.pawn); z.brain = 0; z.puppetSince = Clock(); z.target = nullptr;
     Drive(z.pawn, z.pos, z.yaw);
 }
 void BeOwned(Zed& z) {
@@ -419,17 +421,27 @@ void BBEnum(UObject* bb, const char* key, uint8_t v) {
 }
 float Dist2(const FVector& a, const FVector& b) { const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z; return dx * dx + dy * dy + dz * dz; }
 
-void Target(UObject* zombiePawn, UObject* decoy) {
-    UObject* c = Controller(zombiePawn); UObject* bb = Blackboard(c); if (!bb) return;
-    BBObject(bb, "FireFocus", decoy); BBObject(bb, "Focus", decoy);
+// Verified in game: the blackboard alone left a swarmer wandering; BendAIController.SetAwarenessOfPawn +
+// ForceAware made it run to the target pawn and hit it. Freaker blackboards have FireFocus, Focus and
+// Awareness (EAIAwareState: 2 Aware); ForceAttack / TargetIsPlayer exist for humans only.
+void Aware(UObject* c, UObject* target) {
+    if (auto f = Fn(c, "SetAwarenessOfPawn")) { Params p(f); p.Set("awarePawn", target); p.Set("AwarenessLevel", 1.f); Call(c, "SetAwarenessOfPawn", &p); }
+    if (auto f = Fn(c, "ForceAware")) { Params p(f); p.Set("forceFocus", target); Call(c, "ForceAware", &p); }
+}
+void Target(Zed& z, UObject* target, bool decoy, double now) {
+    UObject* c = Controller(z.pawn); if (!c) return;
+    if (target != z.target || now - z.targetAt > 2.0) { z.target = target; z.targetAt = now; Aware(c, target); }
+    if (!decoy) return;  // our own player: the AI's own target picking does the rest
+    UObject* bb = Blackboard(c); if (!bb) return;
+    BBObject(bb, "FireFocus", target); BBObject(bb, "Focus", target);
     BBBool(bb, "ForceAttack", true); BBBool(bb, "TargetIsPlayer", true);
-    BBEnum(bb, "Awareness", 2);  // combat
-    if (auto f = Fn(c, "SetFireFocus")) { Params p(f); p.Set("FireFocus", decoy); Call(c, "SetFireFocus", &p); }
+    BBEnum(bb, "Awareness", 2);  // Aware
+    if (auto f = Fn(c, "SetFireFocus")) { Params p(f); p.Set("FireFocus", target); Call(c, "SetFireFocus", &p); }
 }
 
 // Every frame on the client that runs zombies: target pawns for the players near them, their damage, and
 // the zombies' choice between us and them.
-void UpdateTargets(UObject* localPawn, net::Client& client) {
+void UpdateTargets(UObject* localPawn, net::Client& client, double now) {
     std::vector<std::pair<uint16_t, UObject*>> mine;  // zombie id, pawn: the ones our AI runs
     for (auto& [id, z] : zeds) if (z.brain == 1 && !z.dead && IsValid(z.pawn) && Health(z.pawn) > 0) mine.push_back({id, z.pawn});
     std::map<uint16_t, bool> keep;
@@ -458,14 +470,15 @@ void UpdateTargets(UObject* localPawn, net::Client& client) {
     for (auto it = decoys.begin(); it != decoys.end();) {
         if (!keep.count(it->first)) { DestroyDecoy(it->second); it = decoys.erase(it); } else ++it;
     }
-    if (decoys.empty()) return;
     const FVector me = IsValid(localPawn) ? ActorPos(localPawn) : FVector{1e9f, 1e9f, 1e9f};
     for (auto& [id, pawn] : mine) {
+        Zed& z = zeds[id];
         const FVector at = ActorPos(pawn);
         const float dMe = Dist2(at, me);
         UObject* best = nullptr; float bestD = std::fmin(dMe, kTargetRange * kTargetRange);
         for (auto& [pid, d] : decoys) if (IsValid(d.pawn)) { const float dd = Dist2(at, d.pos); if (dd < bestD) { bestD = dd; best = d.pawn; } }
-        if (best) Target(pawn, best);
+        if (best) Target(z, best, true, now);
+        else if (z.target && z.target != localPawn) Target(z, localPawn, false, now);  // back to us
     }
 }
 }  // namespace
@@ -566,13 +579,15 @@ void Net(double now, UObject* localPawn, net::Client& client, int world) {
             const float health = Health(z.pawn);
             if (health >= 0 && health < kPuppetHealth - 0.5f) {
                 const float hit = kPuppetHealth - health;
-                if (hit < kPuppetHealth / 2) { net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(id); w.F32(hit); client.SendZombie(w, true); dg::Log("zombies: hit zombie %u (puppet) for %.0f", unsigned(id), hit); }
+                // The game resets a fresh pool pawn's health (seen: to 160, 80000) in its first moments.
+                const float plausible = std::fmax(1000.f, 5 * Prop<float>(z.pawn, "MaxHealth", 200.f));
+                if (Clock() - z.puppetSince > 1.5 && hit <= plausible) { net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(id); w.F32(hit); client.SendZombie(w, true); dg::Log("zombies: hit zombie %u (puppet) for %.0f", unsigned(id), hit); }
                 SetPuppetHealth(z.pawn);
             }
         }
     }
     if (reported) { report.buf[1] = uint8_t(reported); client.SendZombie(report, false); }
-    UpdateTargets(localPawn, client);
+    UpdateTargets(localPawn, client, now);
 }
 
 }  // namespace zombies

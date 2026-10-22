@@ -126,7 +126,11 @@ ghost — `HumanBasePawn_C` with the player's `pawnDefaultFaction`, its controll
 stopped, movement off, health 100000, a borrowed human NPC skeleton (hit bodies), mesh hidden. A zombie
 nearer to such a player than to the owner (within 30 m) gets its blackboard overwritten every frame:
 `FireFocus`, `Focus` = target pawn, `ForceAttack`, `TargetIsPlayer` = true, `Awareness` = 2 (combat), plus
-`SetFireFocus`. Health the target pawn loses (max 250 a hit) goes up as `ZombieAttack`; the server believes
+`SetFireFocus`, and when the target changes (again every 2 s) `BendAIController.SetAwarenessOfPawn(target, 1)` +
+`ForceAware(target)` — verified: the blackboard alone left the swarmer wandering, the awareness calls made it run
+to the target pawn and attack it. Freaker blackboards (`FreakerBlackboard` < `BB_BaseAI`) have `FireFocus`,
+`Focus`, `Awareness` (`EAIAwareState` 2 = Aware); `ForceAttack`/`TargetIsPlayer` are human keys. When no other
+player is nearer any more the zombie is made aware of the owner's player again. Health the target pawn loses (max 250 a hit) goes up as `ZombieAttack`; the server believes
 it only from the zombie's owner, for a victim within 12 m of the zombie, 4 a second, and delivers it as
 damage from nobody (`lastAttacker` cleared, so a zombie death is not credited to the last player who shot).
 
@@ -205,5 +209,5 @@ file in `profiles/editor/BendGame/Saved/Screenshots/WindowsNoEditor`).
 | In game, owner switch to the game: the real AI takes over and attacks the player | verified (screenshot: two swarmers charging) |
 | In game, owner-reported death (killer credited, mode event) and puppet death on the owner's word | verified |
 | Montage relay (attack animations on puppets) | not seen yet |
-| Target pawns: zombies attack another player, damage reaches that player | built; in-game test pending |
+| Target pawns: a zombie run by this game attacks another player (probe ghost) 17 m from us, the damage reaches that player; it returns to us when that player leaves | verified (one game + probe, screenshot) |
 | Two real clients | pending (needs the user / two PCs or two game copies) |
