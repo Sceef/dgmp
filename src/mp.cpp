@@ -2106,11 +2106,11 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         mpui::Update(client, at, canAct, playing && !spec.on);
         webui::Update(client);
         vehicles::Update(now, pawn, controller, client);
-        carry::Update(now, pawn, client, canAct && !mpui::DialogOpen());
+        carry::Update(now, pawn, client, canAct && !mpui::DialogOpen() && !webui::Focused());  // (keys typed into a page are not F)
         objects::Update(now, pawn);
         blips::Update(pawn);
         sounds::Update(pawn, client);
-        playeranim::Update(pawn, controller, client, canAct && !mpui::DialogOpen(), localDead || Respawning());
+        playeranim::Update(pawn, controller, client, canAct && !mpui::DialogOpen() && !webui::Focused(), localDead || Respawning());
         UpdateHeliView(pawn);  // after the helicopter moved this frame (else the view lags a frame and shakes)
         // The UI took or gave back the keyboard: nothing the game saw pressed stays held (a W let go
         // under a dialog kept the character running after it).
