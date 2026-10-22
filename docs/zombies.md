@@ -82,9 +82,13 @@ exactly what a remote client would get over the network.
 
 - **Stop the AI:** `BrainComponent.StopLogic("dgmp")` — the pawn stands, does not attack, keeps its
   controller (needed for rotation and movement input). `RestartLogic` gives the AI back.
-- **Walk it:** every frame `AddMovementInput(direction, 1, bForce=true)` toward the reported place, the
-  movement component's `MaxWalkSpeed` = reported speed + catch-up, and `SetControlRotation` (freakers turn
-  with the controller: `bUseControllerRotationYaw`). Farther than 8 m (or 4 m in height): teleport.
+- **Walk it:** the AI's own locomotion without its brain: `SetMoveSpeed(EAIMoveSpeed)` matching the owner's
+  reported speed (one step faster when 2 m behind) and a straight `MoveToLocation(place, 25, ..., bUsePathfinding=false)`,
+  renewed when the place moved 50 cm or every 0.5 s; standing: `SetControlRotation` to the reported yaw
+  (freakers turn with the controller). Farther than 8 m (or 4 m in height): teleport.
+  *Gotcha (found in game):* plain `AddMovementInput` + `MaxWalkSpeed` worked in the first test only because
+  that puppet's behaviour tree had run before it was stopped; a pawn stopped right after spawning stands
+  still (`desiredSpeed` stays 0). Move orders work either way.
 - **Result:** the puppet ran beside the real one with the game's run animation (screenshot evidence in the
   session; both pawns in a running pose 10-15 m from the camera). No pose streaming needed: ~35 bytes per
   zombie per update instead of the ~1 KB bone frames the player ghosts use.
@@ -111,12 +115,23 @@ mode (Lua)  createZombie(x,y,z,type)        zombieDeath(z, killer)
    Died -> puppets die the game's way (ApplyDamage), ragdoll/body stay; server forgets it after 30 s.
 ```
 
-Why ownership by distance: the game's AI only perceives the local player (other players are drawn as
-`SkeletalMeshActor` ghosts, not pawns), so a zombie can only hunt the player whose game runs it. Handing the
-zombie to the nearest player makes it hunt whoever is closest; when someone else comes clearly closer it
-switches (the new owner restarts the behaviour tree with the last reported health).
+Why ownership by distance: the game's AI only perceives pawns (other players are drawn as
+`SkeletalMeshActor` ghosts), so by itself a zombie hunts only the player whose game runs it. Handing the
+zombie to the nearest player keeps most fights local; when someone else comes clearly closer it switches
+(the new owner restarts the behaviour tree with the last reported health).
 
-Protocol (`src/shared/protocol.h`): client->server `ZombieStates = 30`, `ZombieHit = 31`, `ZombieDied = 32`;
+**Other players as targets** (ported from DGCoop, where freakers, wolves and marauders attacked it): the
+owner's client gives every remote player within 80 m of its zombies an invisible *target pawn* glued to the
+ghost — `HumanBasePawn_C` with the player's `pawnDefaultFaction`, its controller's `SetAIFactionType`, brain
+stopped, movement off, health 100000, a borrowed human NPC skeleton (hit bodies), mesh hidden. A zombie
+nearer to such a player than to the owner (within 30 m) gets its blackboard overwritten every frame:
+`FireFocus`, `Focus` = target pawn, `ForceAttack`, `TargetIsPlayer` = true, `Awareness` = 2 (combat), plus
+`SetFireFocus`. Health the target pawn loses (max 250 a hit) goes up as `ZombieAttack`; the server believes
+it only from the zombie's owner, for a victim within 12 m of the zombie, 4 a second, and delivers it as
+damage from nobody (`lastAttacker` cleared, so a zombie death is not credited to the last player who shot).
+
+Protocol (`src/shared/protocol.h`): client->server `ZombieStates = 30`, `ZombieHit = 31`, `ZombieDied = 32`,
+`ZombieAttack = 33`;
 server->client `Zombie = 130` (`ZombieOp` Add/Owner/Damage/Died/Remove), `ZombieMoves = 131`.
 `ZombieState` = u16 id, f32 x,y,z,yaw,speed,health, u8 montageSeq, str montage. No protocol bump: old
 clients ignore the new messages (and get no zombies).
@@ -130,11 +145,12 @@ from the zombie's world within 250 m and is capped by `MaxHitDamage`; at most 20
 |---|---|
 | `createZombie(x, y, z [, type [, yaw [, world]]])` → `id` or `nil` | `type`: `Swarmer` (default), `Newt`, ... (an `EAIFactionType` the region has loaded); `nil` when `Zombies=0` |
 | `removeZombie(id)` → `bool` | gone for everyone (a body too) |
+| `setZombieOwner(id, player)` → `bool` | that player's game runs it while it can (any distance); `nil`: the nearest player again |
 | `getZombie(id)` → table or `nil` | `id, type, x, y, z, yaw, world, health` (once reported), `dead`, `owner` (player) |
 | `zombies()` → list | every zombie (dead ones until they are forgotten) |
 | event `zombieDeath(zombie, killer)` | `killer`: the player who hurt it last (the owner when nobody else did); nil possible |
 
-Test mode `modes/zz_zombietest` (temporary): `/z [count] [type] [metres]`, `/zclear`, `/zlist`.
+Test mode `modes/zz_zombietest` (temporary): `/z [count] [type] [metres]`, `/zown <id> [off]`, `/zclear`, `/zlist`.
 
 ## 4. Next steps (design)
 
@@ -144,10 +160,9 @@ Test mode `modes/zz_zombietest` (temporary): `/z [count] [type] [metres]`, `/zcl
    `createHorde(x, y, z, count, radius [, type])` = a group of zombies spread over the radius sharing an id
    (`hordeDeath` when all died). Count limited by what clients can run: the arcade pool gave us pawns well
    beyond the ambient pool's 15, the practical limit needs measuring (FPS with 30-50 AI freakers).
-2. **Attacks on players who are not the owner:** today a puppet's attack is only an animation. Options: make
-   the owner's AI target a proxy pawn standing in for the remote player (needs an invisible `BendPawn` of the
-   player faction registered in `BendAIManager.m_DetectablePawns`), or let the victim's client judge melee
-   hits from the reported attack montage + distance (cheap, less exact).
+2. **Attacks on players who are not the owner:** done in code with target pawns (section 3); needs the
+   in-game test with two clients. Open: human enemies (marauders) need the borrowed skeleton to aim; a
+   target pawn's capsule could block the owner where the remote player stands.
 3. **Who killed it:** the owner's own kill is not reported separately; `killer` is the last remote attacker
    if there was one. Report the owner's last damage causer with `ZombieDied`.
 4. **Real hordes** (crowd system): needs the story flag / world state that activates `Ambient_Hordes`; then
@@ -183,7 +198,12 @@ file in `profiles/editor/BendGame/Saved/Screenshots/WindowsNoEditor`).
 | `SpawnForArcadeMode` spawns a Swarmer at a chosen point | verified |
 | `StopLogic` stops the AI; puppet walk/run with correct animation via movement input | verified (one game, mirror test) |
 | Crowd member generated by hand exists but is not drawn (inactive hordes in our save) | verified |
-| Server: createZombie, owner choice, relays, hit forwarding, death event | built (compiles); live test pending |
-| Client: spawn near player, owner AI / puppet switch, montage relay, hit relay, death | built; live test pending |
-| Arcade spawn while `SuppressAI=1` blocks the generator | pending |
+| Server: createZombie, owner choice and switch, relays, hit forwarding, death + `zombieDeath` killer | verified with two `dgmp-probe` clients |
+| Server: `setZombieOwner` pin, `ZombieAttack` delivered / out of reach refused / flood guard | verified with two probes |
+| Arcade spawn while `SuppressAI=1` blocks the generator | verified (spawns fine) |
+| In game, a probe owning two zombies: puppets spawn, follow the owner's reports, a local hit on a puppet reaches the owner | verified |
+| In game, owner switch to the game: the real AI takes over and attacks the player | verified (screenshot: two swarmers charging) |
+| In game, owner-reported death (killer credited, mode event) and puppet death on the owner's word | verified |
+| Montage relay (attack animations on puppets) | not seen yet |
+| Target pawns: zombies attack another player, damage reaches that player | built; in-game test pending |
 | Two real clients | pending (needs the user / two PCs or two game copies) |
