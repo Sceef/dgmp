@@ -352,6 +352,29 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         script_->UiMessage(*p, name, json);
         break;
     }
+    case net::Msg::ScriptRequest: {
+        const auto path = r.Str(net::kScriptPathMax);
+        if (!r.ok()) break;
+        for (auto& f : scriptFiles_) if (f.name == path) { SendFileParts(p, net::Msg::ScriptData, f); break; }
+        break;
+    }
+    case net::Msg::ScriptMessage: {
+        const auto name = r.Str(net::kScriptNameMax); const auto json = r.Str(net::kScriptFromClientMax);
+        if (!r.ok() || name.empty()) break;
+        const double now = Now();
+        if (now - p->scriptWindow >= 1.0) { p->scriptWindow = now; p->scriptCount = 0; }
+        if (++p->scriptCount > 60) break;  // a script flooding the server
+        script_->ClientMessage(*p, name, json);
+        break;
+    }
+    case net::Msg::ScriptError: {
+        const auto text = r.Str(net::kScriptErrorMax);
+        if (!r.ok()) break;
+        const double now = Now();
+        if (now - p->errorWindow >= 10.0) { p->errorWindow = now; p->errorCount = 0; }
+        if (++p->errorCount <= 5) Log("[%s] client script error (%s): %s", script_->mode().c_str(), p->nick.c_str(), text.c_str());
+        break;
+    }
     case net::Msg::CarryAction: OnCarryAction(*p, r); break;
     case net::Msg::Shot: {
         // Its weapon fired: the players nearby (same world, 300 m) hear it.
@@ -644,6 +667,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     SendImageList(p);
     for (auto& [iid, ic] : icons_) SendIcon(peer, ic);
     SendUiList(p);
+    SendScriptList(p);
     if (!watchedKeys_.empty()) SendWatchedKeys(p);
     if (timeHours_ >= 0) { net::Writer t; t.Op(net::Msg::SetTime); t.F32(timeHours_); t.U8(timePaused_); SendTo(peer, t, true); }
     if (weather_ != -2) { net::Writer t; t.Op(net::Msg::SetWeather); t.I32(weather_); SendTo(peer, t, true); }
@@ -750,6 +774,7 @@ void Server::LoadEnvironment(const std::string& mode) {
     LoadImages(mode);
     LoadWorldActors(mode);
     LoadUiFiles(mode);
+    LoadScriptFiles(mode);
     LoadCarries(mode);
     LoadZones(mode);
     std::ifstream in(root_ / "modes" / mode / "world.json", std::ios::binary);
@@ -1329,32 +1354,50 @@ void Server::SendFileParts(Player* to, net::Msg op, const ImageFile& f) {
         Send(to, w, true);
     }
 }
-// The mode's HTML UI: modes/<mode>/ui/** (web files only), up to 4 MB each and 32 MB in all. Paths use '/'.
-void Server::LoadUiFiles(const std::string& mode) {
-    uiFiles_.clear();
-    static const char* kTypes[] = {".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-                                   ".woff", ".woff2", ".ttf", ".otf", ".mp3", ".ogg", ".wav", ".txt"};
-    const auto dir = root_ / "modes" / mode / "ui";
+// Files of a folder of the mode, recursively: only these extensions, up to maxEach bytes each, 32 MB and
+// 2000 files in all. Paths use '/'; names are latin letters, digits, _ - . /
+void Server::LoadModeFiles(const std::filesystem::path& dir, std::initializer_list<const char*> types, size_t maxEach, std::vector<ImageFile>& out, const char* what) {
+    out.clear();
     std::error_code ec;
     size_t total = 0;
     for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
         if (!it->is_regular_file()) continue;
         const std::string path = std::filesystem::relative(it->path(), dir, ec).generic_string();
         std::string ext = it->path().extension().string(); for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
-        if (std::none_of(std::begin(kTypes), std::end(kTypes), [&](const char* t) { return ext == t; })) continue;
+        if (std::none_of(types.begin(), types.end(), [&](const char* t) { return ext == t; })) continue;
         bool plain = !path.empty() && path.size() <= net::kUiPathMax && path.find("..") == std::string::npos;
         for (char c : path) plain &= std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.' || c == '/';
-        if (!plain) { Log("modes/%s/ui/%s: names are latin letters, digits, _ - . / (skipped)", mode.c_str(), path.c_str()); continue; }
+        if (!plain) { Log("%s/%s: names are latin letters, digits, _ - . / (skipped)", what, path.c_str()); continue; }
         const auto size = it->file_size(ec);
-        if (ec || size > 4u * 1024 * 1024 || total + size > 32u * 1024 * 1024) { Log("modes/%s/ui/%s: too large (skipped)", mode.c_str(), path.c_str()); continue; }
+        if (ec || size > maxEach || total + size > 32u * 1024 * 1024) { Log("%s/%s: too large (skipped)", what, path.c_str()); continue; }
         std::ifstream in(it->path(), std::ios::binary);
         std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         total += data.size();
-        uiFiles_.push_back({path, Sha256Hex(data.data(), data.size()), std::move(data)});
-        if (uiFiles_.size() >= 2000) break;
+        out.push_back({path, Sha256Hex(data.data(), data.size()), std::move(data)});
+        if (out.size() >= 2000) break;
     }
-    if (!uiFiles_.empty()) Log("Mode UI files: %zu (%zu KB)", uiFiles_.size(), total / 1024);
+    if (!out.empty()) Log("%s: %zu files (%zu KB)", what, out.size(), total / 1024);
+}
+// The mode's HTML UI: modes/<mode>/ui/** (web files only), up to 4 MB each.
+void Server::LoadUiFiles(const std::string& mode) {
+    LoadModeFiles(root_ / "modes" / mode / "ui", {".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                  ".woff", ".woff2", ".ttf", ".otf", ".mp3", ".ogg", ".wav", ".txt"}, 4u * 1024 * 1024, uiFiles_, ("modes/" + mode + "/ui").c_str());
     SendUiList(nullptr);
+}
+// The mode's client scripts: modes/<mode>/client/** (Lua and the data they read), up to 1 MB each.
+void Server::LoadScriptFiles(const std::string& mode) {
+    LoadModeFiles(root_ / "modes" / mode / "client", {".lua", ".json", ".txt"}, 1024u * 1024, scriptFiles_, ("modes/" + mode + "/client").c_str());
+    SendScriptList(nullptr);
+}
+void Server::SendScriptList(Player* to) {
+    net::Writer w; w.Op(net::Msg::ScriptList); w.U16(uint16_t(scriptFiles_.size()));
+    for (auto& f : scriptFiles_) { w.Str(f.name); w.Str(f.hash); }
+    Send(to, w, true);
+}
+void Server::ClientSend(Player* p, const std::string& name, const std::string& json) {
+    if (!p || p->bot) return;
+    net::Writer w; w.Op(net::Msg::ScriptEvent); w.Str(name); w.Str(json);
+    Send(p, w, true);
 }
 void Server::SendUiList(Player* to) {
     net::Writer w; w.Op(net::Msg::UiList); w.U16(uint16_t(uiFiles_.size()));

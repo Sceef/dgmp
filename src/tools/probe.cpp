@@ -7,7 +7,8 @@
 //       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
 //       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll),
 //       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
-//       !ui <name> [json] (the mode's page sent dgmp.send(name, data)),
+//       !ui <name> [json] (the mode's page sent dgmp.send(name, data)), !cs <name> [json] (the client script sent send(name, data)),
+//       !cserr <text> (a client script failed),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       Zombies (docs/zombies.md): the ones it owns walk toward it and are reported 10 times a second; !zhit <id> <damage>
 //       (we hurt its puppet), !zdie <id> (the one we own died), !zatk <id> <player> <damage> (the one we own hurt that player);
@@ -126,6 +127,10 @@ int main() {
         c.on.uiList = [](const std::vector<std::pair<std::string, std::string>>& files) {
             std::printf("* UI files:"); for (auto& f : files) std::printf(" %s", f.first.c_str()); std::printf("\n");
         };
+        c.on.scriptList = [](const std::vector<std::pair<std::string, std::string>>& files) {
+            std::printf("* client scripts:"); for (auto& f : files) std::printf(" %s", f.first.c_str()); std::printf("%s\n", files.empty() ? " (none)" : "");
+        };
+        c.on.scriptEvent = [](const std::string& name, const std::string& json) { std::printf("* client script event %s %s\n", name.c_str(), json.c_str()); };
         c.on.ui = [](net::UiOp op, const std::string& name, const std::string& text, bool flag) {
             if (op == net::UiOp::Open) std::printf("* UI open %s%s\n", text.c_str(), flag ? " (focus)" : "");
             else if (op == net::UiOp::Close) std::printf("* UI close\n");
@@ -257,6 +262,11 @@ int main() {
                         const auto rest = s.substr(4); const auto sp = rest.find(' ');
                         c.SendUiMessage(rest.substr(0, sp), sp == std::string::npos ? "null" : rest.substr(sp + 1));
                     }
+                    else if (s.rfind("!cs ", 0) == 0) {
+                        const auto rest = s.substr(4); const auto sp = rest.find(' ');
+                        c.SendScriptMessage(rest.substr(0, sp), sp == std::string::npos ? "null" : rest.substr(sp + 1));
+                    }
+                    else if (s.rfind("!cserr ", 0) == 0) c.SendScriptError(s.substr(7));
                     else if (s.rfind("!shot ", 0) == 0) c.SendShot(s.substr(6), px, py, pz);
                     else if (s.rfind("!voice ", 0) == 0) {
                         float secs = 0; char how[16] = "";

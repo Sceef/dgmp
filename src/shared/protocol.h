@@ -10,7 +10,7 @@
 
 namespace net {
 
-constexpr uint16_t kProtocolVersion = 9;
+constexpr uint16_t kProtocolVersion = 10;
 constexpr uint16_t kDefaultPort = 7777;
 constexpr int kLanPortSpan = 10;        // LAN discovery probes kDefaultPort .. kDefaultPort+span-1
 constexpr int kChannels = 4;
@@ -57,6 +57,9 @@ enum class Msg : uint8_t {
     ZombieAttack = 33, // u16 zombieId, u16 victimId, f32 damage: a zombie this client owns hurt another player (its target pawn here)
     UiRequest = 40,   // str path: send me this file of the mode's HTML UI (UiList: not in my cache)
     UiMessage = 41,   // str name, str json: the mode's page sent a message (dgmp.send) to the server's Lua (uiMessage)
+    ScriptRequest = 42, // str path: send me this file of the mode's client scripts (ScriptList: not in my cache)
+    ScriptMessage = 43, // str name, str json: the mode's client script sent a message (send) to the server's Lua (clientMessage)
+    ScriptError = 44,   // str text: a client script failed (the server logs it for the mode's author)
     Shot = 20,        // str weapon class, f32 x,y,z: this player fired (relayed to the players nearby as PlayerShot)
     AnimEnd = 19,     // u8 reason (0 it ended, 1 the player moved): the animation the mode played (PlayAnim) is over
     CarryAction = 18,  // u16 carryId, u8 CarryOp, f32 x,y,z,yaw: pick it up / put it down there / the game dropped it there
@@ -102,6 +105,9 @@ enum class Msg : uint8_t {
     UiList = 120,     // u16 n, n x (str path, str sha256): the files of the mode's HTML UI (modes/<mode>/ui); fetch the ones not cached
     UiData = 121,     // str path, u16 part, u16 parts, str bytes: a UI file, in parts
     Ui = 122,         // u8 UiOp: Open (str page, u8 focus), Close, Focus (u8 on), Event (str name, str json): the mode's page (docs/webui.md)
+    ScriptList = 123, // u16 n, n x (str path, str sha256): the mode's client scripts (modes/<mode>/client, docs/client-lua.md); fetch the ones not cached
+    ScriptData = 124, // str path, u16 part, u16 parts, str bytes: a client script's file, in parts
+    ScriptEvent = 125, // str name, str json: the server's Lua (player:clientSend) to the client scripts' onServer(name, fn)
     VehicleRoute = 103, // u16 vehicleId, f32 speed (units/s), f32 elapsed (s since it set off), u8 loop, u16 n, n x f32 x,y,z: the way its NPC drives it (n 0: it stopped)
     Carry = 104,      // u16 id, u8 op (1 add/update: str model, f32 x,y,z,yaw, i32 world (-1 every), u16 carrier (0xFFFF: it lies there), u8 CarryRoll; 2 remove):
                       // a box the players carry in both hands (docs/API.md "Переноска"); carrier = your id: hold it, else let it go
@@ -160,6 +166,8 @@ enum class BikeAction : uint8_t { Give = 1, Take = 2, Mount = 3 };  // Mount: th
 struct VehicleState { float x = 0, y = 0, z = 0, yaw = 0, fuel = 1, health = 1; };
 enum class UiOp : uint8_t { Open = 1, Close = 2, Focus = 3, Event = 4 };
 constexpr size_t kUiPathMax = 160, kUiNameMax = 64, kUiToPageMax = 65536, kUiFromPageMax = 16384;
+// Client scripts (docs/client-lua.md): file paths, message names and sizes each way, an error report.
+constexpr size_t kScriptPathMax = 160, kScriptNameMax = 64, kScriptToClientMax = 65536, kScriptFromClientMax = 16384, kScriptErrorMax = 1024;
 enum class DialogStyle : uint8_t { MsgBox = 0, Input = 1, Password = 2, List = 3, Close = 255 };
 constexpr size_t kDialogTextMax = 4096, kDialogItemsMax = 200;
 enum class HitZone : uint8_t { Body = 0, Head = 1, Arm = 2, Leg = 3 };

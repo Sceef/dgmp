@@ -102,6 +102,10 @@ public:
         std::function<void(const std::string& path, int part, int parts, const std::string& bytes)> uiData;
         // Open: text = page, flag = focus; Close; Focus: flag; Event: name, text = json
         std::function<void(UiOp op, const std::string& name, const std::string& text, bool flag)> ui;
+        // The mode's client scripts (docs/client-lua.md): (path, sha256), their files in parts, a message of the server's Lua.
+        std::function<void(const std::vector<std::pair<std::string, std::string>>& files)> scriptList;
+        std::function<void(const std::string& path, int part, int parts, const std::string& bytes)> scriptData;
+        std::function<void(const std::string& name, const std::string& json)> scriptEvent;
         struct IconInfo { float x, y, z, size, distance; int world; uint32_t color; std::string image, text; bool throughWalls = false; };
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
         struct CarryInfo { std::string model; float x, y, z, yaw; int world; uint16_t carrier; uint8_t roll = 0; };  // roll: CarryRoll
@@ -138,6 +142,9 @@ public:
     void SendImageRequest(const std::string& name);
     void SendUiRequest(const std::string& path);
     void SendUiMessage(const std::string& name, const std::string& json);
+    void SendScriptRequest(const std::string& path);
+    void SendScriptMessage(const std::string& name, const std::string& json);
+    void SendScriptError(const std::string& text);
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
     void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);
 

@@ -276,6 +276,8 @@ struct Player {
     net::DialogStyle dialogStyle = net::DialogStyle::MsgBox;
     std::vector<std::string> dialogItems;          // a list dialog's lines (its answer names one)
     double uiWindow = 0; int uiCount = 0;          // page message rate limit (UiMessage)
+    double scriptWindow = 0; int scriptCount = 0;  // client script message rate limit (ScriptMessage)
+    double errorWindow = 0; int errorCount = 0;    // client script error reports (ScriptError)
     bool inWardrobe = false, wardrobeReturn = true; // moved to the mode's skin choosing place; goes back after
     float backX = 0, backY = 0, backZ = 0, backYaw = 0;
     double poseWindow = 0; int posesInWindow = 0;  // relay rate limit
@@ -448,6 +450,8 @@ public:
     // flag = focus; Close; Focus: flag; Event: name, text = json for the page's dgmp.on(name).
     bool HasUiFile(const std::string& path) const { for (auto& f : uiFiles_) if (f.name == path) return true; return false; }
     void Ui(Player* p, net::UiOp op, const std::string& name = {}, const std::string& text = {}, bool flag = false);
+    // The mode's client scripts (docs/client-lua.md): a message for their onServer(name, fn).
+    void ClientSend(Player* p, const std::string& name, const std::string& json);
     uint16_t AddIcon(Icon i);
     bool UpdateIcon(const Icon& i);
     bool RemoveIcon(uint16_t id);
@@ -632,6 +636,11 @@ private:
     std::vector<ImageFile> uiFiles_;
     void LoadUiFiles(const std::string& mode);
     void SendUiList(Player* to);       // null: everyone
+    std::vector<ImageFile> scriptFiles_;  // modes/<mode>/client: the client scripts
+    void LoadScriptFiles(const std::string& mode);
+    void SendScriptList(Player* to);   // null: everyone
+    // The files of a folder of the mode (recursive, these extensions only, paths with '/') into `out`.
+    void LoadModeFiles(const std::filesystem::path& dir, std::initializer_list<const char*> types, size_t maxEach, std::vector<ImageFile>& out, const char* what);
     void SendFileParts(Player* to, net::Msg op, const ImageFile& f);
     std::map<uint16_t, Icon> icons_;
     uint16_t nextIcon_ = 1;

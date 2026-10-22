@@ -380,6 +380,23 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.uiData) on.uiData(path, part, parts, bytes);
         break;
     }
+    case Msg::ScriptList: {
+        std::vector<std::pair<std::string, std::string>> list;
+        const int n = r.U16();
+        for (int i = 0; i < n && r.ok(); ++i) { auto path = r.Str(kScriptPathMax); auto hash = r.Str(64); list.emplace_back(std::move(path), std::move(hash)); }
+        if (r.ok() && on.scriptList) on.scriptList(list);
+        break;
+    }
+    case Msg::ScriptData: {
+        const auto path = r.Str(kScriptPathMax); const int part = r.U16(), parts = r.U16(); const auto bytes = r.Str();
+        if (r.ok() && on.scriptData) on.scriptData(path, part, parts, bytes);
+        break;
+    }
+    case Msg::ScriptEvent: {
+        const auto name = r.Str(kScriptNameMax); const auto json = r.Str(kScriptToClientMax);
+        if (r.ok() && on.scriptEvent) on.scriptEvent(name, json);
+        break;
+    }
     case Msg::Ui: {
         const auto op = UiOp(r.U8());
         std::string name, text; bool flag = false;
@@ -584,6 +601,21 @@ void Client::SendUiRequest(const std::string& path) {
 void Client::SendUiMessage(const std::string& name, const std::string& json) {
     if (status_ != Status::Connected || name.size() > kUiNameMax || json.size() > kUiFromPageMax) return;
     Writer w; w.Op(Msg::UiMessage); w.Str(name); w.Str(json);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendScriptRequest(const std::string& path) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::ScriptRequest); w.Str(path.substr(0, kScriptPathMax));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendScriptMessage(const std::string& name, const std::string& json) {
+    if (status_ != Status::Connected || name.empty() || name.size() > kScriptNameMax || json.size() > kScriptFromClientMax) return;
+    Writer w; w.Op(Msg::ScriptMessage); w.Str(name); w.Str(json);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendScriptError(const std::string& text) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::ScriptError); w.Str(text.substr(0, kScriptErrorMax));
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendShot(const std::string& weaponClass, float x, float y, float z) {
