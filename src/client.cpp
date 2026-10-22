@@ -14,6 +14,7 @@
 #include "overlay.h"
 #include "editorui.h"
 #include "lang.h"
+#include "zombies.h"
 #include "../api/dgmp.h"
 #include <windows.h>
 #include <malloc.h>
@@ -491,7 +492,7 @@ void Sweep(double now) {
         auto o=ObjectAt(i); if(!o || o==pawn || (o->ObjectFlags&0x10) || !IsValid(o)) continue;
         if(suppressStory && ((triggerCls && IsA(o,triggerCls)) || (restrictCls && IsA(o,restrictCls)))) {
             if(Once(o)) { hide.push_back(o); ++triggers; }
-        } else if(suppressAI && aiCls && IsA(o,aiCls) && !GetBoolProp(o,"bHidden")) {
+        } else if(suppressAI && aiCls && IsA(o,aiCls) && !GetBoolProp(o,"bHidden") && !zombies::IsOurs(o)) {
             if(Once(o)) { hide.push_back(o); ++removedAI; }
         }
     }
@@ -702,6 +703,7 @@ void Update(float dt) {
     // Silent while the loading cover is up: no menu music or chatter from the template save.
     audio::Update(!bootstrapComplete || panel::IsLoading());
     devcmd::Update(pawn,controller,gameMode);
+    if(ready && !Loading()) zombies::Update(now,dt,pawn);
 }
 void ReportException(unsigned long code) {
     ++errors; dg::Log("DGMP frame exception 0x%08X (%u)",code,errors);

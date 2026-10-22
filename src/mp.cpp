@@ -6,6 +6,7 @@
 #include "skins.h"
 #include "mpui.h"
 #include "vehicles.h"
+#include "zombies.h"
 #include "carry.h"
 #include "objects.h"
 #include "playeranim.h"
@@ -1499,6 +1500,7 @@ void HookClient() {
         steam::CancelTicket();
         mpui::Reset();
         vehicles::Reset();
+        zombies::Reset();
         carry::Reset();
         objects::Reset();
         playeranim::Reset();
@@ -1586,6 +1588,7 @@ void HookClient() {
     client.on.vehicleAllow = [](uint16_t id, int seat) { vehicles::OnAllow(id, seat); };
     client.on.vehicleEject = [](uint16_t id) { vehicles::OnEject(id); };
     client.on.vehicleRoute = [](uint16_t id, const std::vector<float>& points, float speed, float elapsed, bool loop) { vehicles::OnRoute(id, points, speed, elapsed, loop); };
+    client.on.zombie = [](net::Msg op, const uint8_t* data, size_t size) { zombies::OnMessage(op, data, size); };
     client.on.imageList = [](const std::vector<std::pair<std::string, std::string>>& list) { images::OnList(list, client); };
     client.on.imageData = [](const std::string& name, int part, int parts, const std::string& bytes) { images::OnData(name, part, parts, bytes); };
     client.on.uiList = [](const std::vector<std::pair<std::string, std::string>>& files) { webui::OnList(files, client); };
@@ -2106,6 +2109,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         mpui::Update(client, at, canAct, playing && !spec.on);
         webui::Update(client);
         vehicles::Update(now, pawn, controller, client);
+        zombies::Net(now, pawn, client, myWorld);
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen() && !webui::Focused());  // (keys typed into a page are not F)
         objects::Update(now, pawn);
         blips::Update(pawn);

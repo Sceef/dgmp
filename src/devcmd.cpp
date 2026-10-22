@@ -5,6 +5,7 @@
 #include "worldedit.h"
 #include "mp.h"
 #include "gameevents.h"
+#include "zombies.h"
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
@@ -32,6 +33,11 @@ namespace fs = std::filesystem;
 //   spawn <classPath|-> <itemKey> [count] [dist]   a pickup in front of the pawn, taken the game's way
 //   trace [seconds]                   log distinct events of the local pawn/controller and their components
 //   refs <obj> [bytes]                 raw scan: offsets holding pointers to live objects (unreflected fields)
+//   ai [radius m] [all]                AI pawns: class, controller, health, distance (visible unless all)
+//   sdump <obj> <Prop> [index] [depth] fields of a struct property / struct array element
+//   z spawn <faction> [dist m] [chase 0|1] | z last | z list | z brain <obj> on|off |
+//     z drive <obj> x y z [yaw] | z mirror <src> <puppet> [delay s] [side m] | z release <obj>
+//                                      freakers: spawn, stop the AI, walk a puppet (src/zombies.cpp)
 //   call <obj> <Function> [Param=value ...]   values: numbers, true/false, enum short names,
 //                                       names, strings, objects (see <obj>), vectors "x,y,z"
 // <obj>: pawn | controller | gamemode | comp:<Class> (component of pawn/controller) |
@@ -228,12 +234,112 @@ int FindPointer(const UObject* o, size_t bytes, const UObject* target) {
     return -1;
 }
 
+// Fields of a struct value at `base`, nested structs and the first elements of struct arrays expanded.
+void DumpStruct(UObject* strct, const uint8_t* base, int depth, const std::string& indent, std::ostringstream& out) {
+    for (auto s = strct; s; s = SuperOf(s))
+        for (auto p = Field<UObject*>(s, off::UStruct_Children); p; p = Field<UObject*>(p, off::UField_Next)) {
+            if (GetName(p->Class) == "Function") continue;
+            out << indent << Hex(OffsetOf(p)) << " " << GetName(p) << " = " << Format(p, base) << "\n";
+            const auto type = TypeOf(p); UObject* inner = Field<UObject*>(p, kProp_Inner);
+            if (depth <= 0 || !inner) continue;
+            if (type == "StructProperty") {
+                const auto sname = GetName(inner);
+                if (sname != "Vector" && sname != "Rotator") DumpStruct(inner, base + OffsetOf(p), depth - 1, indent + "  ", out);
+            } else if (type == "ArrayProperty" && TypeOf(inner) == "StructProperty") {
+                struct A { uint8_t* d; int32_t n, m; }; auto arr = *reinterpret_cast<const A*>(base + OffsetOf(p));
+                for (int i = 0; i < arr.n && i < 3; ++i) {
+                    out << indent << "  [" << i << "]\n";
+                    DumpStruct(Field<UObject*>(inner, kProp_Inner), arr.d + i * SizeOf(inner), depth - 1, indent + "    ", out);
+                }
+            } else if (type == "ArrayProperty") {
+                struct A { uint8_t* d; int32_t n, m; }; auto arr = *reinterpret_cast<const A*>(base + OffsetOf(p));
+                for (int i = 0; i < arr.n && i < 8; ++i) out << indent << "  [" << i << "] " << Format(inner, arr.d + i * SizeOf(inner)) << "\n";
+            }
+        }
+}
+FVector ActorPos(UObject* actor) {
+    auto root = Field<UObject*>(actor, off::Actor_RootComponent);
+    return IsValid(root) ? Field<FVector>(root, off::Scene_C2W_Trans) : FVector{};
+}
+
 std::string Run(const std::string& line) {
     keepAlive.clear();
     const auto a = Split(line);
     if (a.empty()) return "empty command";
     std::ostringstream out;
     const auto& cmd = a[0];
+    if (cmd == "ai") {  // ai [radius m] [all]: AI pawns (visible ones unless "all"): class, controller, health, distance
+        const float radius = a.size() > 1 ? std::stof(a[1]) * 100.f : 1e9f; const bool all = a.size() > 2 && a[2] == "all";
+        UObject* cls = FindClass("BendAIPawn"); if (!cls) return "no BendAIPawn";
+        const FVector me = IsValid(ctxPawn) ? ActorPos(ctxPawn) : FVector{};
+        int shown = 0;
+        for (int i = 0, n = NumObjects(); i < n; ++i) {
+            auto o = ObjectAt(i); if (!o || (o->ObjectFlags & 0x10) || !IsValid(o) || !IsA(o, cls)) continue;
+            const bool hidden = GetBoolProp(o, "bHidden"); if (hidden && !all) continue;
+            const FVector p = ActorPos(o); const float dx = p.X - me.X, dy = p.Y - me.Y, dz = p.Z - me.Z, d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (d > radius) continue;
+            auto ctrl = Field<UObject*>(o, off::Pawn_Controller);
+            UObject* hp = FindProperty(o->Class, "Health"); const float health = hp ? Field<float>(o, OffsetOf(hp)) : -1.f;
+            char b[256]; std::snprintf(b, sizeof(b), "%s %s%s ctrl=%s hp=%g d=%.0fm at (%.0f %.0f %.0f)\n", Hex(uintptr_t(o)).c_str(), GetName(o).c_str(), hidden ? " [hidden]" : "",
+                IsValid(ctrl) ? GetName(ctrl->Class).c_str() : "-", health, d / 100.f, p.X, p.Y, p.Z);
+            out << b; if (++shown >= 80) break;
+        }
+        out << shown << " shown"; return out.str();
+    }
+    if (cmd == "z" && a.size() > 1) {  // freaker research (src/zombies.cpp), see the command list at the top
+        const auto& sub = a[1];
+        if (sub == "spawn" && a.size() > 2) {
+            float yaw = 0;
+            if (auto f = IsValid(ctxController) ? FunctionOf(ctxController, "GetControlRotation") : nullptr) { Params p(f); ProcessEvent(ctxController, f, p.Data()); yaw = p.Get<FRotator>("ReturnValue").Yaw; }
+            const float dist = (a.size() > 3 ? std::stof(a[3]) : 10.f) * 100.f, r = yaw * 0.01745329f;
+            const FVector me = ActorPos(ctxPawn), at{me.X + std::cos(r) * dist, me.Y + std::sin(r) * dist, me.Z};
+            std::string error;
+            if (!zombies::Spawn(a[2], at, yaw + 180.f, a.size() > 4 && a[4] == "1", &error)) return "spawn failed: " + error;
+            return "spawn requested; the pawn shows in the log (z last)";
+        }
+        if (sub == "last") { auto p = zombies::LastSpawned(); return p ? Hex(uintptr_t(p)) + " " + FullName(p) : "none yet"; }
+        if (sub == "list") return zombies::Describe();
+        UObject* o = a.size() > 2 ? (a[2] == "last" ? zombies::LastSpawned() : Resolve(a[2])) : nullptr;
+        if (!o) return "object not found";
+        if (sub == "brain" && a.size() > 3) { zombies::SetBrain(o, a[3] == "on"); return "ok"; }
+        if (sub == "kill") { zombies::Kill(o); return "ok"; }
+        if (sub == "hp") return std::to_string(zombies::Health(o));
+        if (sub == "horde" && a.size() > 3) {  // z horde <BendCrowdGroup> <faction> [count] [dist]: arcade spawn into that crowd group
+            const float dist = (a.size() > 5 ? std::stof(a[5]) : 15.f) * 100.f;
+            float yaw = 0;
+            if (auto f = IsValid(ctxController) ? FunctionOf(ctxController, "GetControlRotation") : nullptr) { Params p(f); ProcessEvent(ctxController, f, p.Data()); yaw = p.Get<FRotator>("ReturnValue").Yaw; }
+            const float r = yaw * 0.01745329f; const FVector me = ActorPos(ctxPawn), at{me.X + std::cos(r) * dist, me.Y + std::sin(r) * dist, me.Z};
+            std::string error;
+            if (!zombies::Spawn(a[3], at, yaw + 180.f, false, &error, a.size() > 4 ? std::stoi(a[4]) : 10, o)) return "spawn failed: " + error;
+            return "ok";
+        }
+        if (sub == "release") { zombies::Release(o); return "ok"; }
+        if (sub == "drive" && a.size() > 5) { zombies::Drive(o, FVector{std::stof(a[3]), std::stof(a[4]), std::stof(a[5])}, a.size() > 6 ? std::stof(a[6]) : 0.f); return "ok"; }
+        if (sub == "mirror" && a.size() > 3) {  // z mirror <source> <puppet> [delay s] [side offset m]
+            UObject* puppet = a[3] == "last" ? zombies::LastSpawned() : Resolve(a[3]); if (!puppet) return "puppet not found";
+            zombies::SetBrain(puppet, false);
+            zombies::Mirror(o, puppet, a.size() > 4 ? std::stof(a[4]) : 0.2f, FVector{0, (a.size() > 5 ? std::stof(a[5]) : 3.f) * 100.f, 0});
+            return "ok";
+        }
+        return "usage: z spawn <faction> [dist] [chase] | z last | z list | z brain <obj> on|off | z drive <obj> x y z [yaw] | z mirror <src> <puppet> [delay] [side] | z release <obj>";
+    }
+    if (cmd == "sdump") {  // sdump <obj> <StructProperty|ArrayProperty of structs> [index] [depth]: struct fields
+        if (a.size() < 3) return "usage: sdump <obj> <Property> [index] [depth]";
+        UObject* o = Resolve(a[1]); if (!o) return "object not found: " + a[1];
+        UObject* p = nullptr; for (auto cls = o->Class; cls && !p; cls = SuperOf(cls)) p = FindProperty(cls, a[2].c_str());
+        if (!p) return "no property " + a[2];
+        const int index = a.size() > 3 ? std::stoi(a[3]) : 0, depth = a.size() > 4 ? std::stoi(a[4]) : 2;
+        UObject* inner = Field<UObject*>(p, kProp_Inner);
+        if (TypeOf(p) == "StructProperty") { out << GetName(inner) << " size " << SizeOf(p) << "\n"; DumpStruct(inner, reinterpret_cast<const uint8_t*>(o) + OffsetOf(p), depth, "  ", out); return out.str(); }
+        if (TypeOf(p) == "ArrayProperty" && TypeOf(inner) == "StructProperty") {
+            struct A { uint8_t* d; int32_t n, m; }; auto arr = Field<A>(o, OffsetOf(p));
+            if (index < 0 || index >= arr.n) return "index out of range (" + std::to_string(arr.n) + " elements)";
+            UObject* s = Field<UObject*>(inner, kProp_Inner);
+            out << GetName(s) << " [" << index << "/" << arr.n << "] size " << SizeOf(inner) << "\n";
+            DumpStruct(s, arr.d + index * SizeOf(inner), depth, "  ", out); return out.str();
+        }
+        return "not a struct or struct array";
+    }
     if (cmd == "find" || cmd == "objs") {
         if (a.size() < 2) return "usage: find <Class> [max] | objs <substring> [max]";
         const int max = a.size() > 2 ? std::stoi(a[2]) : 40;
