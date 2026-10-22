@@ -11,8 +11,9 @@
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 //       Voice: !voice <seconds> [radio] sends dummy frames (20 a second) with the talk / radio key; voice heard is
-//       counted per speaker and route. --voice-echo [delay]: what others say near it, it says again after `delay`
-//       seconds (1 by default): a game client next to the probe hears its own voice from the probe's body.
+//       counted per speaker and route. --voice-echo [delay] [radio]: what others say near it, it says again after `delay`
+//       seconds (1 by default; radio: with the radio key): a game client next to the probe hears its own voice from
+//       the probe's body (or over the radio, when both are in a radio channel).
 #include "../shared/netclient.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -77,13 +78,18 @@ int main() {
         double seconds = 0; std::vector<std::string> says; bool sendPose = false, autoUi = false; int posesIn = 0;
         uint64_t steamId = 0; std::string ticket;
         double voiceEcho = 0;  // --voice-echo delay (0: off)
+        net::VoiceKey echoKey = net::VoiceKey::Talk;
         for (int i = 4; i < argc; ++i) {
             const std::string a = argv[i];
             if (a == "--seconds" && i + 1 < argc) seconds = std::atof(argv[++i]);
             else if (a == "--say" && i + 1 < argc) says.push_back(argv[++i]);
             else if (a == "--pose") sendPose = true;
             else if (a == "--auto") autoUi = true;
-            else if (a == "--voice-echo") { voiceEcho = 1.0; if (i + 1 < argc && argv[i + 1][0] != '-') voiceEcho = std::atof(argv[++i]); }
+            else if (a == "--voice-echo") {
+                voiceEcho = 1.0;
+                if (i + 1 < argc && argv[i + 1][0] != '-' && std::atof(argv[i + 1]) > 0) voiceEcho = std::atof(argv[++i]);
+                if (i + 1 < argc && std::string(argv[i + 1]) == "radio") { echoKey = net::VoiceKey::Radio; ++i; }
+            }
             else if (a == "--steam" && i + 1 < argc) {
                 steamId = std::strtoull(argv[++i], nullptr, 10);
                 if (i + 1 < argc && argv[i + 1][0] != '-') ticket = argv[++i];
@@ -264,7 +270,7 @@ int main() {
             }
             for (size_t i = 0; i < echoes.size();) {
                 if (now < echoes[i].at) { ++i; continue; }
-                c.SendVoice(net::VoiceKey::Talk, net::VoiceCodec::Steam, echoes[i].frame.data(), echoes[i].frame.size());
+                c.SendVoice(echoKey, net::VoiceCodec::Steam, echoes[i].frame.data(), echoes[i].frame.size());
                 echoes.erase(echoes.begin() + long(i));
             }
             if (c.status() == net::Client::Status::Connected && now >= nextList) {
