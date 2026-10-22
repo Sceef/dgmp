@@ -186,6 +186,8 @@ struct Zombie {
     uint16_t owner = 0xFFFF;                  // the player whose client runs it (0xFFFF: nobody near)
     double ownerSince = 0, closerSince = 0;   // owner hysteresis: another player has been nearer since then
     uint16_t closer = 0xFFFF;
+    uint16_t pinned = 0xFFFF;                 // setZombieOwner: this player runs it while it can
+    double lastAttackAt = 0;                  // ZombieAttack flood guard
     uint16_t lastAttacker = 0xFFFF;           // the player who hurt it last (the killer when it dies)
     bool dead = false;
     double diedAt = 0;
@@ -512,6 +514,7 @@ public:
     // Freakers (src/server/zombies.cpp, docs/zombies.md); null / false when Zombies=0
     const Zombie* CreateZombie(const std::string& type, float x, float y, float z, float yaw, int32_t world);
     bool RemoveZombie(uint16_t id);
+    bool SetZombieOwner(uint16_t id, Player* owner);  // pin its owner (null: the nearest player again)
     const Zombie* FindZombie(uint16_t id) const { auto it = zombies_.find(id); return it == zombies_.end() ? nullptr : &it->second; }
     const std::map<uint16_t, Zombie>& Zombies() const { return zombies_; }
     bool ZombiesOn() const { return cfg_.zombies; }
@@ -573,6 +576,7 @@ private:
     void OnZombieStates(Player& p, const uint8_t* data, size_t size);
     void OnZombieHit(Player& p, const uint8_t* data, size_t size);
     void OnZombieDied(Player& p, const uint8_t* data, size_t size);
+    void OnZombieAttack(Player& p, const uint8_t* data, size_t size);
     void SendZombie(Player* to, const Zombie& z);  // to null: everyone
     void ZombiesPlayerGone(uint16_t id);           // its zombies go to the next nearest
     void SendVoiceSetup(Player& p);

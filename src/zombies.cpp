@@ -1,5 +1,6 @@
 #include "zombies.h"
 #include "log.h"
+#include "mp.h"
 #include <windows.h>
 #include <cmath>
 #include <cstring>
@@ -210,6 +211,7 @@ std::string Describe() {
 void Spawned(uint16_t tag, UObject* pawn);
 void SpawnFailed(uint16_t tag);
 bool Claimed(UObject* pawn);
+bool IsTargetPawn(UObject* pawn);
 
 void Update(double now, float dt, UObject* localPawn) {
     (void)localPawn;
@@ -311,7 +313,7 @@ void Spawned(uint16_t tag, UObject* pawn) {
 void SpawnFailed(uint16_t tag) { if (auto it = zeds.find(tag); it != zeds.end()) { it->second.spawning = false; it->second.retryAt = Clock() + 5; } }
 
 bool Claimed(UObject* pawn) {
-    if (driven.count(pawn)) return true;
+    if (driven.count(pawn) || IsTargetPawn(pawn)) return true;
     for (auto& [id, z] : zeds) if (z.pawn == pawn) return true;
     return false;
 }
@@ -327,7 +329,152 @@ bool IsOurs(UObject* pawn) {
 }
 bool Active() { return !zeds.empty(); }
 
+// ---------------------------------------------------------------- other players as targets
+// The game's AI only perceives pawns; other players are drawn as skeletal mesh actors. So that the zombies
+// this client runs also hunt the players near them (not just us), every such player gets an invisible
+// target pawn glued to its body here: a human pawn of the player's faction with its AI frozen, a borrowed
+// human skeleton to be hit on, and health we watch. Zombies nearer to that player than to us get it as
+// their target: their own target picking runs every frame, so the blackboard is overwritten every frame
+// (the approach DGCoop proved: freakers, wolves and marauders attack the target pawn). What the target
+// pawn loses goes to the server as that player's damage (ZombieAttack).
+namespace {
+constexpr float kDecoyHealth = 100000.f;
+constexpr float kTargetRange = 3000.f;    // a zombie goes for another player within 30 m (when nearer than us)
+constexpr float kDecoyRange = 8000.f;     // target pawns exist for players within 80 m of a zombie we run
+constexpr float kDecoyHitMax = 250.f;
+
+struct Decoy { UObject* pawn = nullptr; FVector pos{}; bool alive = false; };
+std::map<uint16_t, Decoy> decoys;  // by player id
+UObject* borrowedHumanMesh = nullptr;
+
+UObject* StaticsObj() { static UObject* s = nullptr; if (!IsValid(s)) s = FindObject("/Script/Engine.Default__GameplayStatics"); return s; }
+UObject* SpawnPlain(UObject* cls, const FVector& at, UObject* context) {
+    UObject* st = StaticsObj(); if (!cls || !st) return nullptr;
+    FTransform t; t.Translation = at;
+    Params begin(Fn(st, "BeginSpawningActorFromClass"));
+    begin.Set("WorldContextObject", context); begin.Set("ActorClass", cls); begin.Set("SpawnTransform", t); begin.SetBool("bNoCollisionFail", true);
+    Call(st, "BeginSpawningActorFromClass", &begin);
+    UObject* actor = begin.Get<UObject*>("ReturnValue"); if (!actor) return nullptr;
+    Params finish(Fn(st, "FinishSpawningActor")); finish.Set("Actor", actor); finish.Set("SpawnTransform", t);
+    Call(st, "FinishSpawningActor", &finish);
+    return actor;
+}
+UObject* HumanMesh() {
+    if (IsValid(borrowedHumanMesh)) return borrowedHumanMesh;
+    UObject* cls = FindClass("BendHumanPawn"); if (!cls) return nullptr;
+    for (int i = 0, n = NumObjects(); i < n; ++i) {
+        UObject* o = ObjectAt(i);
+        if (!o || (o->ObjectFlags & 0x10) || !IsValid(o) || !IsA(o, cls) || IsTargetPawn(o)) continue;
+        UObject* mesh = Prop<UObject*>(o, "Mesh");
+        if (IsValid(mesh)) if (UObject* sk = Field<UObject*>(mesh, off::Skinned_SkeletalMesh)) return borrowedHumanMesh = sk;
+    }
+    return nullptr;
+}
+void DestroyDecoy(Decoy& d) {
+    if (IsValid(d.pawn)) { if (UObject* c = Controller(d.pawn)) Call(c, "K2_DestroyActor"); Call(d.pawn, "K2_DestroyActor"); }
+    d.pawn = nullptr;
+}
+UObject* MakeDecoy(const FVector& at, UObject* localPawn) {
+    UObject* cls = FindClass("HumanBasePawn_C"); if (!cls) cls = FindClass("SurvivorPawn_C");
+    UObject* pawn = SpawnPlain(cls, at, localPawn);
+    if (!pawn) { dg::Log("zombies: target pawn: spawn failed (%s)", cls ? GetName(cls).c_str() : "no human pawn class loaded"); return nullptr; }
+    // The player's faction: enemies treat it as "a player".
+    const uint8_t faction = Prop<uint8_t>(localPawn, "pawnDefaultFaction");
+    SetProp<uint8_t>(pawn, "pawnDefaultFaction", faction);
+    UObject* c = Controller(pawn);
+    if (!c) if ((c = SpawnPlain(FindClass("BendHumanController"), at, localPawn))) { Params p(Fn(c, "Possess")); p.Set("InPawn", pawn); Call(c, "Possess", &p); c = Controller(pawn); }
+    if (c) {
+        if (auto f = Fn(c, "SetAIFactionType")) { Params p(f); p.Set<uint8_t>("eAIType", faction); Call(c, "SetAIFactionType", &p); }
+        if (UObject* brain = Prop<UObject*>(c, "BrainComponent"); IsValid(brain)) {
+            if (auto f = Fn(brain, "StopLogic")) { static std::wstring why = L"dgmp target"; FString s{why.c_str(), int32_t(why.size() + 1), int32_t(why.size() + 1)}; Params p(f); p.Set("Reason", s); Call(brain, "StopLogic", &p); }
+            BoolCall(brain, "SetComponentTickEnabled", "bEnabled", false);
+        }
+        if (UObject* path = Prop<UObject*>(c, "PathFollowingComponent"); IsValid(path)) BoolCall(path, "SetComponentTickEnabled", "bEnabled", false);
+        BoolCall(c, "SetActorTickEnabled", "bEnabled", false);
+    }
+    if (UObject* m = Movement(pawn)) BoolCall(m, "SetComponentTickEnabled", "bEnabled", false);
+    if (auto f = Fn(pawn, "SetMaxHealth")) { Params p(f); p.Set("NewMaxHealth", kDecoyHealth); Call(pawn, "SetMaxHealth", &p); }
+    SetProp<float>(pawn, "Health", kDecoyHealth);
+    // Humans aim and hit through skeleton bodies: borrow a human NPC's skeleton, then hide the mesh.
+    if (UObject* mesh = Prop<UObject*>(pawn, "Mesh"); IsValid(mesh)) {
+        if (UObject* sk = HumanMesh()) if (auto f = Fn(mesh, "SetSkeletalMesh")) { Params p(f); p.Set("NewMesh", sk); Call(mesh, "SetSkeletalMesh", &p); }
+        BoolCall(mesh, "SetHiddenInGame", "NewHidden", true);
+        if (auto f = Fn(mesh, "SetVisibility")) { Params p(f); p.SetBool("bNewVisibility", false); p.SetBool("bPropagateToChildren", true); Call(mesh, "SetVisibility", &p); }
+    }
+    dg::Log("zombies: target pawn %s (faction %d, controller %s)", GetName(pawn).c_str(), int(faction), c ? GetName(c->Class).c_str() : "none");
+    return pawn;
+}
+UObject* Blackboard(UObject* c) { UObject* bb = c ? Prop<UObject*>(c, "Blackboard") : nullptr; return IsValid(bb) ? bb : nullptr; }
+void BBObject(UObject* bb, const char* key, UObject* v) {
+    const FName k = FindName(key); auto f = Fn(bb, "SetValueAsObject"); if (k.Index < 0 || !f) return;
+    Params p(f); p.Set("KeyName", k); p.Set("ObjectValue", v); Call(bb, "SetValueAsObject", &p);
+}
+void BBBool(UObject* bb, const char* key, bool v) {
+    const FName k = FindName(key); auto f = Fn(bb, "SetValueAsBool"); if (k.Index < 0 || !f) return;
+    Params p(f); p.Set("KeyName", k); p.SetBool("BoolValue", v); Call(bb, "SetValueAsBool", &p);
+}
+void BBEnum(UObject* bb, const char* key, uint8_t v) {
+    const FName k = FindName(key); auto f = Fn(bb, "SetValueAsEnum"); if (k.Index < 0 || !f) return;
+    Params p(f); p.Set("KeyName", k); p.Set("EnumValue", v); Call(bb, "SetValueAsEnum", &p);
+}
+float Dist2(const FVector& a, const FVector& b) { const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z; return dx * dx + dy * dy + dz * dz; }
+
+void Target(UObject* zombiePawn, UObject* decoy) {
+    UObject* c = Controller(zombiePawn); UObject* bb = Blackboard(c); if (!bb) return;
+    BBObject(bb, "FireFocus", decoy); BBObject(bb, "Focus", decoy);
+    BBBool(bb, "ForceAttack", true); BBBool(bb, "TargetIsPlayer", true);
+    BBEnum(bb, "Awareness", 2);  // combat
+    if (auto f = Fn(c, "SetFireFocus")) { Params p(f); p.Set("FireFocus", decoy); Call(c, "SetFireFocus", &p); }
+}
+
+// Every frame on the client that runs zombies: target pawns for the players near them, their damage, and
+// the zombies' choice between us and them.
+void UpdateTargets(UObject* localPawn, net::Client& client) {
+    std::vector<std::pair<uint16_t, UObject*>> mine;  // zombie id, pawn: the ones our AI runs
+    for (auto& [id, z] : zeds) if (z.brain == 1 && !z.dead && IsValid(z.pawn) && Health(z.pawn) > 0) mine.push_back({id, z.pawn});
+    std::map<uint16_t, bool> keep;
+    if (!mine.empty()) for (const auto& b : mp::RemoteBodies()) {
+        if (!b.alive) continue;
+        bool nearAny = false;
+        for (auto& [id, pawn] : mine) if (Dist2(ActorPos(pawn), b.pos) < kDecoyRange * kDecoyRange) { nearAny = true; break; }
+        if (!nearAny) continue;
+        keep[b.id] = true;
+        Decoy& d = decoys[b.id]; d.pos = b.pos; d.alive = true;
+        if (d.pawn && !IsValid(d.pawn)) d.pawn = nullptr;
+        const FVector at{b.pos.X, b.pos.Y, b.pos.Z + 90.f};  // capsule centre over the feet
+        if (!d.pawn && !(d.pawn = MakeDecoy(at, localPawn))) continue;
+        if (auto f = Fn(d.pawn, "K2_SetActorLocation")) { Params p(f); p.Set("NewLocation", at); p.SetBool("bSweep", false); p.SetBool("bTeleport", true); Call(d.pawn, "K2_SetActorLocation", &p); }
+        const float hp = Health(d.pawn);
+        if (hp <= 0) { dg::Log("zombies: target pawn of player %u died; making a new one", unsigned(b.id)); DestroyDecoy(d); continue; }
+        if (hp < kDecoyHealth - 0.01f) {
+            const float dmg = std::fmin(kDecoyHealth - hp, kDecoyHitMax);
+            SetProp<float>(d.pawn, "Health", kDecoyHealth);
+            // Credited to the zombie of ours nearest to that player.
+            uint16_t by = 0; float best = 1e30f;
+            for (auto& [id, pawn] : mine) { const float dd = Dist2(ActorPos(pawn), at); if (dd < best) { best = dd; by = id; } }
+            if (by) { net::Writer w; w.Op(net::Msg::ZombieAttack); w.U16(by); w.U16(b.id); w.F32(dmg); client.SendZombie(w, true); dg::Log("zombies: zombie %u hit player %u for %.0f", unsigned(by), unsigned(b.id), dmg); }
+        }
+    }
+    for (auto it = decoys.begin(); it != decoys.end();) {
+        if (!keep.count(it->first)) { DestroyDecoy(it->second); it = decoys.erase(it); } else ++it;
+    }
+    if (decoys.empty()) return;
+    const FVector me = IsValid(localPawn) ? ActorPos(localPawn) : FVector{1e9f, 1e9f, 1e9f};
+    for (auto& [id, pawn] : mine) {
+        const FVector at = ActorPos(pawn);
+        const float dMe = Dist2(at, me);
+        UObject* best = nullptr; float bestD = std::fmin(dMe, kTargetRange * kTargetRange);
+        for (auto& [pid, d] : decoys) if (IsValid(d.pawn)) { const float dd = Dist2(at, d.pos); if (dd < bestD) { bestD = dd; best = d.pawn; } }
+        if (best) Target(pawn, best);
+    }
+}
+}  // namespace
+
+bool IsTargetPawn(UObject* pawn) { for (auto& [id, d] : decoys) if (d.pawn == pawn) return true; return false; }
+
 void Reset() {
+    for (auto& [id, d] : decoys) DestroyDecoy(d);
+    decoys.clear();
     for (auto& [id, z] : zeds) if (IsValid(z.pawn)) Despawn(z.pawn);
     zeds.clear(); myId = 0xFFFF;
 }
@@ -375,7 +522,7 @@ void OnMessage(net::Msg op, const uint8_t* data, size_t size) {
 
 void Net(double now, UObject* localPawn, net::Client& client, int world) {
     myId = client.localId();
-    if (zeds.empty() || !IsValid(localPawn)) return;
+    if (zeds.empty() || !IsValid(localPawn)) { for (auto& [id, d] : decoys) DestroyDecoy(d); decoys.clear(); return; }
     const FVector me = ActorPos(localPawn);
     net::Writer report; int reported = 0;
     const bool reportNow = now >= nextReport;
@@ -425,6 +572,7 @@ void Net(double now, UObject* localPawn, net::Client& client, int world) {
         }
     }
     if (reported) { report.buf[1] = uint8_t(reported); client.SendZombie(report, false); }
+    UpdateTargets(localPawn, client);
 }
 
 }  // namespace zombies

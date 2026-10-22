@@ -2252,6 +2252,11 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
 
 void Shutdown() { if (enabled) { DespawnAll(); client.Disconnect(); } }
 
+std::vector<RemoteBody> RemoteBodies() {
+    std::vector<RemoteBody> out;
+    for (auto& [id, g] : ghosts) if (g->Spawned() && IsValid(g->body)) out.push_back({id, g->lastMeshPos, !g->deadShown});
+    return out;
+}
 std::vector<UObject*> GhostActors() {
     std::vector<UObject*> out;
     for (auto& [id, g] : ghosts) {

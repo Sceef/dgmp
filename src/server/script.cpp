@@ -766,6 +766,12 @@ struct Api {
         if (zb) lua_pushinteger(L, zb->id); else lua_pushnil(L);
         return 1;
     }
+    // setZombieOwner(id, player): that player's game runs it (while it can); nil: the nearest player again
+    static int SetZombieOwner(lua_State* L) {
+        const auto id = uint16_t(luaL_checkinteger(L, 1));
+        Player* owner = lua_isnoneornil(L, 2) ? nullptr : &CheckPlayer(L, 2);
+        lua_pushboolean(L, Srv(L).SetZombieOwner(id, owner)); return 1;
+    }
     static int RemoveZombie(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveZombie(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
     static int GetZombie(lua_State* L) {
         const Zombie* z = Srv(L).FindZombie(uint16_t(luaL_checkinteger(L, 1)));
@@ -1787,7 +1793,7 @@ bool Script::Load(const std::string& modeId) {
 
     const luaL_Reg globals[] = {{"print", &Api::Log}, {"log", &Api::Log}, {"on", &Api::On}, {"command", &Api::Command}, {"players", &Api::Players},
                                 {"getPlayer", &Api::GetPlayer}, {"broadcast", &Api::Broadcast}, {"setTime", &Api::SetTime}, {"setWeather", &Api::SetWeather},
-                                {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
+                                {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"setZombieOwner", &Api::SetZombieOwner}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
                                 {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256}, {"passwordHash", &Api::PasswordHashLua}, {"passwordCheck", &Api::PasswordCheckLua},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},

@@ -213,6 +213,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
     case net::Msg::ZombieStates: OnZombieStates(*p, data + 1, size - 1); break;
     case net::Msg::ZombieHit: OnZombieHit(*p, data + 1, size - 1); break;
     case net::Msg::ZombieDied: OnZombieDied(*p, data + 1, size - 1); break;
+    case net::Msg::ZombieAttack: OnZombieAttack(*p, data + 1, size - 1); break;
     case net::Msg::Look: {
         // The client reports what it actually wears (its own default, or after an order).
         auto path = r.Str(net::kLookPathMax);

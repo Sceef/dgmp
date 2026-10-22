@@ -14,6 +14,10 @@ command("z", function(player, args)
     end
     player:message(("%d %s"):format(count, kind))
 end)
+command("zown", function(player, args)  -- /zown <id> [off]: this zombie is run by your game
+    local id, off = args:match("^(%d+)%s*(%a*)")
+    player:message(tostring(setZombieOwner(tonumber(id), off ~= "off" and player or nil)))
+end)
 command("zclear", function(player)
     for _, z in ipairs(zombies()) do removeZombie(z.id) end
 end)

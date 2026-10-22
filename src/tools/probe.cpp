@@ -10,7 +10,8 @@
 //       !ui <name> [json] (the mode's page sent dgmp.send(name, data)),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       Zombies (docs/zombies.md): the ones it owns walk toward it and are reported 10 times a second; !zhit <id> <damage>
-//       (we hurt its puppet), !zdie <id> (the one we own died); zombie messages are printed.
+//       (we hurt its puppet), !zdie <id> (the one we own died), !zatk <id> <player> <damage> (the one we own hurt that player);
+//       zombie messages are printed.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 //       Voice: !voice <seconds> [radio] sends dummy frames (20 a second) with the talk / radio key; voice heard is
 //       counted per speaker and route. --voice-echo [delay] [radio]: what others say near it, it says again after `delay`
@@ -202,6 +203,7 @@ int main() {
         struct ProbeZombie { float x = 0, y = 0, z = 0, health = 200; uint16_t owner = 0xFFFF; bool dead = false; int moves = 0; };
         std::map<uint16_t, ProbeZombie> zombies;
         double nextZombieReport = 0;
+        if (!c.on.damage) c.on.damage = [](uint16_t from, float amount, net::HitZone) { std::printf("* DAMAGE %.0f from %u\n", amount, from); };
         c.on.zombie = [&](net::Msg op, const uint8_t* data, size_t size) {
             net::Reader r(data, size);
             if (op == net::Msg::ZombieMoves) {
@@ -263,6 +265,7 @@ int main() {
                         }
                     }
                     else if (std::sscanf(s.c_str(), "!zhit %u %f", &id, &x) == 2) { net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(uint16_t(id)); w.F32(x); c.SendZombie(w, true); }
+                    else if (std::sscanf(s.c_str(), "!zatk %u %u %f", &id, &ok, &x) == 3) { net::Writer w; w.Op(net::Msg::ZombieAttack); w.U16(uint16_t(id)); w.U16(uint16_t(ok)); w.F32(x); c.SendZombie(w, true); }
                     else if (std::sscanf(s.c_str(), "!zdie %u", &id) == 1) { net::Writer w; w.Op(net::Msg::ZombieDied); w.U16(uint16_t(id)); c.SendZombie(w, true); }
                     else if (s == "!dead") { dead = true; nextState = 0; }
                     else if (s == "!alive") { dead = false; nextState = 0; }

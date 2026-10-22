@@ -19,6 +19,8 @@ constexpr float kSwitchMargin = 0.7f;     // ... nearer than 70 % of the owner's
 constexpr float kRelayRange = 25000.f;    // puppets are shown to players within 250 m
 constexpr double kCorpseTime = 30.0;      // a dead zombie is forgotten after this
 constexpr size_t kZombiesMax = 200;
+constexpr float kAttackReach = 1200.f;   // a zombie hurts players within 12 m of where its owner last said it is
+constexpr float kAttackMax = 250.f;      // one zombie hit on a player is never more
 
 float Dist2(const Player& p, const Zombie& z) {
     const float dx = p.state.x - z.x, dy = p.state.y - z.y, dz = p.state.z - z.z; return dx * dx + dy * dy + dz * dz;
@@ -50,6 +52,13 @@ bool Server::RemoveZombie(uint16_t id) {
     return true;
 }
 
+bool Server::SetZombieOwner(uint16_t id, Player* owner) {
+    auto it = zombies_.find(id);
+    if (it == zombies_.end()) return false;
+    it->second.pinned = owner ? owner->id : 0xFFFF;
+    return true;  // TickZombies hands it over
+}
+
 void Server::SendZombie(Player* to, const Zombie& z) {
     net::Writer w; w.Op(net::Msg::Zombie); w.U16(z.id); w.U8(uint8_t(net::ZombieOp::Add));
     w.Str(z.type); w.F32(z.x); w.F32(z.y); w.F32(z.z); w.F32(z.yaw); w.I32(z.world); w.U16(z.owner); w.F32(z.health);
@@ -73,7 +82,8 @@ void Server::TickZombies() {
         Player* best = nullptr; float bestD = cfg_.zombieOwnRange * cfg_.zombieOwnRange;
         for (auto& [pid, p] : players_) if (Eligible(*p, z)) { const float d = Dist2(*p, z); if (d < bestD) { bestD = d; best = p.get(); } }
         Player* next = owner;
-        if (!owner) next = best;
+        if (Player* pin = z.pinned != 0xFFFF ? Find(z.pinned) : nullptr; pin && Eligible(*pin, z)) next = pin;  // the mode chose
+        else if (!owner) next = best;
         else if (best && best != owner && bestD < Dist2(*owner, z) * kSwitchMargin * kSwitchMargin) {
             if (z.closer != best->id) { z.closer = best->id; z.closerSince = now; }
             else if (now - z.closerSince >= kSwitchDelay) next = best;
@@ -133,6 +143,24 @@ void Server::OnZombieHit(Player& p, const uint8_t* data, size_t size) {
     if (!owner || !owner->peer) return;
     net::Writer w; w.Op(net::Msg::Zombie); w.U16(id); w.U8(uint8_t(net::ZombieOp::Damage)); w.F32(std::min(damage, cfg_.maxHitDamage > 0 ? cfg_.maxHitDamage : damage)); w.U16(p.id);
     SendTo(owner->peer, w, true);
+}
+
+// The owner's game saw its zombie hurt another player: the target pawn standing in for that player there
+// lost health. Believed only from the zombie's owner, for a victim near the zombie, a few times a second.
+void Server::OnZombieAttack(Player& p, const uint8_t* data, size_t size) {
+    net::Reader r(data, size);
+    const uint16_t id = r.U16(), victimId = r.U16(); const float damage = r.F32();
+    if (!r.ok() || !std::isfinite(damage) || damage <= 0) return;
+    auto it = zombies_.find(id);
+    if (it == zombies_.end() || it->second.owner != p.id || it->second.dead) return;
+    Zombie& z = it->second;
+    Player* victim = Find(victimId);
+    if (!victim || victim == &p || !Eligible(*victim, z) || Dist2(*victim, z) > kAttackReach * kAttackReach) return;
+    const double now = Now();
+    if (now - z.lastAttackAt < 0.25) return;
+    z.lastAttackAt = now;
+    victim->lastAttacker = 0xFFFF;  // a zombie, not the last player who shot it, gets the kill
+    Damage(victim, std::min(damage, kAttackMax), nullptr);
 }
 
 void Server::OnZombieDied(Player& p, const uint8_t* data, size_t size) {
