@@ -29,7 +29,7 @@ constexpr double kTalkingFor = 0.3;       // a voice counts as talking this long
 double Clock() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 // ---------------------------------------------------------------- settings (DGMP.ini [Voice])
-struct Settings { int talkKey = 'N', radioKey = 'B'; float volume = 1.f; bool microphone = true; bool loaded = false; } settings;
+struct Settings { int talkKey = 'N', radioKey = 'B'; float volume = 1.f; bool microphone = true, openMic = false; bool loaded = false; } settings;
 
 int ParseKey(std::wstring k, int fallback) {
     for (auto& ch : k) ch = wchar_t(towupper(ch));
@@ -62,8 +62,9 @@ void LoadSettings() {
     GetPrivateProfileStringW(L"Voice", L"RadioKey", L"B", buf, 64, ini.c_str()); settings.radioKey = ParseKey(buf, 'B');
     settings.volume = std::clamp(int(GetPrivateProfileIntW(L"Voice", L"Volume", 100, ini.c_str())), 0, 200) / 100.f;
     settings.microphone = GetPrivateProfileIntW(L"Voice", L"Microphone", 1, ini.c_str()) != 0;
+    settings.openMic = GetPrivateProfileIntW(L"Voice", L"OpenMic", 0, ini.c_str()) != 0;
     dg::Log("Voice: talk %s, radio %s, volume %.0f%%, microphone %s", KeyName(settings.talkKey).c_str(), KeyName(settings.radioKey).c_str(),
-            settings.volume * 100, settings.microphone ? "on" : "off");
+            settings.volume * 100, !settings.microphone ? "off" : settings.openMic ? "always on" : "on");
 }
 
 // ---------------------------------------------------------------- Steam voice (the game's steam_api64.dll, flat API 1.48)
@@ -98,13 +99,19 @@ struct Capture {
     int key = 0;              // net::VoiceKey of this talk
     double nextPoll = 0;
     bool warned = false;
+    double since = 0; int frames = 0; size_t bytes = 0;  // this talk, for the log
 } cap;
+void LogTalk(double now) {
+    if (cap.frames) dg::Log("Voice: said %.1f s, %d frames, %.1f KB", now - cap.since, cap.frames, cap.bytes / 1024.0);
+    cap.since = now; cap.frames = 0; cap.bytes = 0;
+}
 std::vector<uint8_t> captureBuf(8192);
 
 void StopCapture(double now) {
     if (!cap.recording) return;
     if (steamVoice.Ready()) steamVoice.stop(steamVoice.user());
     cap.recording = false; cap.drainUntil = now + 0.5;
+    LogTalk(now);
 }
 
 void PollCapture(net::Client& client, double now) {
@@ -121,6 +128,8 @@ void PollCapture(net::Client& client, double now) {
     if (r != kVoiceOK || !written) return;
     if (written > net::kVoiceFrameMax) { dg::Log("Voice: frame of %u bytes dropped", written); return; }
     client.SendVoice(net::VoiceKey(cap.key), net::VoiceCodec::Steam, captureBuf.data(), written);
+    ++cap.frames; cap.bytes += written;
+    if (cap.recording && now - cap.since >= 30) LogTalk(now);  // an open microphone: now and then
 }
 
 // ---------------------------------------------------------------- playback
@@ -168,7 +177,15 @@ struct Speaker {
     net::VoiceRoute route = net::VoiceRoute::Near;
     float range = 2500;
     Filter filter;
+    double since = 0; int frames = 0; size_t bytes = 0; int peak = 0; uint64_t playedAt = 0;  // this talk, for the log
 };
+void LogHeard(uint16_t id, Speaker& s, double now) {
+    if (!s.frames) return;
+    XAUDIO2_VOICE_STATE st{}; s.src->GetState(&st);
+    dg::Log("Voice: heard %u for %.1f s (route %d): %d frames, %.1f KB, peak %d%%, %.1f s played", id, s.last - s.since, int(s.route), s.frames,
+            s.bytes / 1024.0, s.peak * 100 / 32768, double(st.SamplesPlayed - s.playedAt) / kRate);
+    s.frames = 0; s.bytes = 0; s.peak = 0; s.playedAt = st.SamplesPlayed; s.since = now;
+}
 std::map<uint16_t, Speaker> speakers;
 std::vector<int16_t> pcm(kRate);  // one second
 
@@ -210,7 +227,10 @@ void OnFrame(uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, float ra
         s.src->Start();
     }
     if (route != s.route) s.filter = {};
+    if (!s.frames) s.since = now;
     s.route = route; s.range = range; s.last = now;
+    ++s.frames; s.bytes += size;
+    for (uint32_t i = 0; i < written / sizeof(int16_t); ++i) s.peak = std::max(s.peak, std::abs(int(pcm[i])));
     std::vector<int16_t> samples(pcm.begin(), pcm.begin() + written / sizeof(int16_t));
     if (route != net::VoiceRoute::Near) s.filter.Run(samples.data(), samples.size(), route == net::VoiceRoute::Radio);
     XAUDIO2_VOICE_STATE st{}; s.src->GetState(&st, XAUDIO2_VOICE_NOSAMPLESPLAYED);
@@ -239,12 +259,12 @@ void Update(net::Client& client, bool canTalk, const FVector& camPos, const FRot
     auto down = [&](int vk) { return vk && focus && (GetAsyncKeyState(vk) & 0x8000) != 0; };
     const bool on = (setupFlags & net::VoiceOn) && settings.microphone && canTalk && !overlay::Typing();
     const bool radioHeld = on && down(settings.radioKey) && (setupFlags & net::VoiceRadio);
-    const bool talkHeld = on && (down(settings.talkKey) || radioHeld);
+    const bool talkHeld = on && (down(settings.talkKey) || radioHeld || settings.openMic);
     const int key = radioHeld ? int(net::VoiceKey::Radio) : int(net::VoiceKey::Talk);
     if (talkHeld && !(setupFlags & net::VoiceMuted) && steamVoice.Ready()) {
         if (!cap.recording) {
             steamVoice.start(steamVoice.user());
-            cap.recording = true; cap.drainUntil = 0; cap.nextPoll = now + kSendEvery;
+            cap.recording = true; cap.drainUntil = 0; cap.nextPoll = now + kSendEvery; cap.since = now;
         }
         cap.key = key;
     } else StopCapture(now);
@@ -265,6 +285,7 @@ void Update(net::Client& client, bool canTalk, const FVector& camPos, const FRot
             while (s.queued.size() > st.BuffersQueued) s.queued.pop_front();
             // Gathered too little and nothing more came: play what there is.
             if (!s.pending.empty() && now - s.pendingSince >= kPrebuffer * 1.5) { auto p = std::move(s.pending); s.pending.clear(); Submit(s, std::move(p)); }
+            if (s.frames && now - s.last > 1) LogHeard(it->first, s, now);
             if (now - s.last > 5 && !st.BuffersQueued) { s.src->DestroyVoice(); it = speakers.erase(it); continue; }
             float gain = settings.volume;
             X3DAUDIO_EMITTER emitter{}; emitter.ChannelCount = 1; emitter.CurveDistanceScaler = 1; emitter.OrientFront = {0, 0, 1}; emitter.OrientTop = {0, 1, 0};
