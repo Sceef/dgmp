@@ -1,7 +1,0 @@
-{"carries":[
-{"key":"dock1","model":"crate","tag":"cargo","x":-85450,"y":-302300,"yaw":30,"z":-5348},
-{"key":"dock2","model":"crate","roll":"drop","tag":"cargo","x":-85380,"y":-302250,"yaw":0,"z":-5348},
-{"key":"cool1","model":"cooler","tag":"test","x":-85300,"y":-301760,"yaw":0,"z":-5340},
-{"key":"case1","model":"medcase","tag":"test","x":-85300,"y":-301700,"yaw":0,"z":-5340},
-{"key":"cent1","model":"centrifuge","roll":"break","tag":"test","x":-85300,"y":-301820,"yaw":0,"z":-5340}
-]}
