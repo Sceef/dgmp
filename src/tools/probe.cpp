@@ -7,6 +7,7 @@
 //       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
 //       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll),
 //       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
+//       !ui <name> [json] (the mode's page sent dgmp.send(name, data)),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 //       Voice: !voice <seconds> [radio] sends dummy frames (20 a second) with the talk / radio key; voice heard is
@@ -113,6 +114,15 @@ int main() {
             if (autoUi) c.SendDialogResponse(d.id, true, d.items.empty() ? -1 : int(d.items.size()) - 1, "typed by probe");
         };
         c.on.hud = [](const std::string& id, const std::string& json) { std::printf("* HUD [%s] %s\n", id.c_str(), json.empty() ? "(removed)" : json.c_str()); };
+        c.on.uiList = [](const std::vector<std::pair<std::string, std::string>>& files) {
+            std::printf("* UI files:"); for (auto& f : files) std::printf(" %s", f.first.c_str()); std::printf("\n");
+        };
+        c.on.ui = [](net::UiOp op, const std::string& name, const std::string& text, bool flag) {
+            if (op == net::UiOp::Open) std::printf("* UI open %s%s\n", text.c_str(), flag ? " (focus)" : "");
+            else if (op == net::UiOp::Close) std::printf("* UI close\n");
+            else if (op == net::UiOp::Focus) std::printf("* UI focus %s\n", flag ? "on" : "off");
+            else std::printf("* UI event %s %s\n", name.c_str(), text.c_str());
+        };
         c.on.interaction = [&](uint16_t id, const net::Client::Events::InteractionInfo* in) {
             if (!in) { std::printf("* INTERACTION %u removed\n", id); return; }
             std::printf("* INTERACTION %u at %.0f %.0f %.0f r=%.0f key=%c [%s]\n", id, in->x, in->y, in->z, in->radius, in->key, in->text.c_str());
@@ -205,6 +215,10 @@ int main() {
                     else if (s.rfind("!hit ", 0) == 0) {
                         unsigned zone = 0; float dmg = 0; char weapon[128] = "";
                         if (std::sscanf(s.c_str(), "!hit %u %f %u %127s", &id, &dmg, &zone, weapon) >= 2) c.SendHit(uint16_t(id), dmg, net::HitZone(zone), weapon);
+                    }
+                    else if (s.rfind("!ui ", 0) == 0) {
+                        const auto rest = s.substr(4); const auto sp = rest.find(' ');
+                        c.SendUiMessage(rest.substr(0, sp), sp == std::string::npos ? "null" : rest.substr(sp + 1));
                     }
                     else if (s.rfind("!shot ", 0) == 0) c.SendShot(s.substr(6), px, py, pz);
                     else if (s.rfind("!voice ", 0) == 0) {
