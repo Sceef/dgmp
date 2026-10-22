@@ -56,6 +56,10 @@ struct Config {
     int voiceRate = 8000;
     int voiceListeners = 8;
     int voiceBandwidth = 0;
+    // Freakers (docs/zombies.md, experimental): createZombie works only with Zombies=1; a zombie is run by
+    // the client of the player nearest to it within zombieOwnRange (units).
+    bool zombies = false;
+    float zombieOwnRange = 15000;
 };
 
 // How a player is in a voice channel: talks to it with the radio key and hears it as a radio; everything it
@@ -169,6 +173,23 @@ struct Blip {
     int32_t world = -1;
     uint16_t only = 0xFFFF;                   // shown to this player only (0xFFFF: everyone)
     double onlyJoinedAt = 0;
+};
+
+// A freaker of the game (docs/zombies.md). The server keeps where it is; the client of its owner (the
+// nearest player) runs the game's AI on it and reports back, the others show a puppet that follows.
+struct Zombie {
+    uint16_t id = 0;
+    std::string type = "Swarmer";             // EAIFactionType name the clients spawn (Swarmer, Newt, ...)
+    float x = 0, y = 0, z = 0, yaw = 0, speed = 0;
+    float health = -1;                        // last the owner reported (-1: not yet; the game's own)
+    int32_t world = 0;
+    uint16_t owner = 0xFFFF;                  // the player whose client runs it (0xFFFF: nobody near)
+    double ownerSince = 0, closerSince = 0;   // owner hysteresis: another player has been nearer since then
+    uint16_t closer = 0xFFFF;
+    uint16_t lastAttacker = 0xFFFF;           // the player who hurt it last (the killer when it dies)
+    bool dead = false;
+    double diedAt = 0;
+    uint8_t montageSeq = 0; std::string montage;
 };
 
 // A character standing in the world for the mode (shopkeeper, guard): a look, an animation, a name.
@@ -488,6 +509,12 @@ public:
     bool JoinVoiceChannel(Player& p, const std::string& name, VoiceJoin how);  // false: a bad name or too many
     void LeaveVoiceChannel(Player& p, const std::string& name);              // "": all of them
     static const char* Talking(const Player& p);   // "talk", "radio" or null
+    // Freakers (src/server/zombies.cpp, docs/zombies.md); null / false when Zombies=0
+    const Zombie* CreateZombie(const std::string& type, float x, float y, float z, float yaw, int32_t world);
+    bool RemoveZombie(uint16_t id);
+    const Zombie* FindZombie(uint16_t id) const { auto it = zombies_.find(id); return it == zombies_.end() ? nullptr : &it->second; }
+    const std::map<uint16_t, Zombie>& Zombies() const { return zombies_; }
+    bool ZombiesOn() const { return cfg_.zombies; }
     Player* AddBot(const std::string& nick);
     void RemoveBots();
     bool ReloadMode();
@@ -542,6 +569,12 @@ private:
     void RelayPose(Player& from, const uint8_t* payload, size_t size);
     void OnVoice(Player& from, const uint8_t* payload, size_t size);
     void TickVoice();                              // talks that ended (voice event), speakers no longer heard
+    void TickZombies();                            // owners (nearest player), dead ones removed
+    void OnZombieStates(Player& p, const uint8_t* data, size_t size);
+    void OnZombieHit(Player& p, const uint8_t* data, size_t size);
+    void OnZombieDied(Player& p, const uint8_t* data, size_t size);
+    void SendZombie(Player* to, const Zombie& z);  // to null: everyone
+    void ZombiesPlayerGone(uint16_t id);           // its zombies go to the next nearest
     void SendVoiceSetup(Player& p);
     void VoiceStats();                             // console: voice
     float voiceRange_ = 2500;
@@ -586,6 +619,8 @@ private:
     void LoadSounds();
     void LoadProps();
     std::map<uint16_t, Actor> actors_;
+    std::map<uint16_t, Zombie> zombies_;
+    uint16_t nextZombie_ = 1;
     std::map<uint16_t, Vehicle> vehicles_;
     std::vector<ImageFile> images_;
     void LoadImages(const std::string& mode);

@@ -146,7 +146,7 @@ void Server::Run() {
         TickVehicles();
         TickObjects();
         if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
-        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); }
+        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
         if (now >= nextReloadCheck) {
@@ -186,6 +186,7 @@ void Server::RemovePlayer(Player* p, uint8_t reason) {
         LeaveVehicle(p, nullptr);  // its vehicle stays where it rode it
         if (p->carrying) LoseCarry(*p, p->state.x, p->state.y, p->state.z - 90.f, p->state.yaw, "quit");  // its box falls where it stood
         script_->PlayerQuit(*p, reason);
+        ZombiesPlayerGone(id);
         net::Writer w; w.Op(net::Msg::PlayerQuit); w.U16(id); w.U8(reason);
         players_.erase(id);
         Send(nullptr, w, true);
@@ -209,6 +210,9 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
     case net::Msg::Chat: { auto text = r.Str(net::kChatMax); if (r.ok()) OnChat(*p, Trim(text)); break; }
     case net::Msg::Pose: RelayPose(*p, data + 1, size - 1); break;
     case net::Msg::Voice: OnVoice(*p, data + 1, size - 1); break;
+    case net::Msg::ZombieStates: OnZombieStates(*p, data + 1, size - 1); break;
+    case net::Msg::ZombieHit: OnZombieHit(*p, data + 1, size - 1); break;
+    case net::Msg::ZombieDied: OnZombieDied(*p, data + 1, size - 1); break;
     case net::Msg::Look: {
         // The client reports what it actually wears (its own default, or after an order).
         auto path = r.Str(net::kLookPathMax);
@@ -631,6 +635,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
     for (auto& [aid, a] : actors_) SendActor(peer, a);
+    for (auto& [zid, z] : zombies_) SendZombie(p, z);
     for (auto& [oid, o] : objects_) SendObject(peer, o);
     for (auto& [bid, b] : blips_) if (b.only == 0xFFFF) SendBlip(p, b);
     for (auto& [cid, c] : carries_) SendCarry(p, c);
@@ -2261,6 +2266,9 @@ bool Server::ReloadMode() {
     // Voice channels, ranges and mutes are the mode's: the new code sets them again.
     voiceRange_ = cfg_.voiceRange;
     for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
+    ids.clear();
+    for (auto& [id, z] : zombies_) ids.push_back(id);
+    for (auto id : ids) RemoveZombie(id);
     ids.clear();
     for (auto& [id, in] : interactions_) ids.push_back(id);
     for (auto id : ids) RemoveInteraction(id);

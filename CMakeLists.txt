@@ -68,7 +68,7 @@ endif()
 
 # ---- dedicated server ----
 find_package(Threads REQUIRED)
-add_executable(dgmp-server src/server/main.cpp src/server/server.cpp src/server/script.cpp src/server/platform.cpp src/server/security.cpp src/server/master.cpp src/server/voice.cpp)
+add_executable(dgmp-server src/server/main.cpp src/server/server.cpp src/server/script.cpp src/server/platform.cpp src/server/security.cpp src/server/master.cpp src/server/voice.cpp src/server/zombies.cpp)
 target_link_libraries(dgmp-server PRIVATE lua enet Threads::Threads)
 if(NOT WIN32)  # on Windows build.bat owns dgmp-server.exe in the project folder
   set_target_properties(dgmp-server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})

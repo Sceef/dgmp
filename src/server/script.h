@@ -61,6 +61,7 @@ public:
     bool CarryDrop(Player& p, uint16_t carry, float x, float y, float z, const char* reason);
     void VehicleArrive(uint16_t vehicle);  // its NPC got to the end of the way (driveVehicle onArrive, vehicleArrive)
     void ObjectMoved(uint16_t object);     // moveObject got there: its onArrive and the objectMoved event
+    void ZombieDeath(uint16_t zombie, Player* killer);  // zombieDeath (killer null: nobody hurt it)
     void AnimEnd(Player& p, const char* reason);
     // [F] at a door of the mode: 0 no say (its lock decides), 1 refused, 2 allowed even when locked.
     int DoorUse(Player& p, const std::string& door, const char* side);

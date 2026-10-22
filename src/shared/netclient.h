@@ -71,6 +71,8 @@ public:
         // this server's voice setup (VoiceFlags, the channel names the radio key / a call talk to).
         std::function<void(uint16_t id, VoiceRoute route, VoiceCodec codec, float range, const uint8_t* frame, size_t size)> voice;
         std::function<void(uint8_t flags, const std::string& radio, const std::string& call)> voiceSetup;
+        // Freakers (src/zombies.cpp parses them): Msg::Zombie / Msg::ZombieMoves, without the op byte
+        std::function<void(Msg op, const uint8_t* payload, size_t size)> zombie;
         // choices: (name, look) to pick from; empty: the full character creator
         // place: x, y, z, yaw where the server put the player to choose (null: where it is)
         std::function<void(bool cancel, const std::string& title, const std::string& families, const std::string& current,
@@ -122,6 +124,7 @@ public:
     void SendPose(const std::vector<uint8_t>& payload);  // payload without the op byte
     void SendInventory(const std::vector<std::pair<std::string, int>>& items);
     void SendHit(uint16_t victim, float damage, HitZone zone, const std::string& weapon);
+    void SendZombie(const Writer& w, bool reliable);  // a Msg::Zombie* message src/zombies.cpp wrote
     void SendGameEvent(GameEventType type, const std::string& cls, const std::string& detail, const std::string& id, float x, float y, float z);
     void SendLook(const std::string& lookPath);
     void SendGear(const std::vector<uint8_t>& gear);  // GearList payload

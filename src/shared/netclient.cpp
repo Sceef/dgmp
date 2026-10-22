@@ -508,6 +508,9 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.hint) on.hint(title, text, image, pause != 0, seconds);
         break;
     }
+    case Msg::Zombie: case Msg::ZombieMoves:
+        if (on.zombie) on.zombie(static_cast<Msg>(data[0]), data + 1, size - 1);
+        break;
     default: break;
     }
 }
@@ -535,6 +538,10 @@ void Client::SendHit(uint16_t victim, float damage, HitZone zone, const std::str
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::Hit); w.U16(victim); w.F32(damage); w.U8(uint8_t(zone)); w.Str(weapon.substr(0, kItemKeyMax));
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendZombie(const Writer& w, bool reliable) {
+    if (status_ != Status::Connected || w.buf.empty()) return;
+    enet_peer_send(peer_, reliable ? kChanReliable : kChanState, enet_packet_create(w.buf.data(), w.buf.size(), reliable ? ENET_PACKET_FLAG_RELIABLE : 0));
 }
 void Client::SendGameEvent(GameEventType type, const std::string& cls, const std::string& detail, const std::string& id, float x, float y, float z) {
     if (status_ != Status::Connected) return;

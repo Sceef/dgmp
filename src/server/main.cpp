@@ -192,6 +192,8 @@ int Run(const std::vector<std::string>& args, const std::filesystem::path& root)
     cfg.voiceRate = std::max(500, std::atoi(Ini(ini, "VoiceRate", "8000").c_str()));
     cfg.voiceListeners = std::max(1, std::atoi(Ini(ini, "VoiceListeners", "8").c_str()));
     cfg.voiceBandwidth = std::max(0, std::atoi(Ini(ini, "VoiceBandwidth", "0").c_str()));
+    cfg.zombies = Ini(ini, "Zombies", "0") == "1";
+    cfg.zombieOwnRange = std::max(20.f, static_cast<float>(std::atof(Ini(ini, "ZombieOwnRange", "150").c_str()))) * 100.f;
     if (auto x = Ini(ini, "SpawnX", ""); !x.empty()) {
         cfg.spawnX = static_cast<float>(std::atof(x.c_str()));
         cfg.spawnY = static_cast<float>(std::atof(Ini(ini, "SpawnY", "0").c_str()));

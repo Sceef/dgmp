@@ -50,6 +50,10 @@ enum class Msg : uint8_t {
     VehicleExit = 15,  // u16 vehicleId, VehicleState: the player got off it, here (a passenger: the state is ignored)
     VehicleState = 16, // u16 vehicleId, VehicleState: where the vehicle it drives is now (about every second)
     ImageRequest = 17, // str name: send me this image of the mode (ImageList: not in my cache)
+    // Freakers (docs/zombies.md): the client that owns a zombie runs its AI and reports it
+    ZombieStates = 30, // u8 n, n x ZombieState: the zombies this client owns, where they are now (unreliable, ~10 Hz)
+    ZombieHit = 31,    // u16 zombieId, f32 damage: this player hurt a zombie another client owns (its puppet here)
+    ZombieDied = 32,   // u16 zombieId: a zombie this client owns died
     UiRequest = 40,   // str path: send me this file of the mode's HTML UI (UiList: not in my cache)
     UiMessage = 41,   // str name, str json: the mode's page sent a message (dgmp.send) to the server's Lua (uiMessage)
     Shot = 20,        // str weapon class, f32 x,y,z: this player fired (relayed to the players nearby as PlayerShot)
@@ -116,6 +120,9 @@ enum class Msg : uint8_t {
     Corpse = 84,      // u16 playerId: that player died where it stands now; leave a body there
     WorldItem = 83,   // u16 id, u8 op (1 add: str itemKey, i32 count, f32 x,y,z, f32 yaw; 2 remove): a pickup placed by the mode
     PlayerVoice = 111, // u16 id, u8 VoiceRoute, u8 VoiceCodec, f32 range (units: Near fades out there), bytes: that player's voice (kChanVoice)
+    Zombie = 130,     // u16 id, u8 ZombieOp: Add (str type, f32 x,y,z,yaw, i32 world, u16 owner (0xFFFF none), f32 health (<0: the game's)),
+                      // Owner (u16 owner), Damage (f32 damage, u16 attacker; to the owner), Died (u16 killer, 0xFFFF none), Remove
+    ZombieMoves = 131, // u8 n, n x ZombieState: zombies other clients own, for their puppets here (unreliable)
     VoiceSetup = 112, // u8 VoiceFlags, str radio, str call: voice chat on this server and the channels you talk to (names for the HUD)
     Marker = 80,      // u16 id, u8 op (1 add/update: f32 x,y,z, u8 category, u8 style, u8 route, str icon, str title, str description; 2 remove)
 };
@@ -131,6 +138,11 @@ constexpr size_t kVoiceNameMax = 64;
 
 enum QuitReason : uint8_t { QuitLeft = 0, QuitTimeout = 1, QuitKicked = 2 };
 // Gameplay events the client reports (see src/gameevents.cpp for where each comes from).
+enum class ZombieOp : uint8_t { Add = 1, Owner = 2, Damage = 3, Died = 4, Remove = 5 };
+// One zombie's state: u16 id, f32 x,y,z, f32 yaw, f32 speed (units/s), f32 health, u8 montageSeq, str montage
+// (the attack/reaction animation playing, asset path; repeated while it plays so a lost packet does not drop it).
+struct ZombieState { uint16_t id = 0; float x = 0, y = 0, z = 0, yaw = 0, speed = 0, health = 0; uint8_t montageSeq = 0; std::string montage; };
+constexpr size_t kZombieTypeMax = 32, kZombieMontageMax = 200, kZombiesPerPacket = 24;
 enum class GameEventType : uint8_t { Pickup = 1, Search = 2, Body = 3, Interact = 4, Door = 5, Explosion = 6, Fire = 7, Carry = 8,
                                     Respawned = 9, Died = 10 };  // the player died and the game gave it a new body (it reloads a checkpoint)
 enum class ItemAction : uint8_t { Give = 1, Take = 2, SetAmmo = 3, TakeWeapons = 4, Clear = 5, TakeTools = 6, GiveReplace = 7 };  // GiveReplace: the weapon it displaces vanishes instead of dropping
