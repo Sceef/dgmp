@@ -112,6 +112,7 @@ constexpr size_t kHelicopterSeats = 4;
 
 // An image of the mode (modes/<mode>/images): PNG, JPG or GIF, sent to the clients that lack it.
 struct ImageFile { std::string name, hash, data; };
+// A file of the mode's HTML UI (modes/<mode>/ui, docs/webui.md) is sent the same way (name: its path there).
 
 // A picture standing at a point of the world (drawn over the game, facing the screen).
 struct Icon {
@@ -251,6 +252,7 @@ struct Player {
     uint16_t dialogId = 0;                         // the dialog open on its screen (0: none)
     net::DialogStyle dialogStyle = net::DialogStyle::MsgBox;
     std::vector<std::string> dialogItems;          // a list dialog's lines (its answer names one)
+    double uiWindow = 0; int uiCount = 0;          // page message rate limit (UiMessage)
     bool inWardrobe = false, wardrobeReturn = true; // moved to the mode's skin choosing place; goes back after
     float backX = 0, backY = 0, backZ = 0, backYaw = 0;
     double poseWindow = 0; int posesInWindow = 0;  // relay rate limit
@@ -419,6 +421,10 @@ public:
     std::string ResolveSkinOrLook(const std::string& want) const;  // skins.json id, "skin:", look name or path; "" if unknown
     std::string ResolveAnim(const std::string& nameOrPath) const;  // short name from data/anims.txt or full path; "" if unknown
     bool HasImage(const std::string& name) const { for (auto& i : images_) if (i.name == name) return true; return false; }
+    // The mode's HTML UI (docs/webui.md): a page of modes/<mode>/ui on the player's screen. Open: name = page,
+    // flag = focus; Close; Focus: flag; Event: name, text = json for the page's dgmp.on(name).
+    bool HasUiFile(const std::string& path) const { for (auto& f : uiFiles_) if (f.name == path) return true; return false; }
+    void Ui(Player* p, net::UiOp op, const std::string& name = {}, const std::string& text = {}, bool flag = false);
     uint16_t AddIcon(Icon i);
     bool UpdateIcon(const Icon& i);
     bool RemoveIcon(uint16_t id);
@@ -584,6 +590,10 @@ private:
     std::vector<ImageFile> images_;
     void LoadImages(const std::string& mode);
     void SendImageList(Player* to);    // null: everyone
+    std::vector<ImageFile> uiFiles_;
+    void LoadUiFiles(const std::string& mode);
+    void SendUiList(Player* to);       // null: everyone
+    void SendFileParts(Player* to, net::Msg op, const ImageFile& f);
     std::map<uint16_t, Icon> icons_;
     uint16_t nextIcon_ = 1;
     void SendIcon(_ENetPeer* peer, const Icon& i);

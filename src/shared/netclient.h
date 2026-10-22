@@ -96,6 +96,10 @@ public:
         std::function<void(uint16_t id)> vehicleEject;
         std::function<void(const std::vector<std::pair<std::string, std::string>>& images)> imageList;  // (name, sha256)
         std::function<void(const std::string& name, int part, int parts, const std::string& bytes)> imageData;
+        std::function<void(const std::vector<std::pair<std::string, std::string>>& files)> uiList;  // the mode's HTML UI: (path, sha256)
+        std::function<void(const std::string& path, int part, int parts, const std::string& bytes)> uiData;
+        // Open: text = page, flag = focus; Close; Focus: flag; Event: name, text = json
+        std::function<void(UiOp op, const std::string& name, const std::string& text, bool flag)> ui;
         struct IconInfo { float x, y, z, size, distance; int world; uint32_t color; std::string image, text; bool throughWalls = false; };
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
         struct CarryInfo { std::string model; float x, y, z, yaw; int world; uint16_t carrier; uint8_t roll = 0; };  // roll: CarryRoll
@@ -129,6 +133,8 @@ public:
     void SendShot(const std::string& weaponClass, float x, float y, float z);
     void SendVoice(VoiceKey key, VoiceCodec codec, const uint8_t* frame, size_t size);  // unreliable, kChanVoice
     void SendImageRequest(const std::string& name);
+    void SendUiRequest(const std::string& path);
+    void SendUiMessage(const std::string& name, const std::string& json);
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
     void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);
 

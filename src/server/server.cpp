@@ -329,15 +329,22 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
     case net::Msg::ImageRequest: {
         const auto name = r.Str(128);
         if (!r.ok()) break;
-        for (auto& img : images_) if (img.name == name) {
-            constexpr size_t kChunk = 60000;
-            const size_t parts = std::max<size_t>(1, (img.data.size() + kChunk - 1) / kChunk);
-            for (size_t i = 0; i < parts; ++i) {
-                net::Writer w; w.Op(net::Msg::ImageData); w.Str(img.name); w.U16(uint16_t(i)); w.U16(uint16_t(parts)); w.Str(img.data.substr(i * kChunk, kChunk));
-                Send(p, w, true);
-            }
-            break;
-        }
+        for (auto& img : images_) if (img.name == name) { SendFileParts(p, net::Msg::ImageData, img); break; }
+        break;
+    }
+    case net::Msg::UiRequest: {
+        const auto path = r.Str(net::kUiPathMax);
+        if (!r.ok()) break;
+        for (auto& f : uiFiles_) if (f.name == path) { SendFileParts(p, net::Msg::UiData, f); break; }
+        break;
+    }
+    case net::Msg::UiMessage: {
+        const auto name = r.Str(net::kUiNameMax); const auto json = r.Str(net::kUiFromPageMax);
+        if (!r.ok() || name.empty()) break;
+        const double now = Now();
+        if (now - p->uiWindow >= 1.0) { p->uiWindow = now; p->uiCount = 0; }
+        if (++p->uiCount > 30) break;  // a page flooding the server
+        script_->UiMessage(*p, name, json);
         break;
     }
     case net::Msg::CarryAction: OnCarryAction(*p, r); break;
@@ -630,6 +637,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     for (auto& [vid, v] : vehicles_) { SendVehicle(p, v); if (!v.route.empty()) SendRoute(p, v); }
     SendImageList(p);
     for (auto& [iid, ic] : icons_) SendIcon(peer, ic);
+    SendUiList(p);
     if (!watchedKeys_.empty()) SendWatchedKeys(p);
     if (timeHours_ >= 0) { net::Writer t; t.Op(net::Msg::SetTime); t.F32(timeHours_); t.U8(timePaused_); SendTo(peer, t, true); }
     if (weather_ != -2) { net::Writer t; t.Op(net::Msg::SetWeather); t.I32(weather_); SendTo(peer, t, true); }
@@ -735,6 +743,7 @@ void Server::LoadEnvironment(const std::string& mode) {
     LoadModeSkins(mode);
     LoadImages(mode);
     LoadWorldActors(mode);
+    LoadUiFiles(mode);
     LoadCarries(mode);
     LoadZones(mode);
     std::ifstream in(root_ / "modes" / mode / "world.json", std::ios::binary);
@@ -1305,6 +1314,54 @@ void Server::SendImageList(Player* to) {
     net::Writer w; w.Op(net::Msg::ImageList); w.U16(uint16_t(std::min<size_t>(images_.size(), 4000)));
     for (size_t i = 0; i < images_.size() && i < 4000; ++i) { w.Str(images_[i].name); w.Str(images_[i].hash); }
     Send(to, w, true);
+}
+void Server::SendFileParts(Player* to, net::Msg op, const ImageFile& f) {
+    constexpr size_t kChunk = 60000;
+    const size_t parts = std::max<size_t>(1, (f.data.size() + kChunk - 1) / kChunk);
+    for (size_t i = 0; i < parts; ++i) {
+        net::Writer w; w.Op(op); w.Str(f.name); w.U16(uint16_t(i)); w.U16(uint16_t(parts)); w.Str(f.data.substr(i * kChunk, kChunk));
+        Send(to, w, true);
+    }
+}
+// The mode's HTML UI: modes/<mode>/ui/** (web files only), up to 4 MB each and 32 MB in all. Paths use '/'.
+void Server::LoadUiFiles(const std::string& mode) {
+    uiFiles_.clear();
+    static const char* kTypes[] = {".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                                   ".woff", ".woff2", ".ttf", ".otf", ".mp3", ".ogg", ".wav", ".txt"};
+    const auto dir = root_ / "modes" / mode / "ui";
+    std::error_code ec;
+    size_t total = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+        if (!it->is_regular_file()) continue;
+        const std::string path = std::filesystem::relative(it->path(), dir, ec).generic_string();
+        std::string ext = it->path().extension().string(); for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (std::none_of(std::begin(kTypes), std::end(kTypes), [&](const char* t) { return ext == t; })) continue;
+        bool plain = !path.empty() && path.size() <= net::kUiPathMax && path.find("..") == std::string::npos;
+        for (char c : path) plain &= std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.' || c == '/';
+        if (!plain) { Log("modes/%s/ui/%s: names are latin letters, digits, _ - . / (skipped)", mode.c_str(), path.c_str()); continue; }
+        const auto size = it->file_size(ec);
+        if (ec || size > 4u * 1024 * 1024 || total + size > 32u * 1024 * 1024) { Log("modes/%s/ui/%s: too large (skipped)", mode.c_str(), path.c_str()); continue; }
+        std::ifstream in(it->path(), std::ios::binary);
+        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        total += data.size();
+        uiFiles_.push_back({path, Sha256Hex(data.data(), data.size()), std::move(data)});
+        if (uiFiles_.size() >= 2000) break;
+    }
+    if (!uiFiles_.empty()) Log("Mode UI files: %zu (%zu KB)", uiFiles_.size(), total / 1024);
+    SendUiList(nullptr);
+}
+void Server::SendUiList(Player* to) {
+    net::Writer w; w.Op(net::Msg::UiList); w.U16(uint16_t(uiFiles_.size()));
+    for (auto& f : uiFiles_) { w.Str(f.name); w.Str(f.hash); }
+    Send(to, w, true);
+}
+void Server::Ui(Player* p, net::UiOp op, const std::string& name, const std::string& text, bool flag) {
+    if (!p || p->bot) return;
+    net::Writer w; w.Op(net::Msg::Ui); w.U8(uint8_t(op));
+    if (op == net::UiOp::Open) { w.Str(name); w.U8(flag); }
+    else if (op == net::UiOp::Focus) w.U8(flag);
+    else if (op == net::UiOp::Event) { w.Str(name); w.Str(text); }
+    Send(p, w, true);
 }
 void Server::SendIcon(ENetPeer* peer, const Icon& i) {
     net::Writer w; w.Op(net::Msg::Icon); w.U16(i.id); w.U8(1);

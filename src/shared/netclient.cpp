@@ -368,6 +368,27 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.imageData) on.imageData(name, part, parts, bytes);
         break;
     }
+    case Msg::UiList: {
+        std::vector<std::pair<std::string, std::string>> list;
+        const int n = r.U16();
+        for (int i = 0; i < n && r.ok(); ++i) { auto path = r.Str(kUiPathMax); auto hash = r.Str(64); list.emplace_back(std::move(path), std::move(hash)); }
+        if (r.ok() && on.uiList) on.uiList(list);
+        break;
+    }
+    case Msg::UiData: {
+        const auto path = r.Str(kUiPathMax); const int part = r.U16(), parts = r.U16(); const auto bytes = r.Str();
+        if (r.ok() && on.uiData) on.uiData(path, part, parts, bytes);
+        break;
+    }
+    case Msg::Ui: {
+        const auto op = UiOp(r.U8());
+        std::string name, text; bool flag = false;
+        if (op == UiOp::Open) { text = r.Str(kUiPathMax); flag = r.U8() != 0; }
+        else if (op == UiOp::Focus) flag = r.U8() != 0;
+        else if (op == UiOp::Event) { name = r.Str(kUiNameMax); text = r.Str(kUiToPageMax); }
+        if (r.ok() && on.ui) on.ui(op, name, text, flag);
+        break;
+    }
     case Msg::Icon: {
         const uint16_t id = r.U16(); const uint8_t op = r.U8();
         if (op == 1) {
@@ -546,6 +567,16 @@ void Client::SendCarry(uint16_t id, CarryOp op, float x, float y, float z, float
 void Client::SendImageRequest(const std::string& name) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::ImageRequest); w.Str(name.substr(0, 128));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendUiRequest(const std::string& path) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::UiRequest); w.Str(path.substr(0, kUiPathMax));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendUiMessage(const std::string& name, const std::string& json) {
+    if (status_ != Status::Connected || name.size() > kUiNameMax || json.size() > kUiFromPageMax) return;
+    Writer w; w.Op(Msg::UiMessage); w.Str(name); w.Str(json);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendShot(const std::string& weaponClass, float x, float y, float z) {

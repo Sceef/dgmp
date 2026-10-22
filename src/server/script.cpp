@@ -570,6 +570,31 @@ struct Api {
         lua_pop(L, 1);
         lua_pushinteger(L, id); return 1;
     }
+    // player:ui("page.html" [, {focus = true}]) opens a page of modes/<mode>/ui; player:ui(false) closes it.
+    static int PUi(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        if (lua_isnoneornil(L, 2) || (lua_isboolean(L, 2) && !lua_toboolean(L, 2))) { Srv(L).Ui(&p, net::UiOp::Close); return 0; }
+        const std::string page = luaL_checkstring(L, 2);
+        const std::string file = page.substr(0, page.find_first_of("?#"));
+        if (!Srv(L).HasUiFile(file)) luaL_error(L, "ui: no file '%s' in the mode's ui folder", file.c_str());
+        if (page.size() > net::kUiPathMax) luaL_error(L, "ui: the page name is too long");
+        bool focus = false;
+        if (lua_istable(L, 3)) { lua_getfield(L, 3, "focus"); focus = lua_toboolean(L, -1); lua_pop(L, 1); }
+        Srv(L).Ui(&p, net::UiOp::Open, page, {}, focus);
+        return 0;
+    }
+    // player:uiFocus(true|false): the page gets the cursor and keyboard (the game none) / gives them back.
+    static int PUiFocus(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).Ui(&p, net::UiOp::Focus, {}, {}, lua_toboolean(L, 2)); return 0; }
+    // player:uiSend(name, data): the page's dgmp.on(name, fn) gets data (any value that JSON can carry).
+    static int PUiSend(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        const std::string name = luaL_checkstring(L, 2);
+        if (name.empty() || name.size() > net::kUiNameMax) luaL_error(L, "uiSend: the name must be 1..%d characters", int(net::kUiNameMax));
+        const std::string json = lua_isnoneornil(L, 3) ? std::string("null") : ToJson(L, 3, 0).dump();
+        if (json.size() > net::kUiToPageMax) luaL_error(L, "uiSend: data too large (%d KB at most)", int(net::kUiToPageMax / 1024));
+        Srv(L).Ui(&p, net::UiOp::Event, name, json);
+        return 0;
+    }
     static int PCloseDialog(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
         Srv(L).CloseDialog(&p);
@@ -1711,7 +1736,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"playAnim", &Api::PPlayAnim}, {"stopAnim", &Api::PStopAnim}, {"playSound", &Api::PPlaySound}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
                                 {"giveItem", &Api::PGiveItem}, {"takeItem", &Api::PTakeItem}, {"giveWeapon", &Api::PGiveWeapon}, {"setAmmo", &Api::PSetAmmo},
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
-                                {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
+                                {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"ui", &Api::PUi}, {"uiFocus", &Api::PUiFocus}, {"uiSend", &Api::PUiSend}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
                                 {"setAdmin", &Api::PSetAdmin}, {"objective", &Api::PObjective}, {"objectiveMeter", &Api::PObjectiveMeter}, {"setLook", &Api::PSetLook}, {"tip", &Api::PTip}, {"restoreInventory", &Api::PRestoreInventory},
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
                                 {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
@@ -1854,6 +1879,14 @@ void Script::MarkerEvent(Player& p, uint16_t marker, bool entered) {
 // A callback kept in a registry table under `key`, called with the player and what is on the stack.
 static bool CallKept(lua_State* L, const char* table, lua_Integer key, bool once, Player& p, int nargs, Server& server, const std::string& mode, const char* what);
 
+void Script::UiMessage(Player& p, const std::string& name, const std::string& json) {
+    if (!L_) return;
+    Api::PushPlayer(L_, p);
+    lua_pushlstring(L_, name.data(), name.size());
+    json::Value v;
+    if (json::Value::Parse(json, v)) Api::PushJson(L_, v); else lua_pushnil(L_);
+    Fire("uiMessage", 3);
+}
 void Script::DialogResponse(Player& p, uint16_t id, bool ok, int item, const std::string& text) {
     if (!L_) return;
     auto args = [&] {

@@ -49,6 +49,7 @@ public:
     void MarkerEvent(Player& p, uint16_t marker, bool entered);
     // The player answered a dialog (item -1: none; text: the typed text or the chosen line).
     void DialogResponse(Player& p, uint16_t id, bool ok, int item, const std::string& text);
+    void UiMessage(Player& p, const std::string& name, const std::string& json);  // the mode's page: dgmp.send(name, data)
     void Use(Player& p, uint16_t interaction);  // pressed the key at an interaction
     void KeyPress(Player& p, uint8_t key);       // pressed a key bound with bindKey
     // The player wants on a vehicle: 0 no say (the lock decides), 1 refused, 2 allowed (handlers of vehicleEnter).
