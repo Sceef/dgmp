@@ -29,7 +29,7 @@ constexpr double kTalkingFor = 0.3;       // a voice counts as talking this long
 double Clock() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 // ---------------------------------------------------------------- settings (DGMP.ini [Voice])
-struct Settings { int talkKey = 'N', radioKey = 'B'; float volume = 1.f; bool microphone = true, openMic = false; bool loaded = false; } settings;
+struct Settings { int talkKey = 'N', radioKey = 'K'; float volume = 1.f; bool microphone = true, openMic = false; bool loaded = false; } settings;
 
 int ParseKey(std::wstring k, int fallback) {
     for (auto& ch : k) ch = wchar_t(towupper(ch));
@@ -59,7 +59,7 @@ void LoadSettings() {
     const std::wstring ini = profile::Root() + L"\\DGMP.ini";
     wchar_t buf[64];
     GetPrivateProfileStringW(L"Voice", L"TalkKey", L"N", buf, 64, ini.c_str()); settings.talkKey = ParseKey(buf, 'N');
-    GetPrivateProfileStringW(L"Voice", L"RadioKey", L"B", buf, 64, ini.c_str()); settings.radioKey = ParseKey(buf, 'B');
+    GetPrivateProfileStringW(L"Voice", L"RadioKey", L"K", buf, 64, ini.c_str()); settings.radioKey = ParseKey(buf, 'K');
     settings.volume = std::clamp(int(GetPrivateProfileIntW(L"Voice", L"Volume", 100, ini.c_str())), 0, 200) / 100.f;
     settings.microphone = GetPrivateProfileIntW(L"Voice", L"Microphone", 1, ini.c_str()) != 0;
     settings.openMic = GetPrivateProfileIntW(L"Voice", L"OpenMic", 0, ini.c_str()) != 0;

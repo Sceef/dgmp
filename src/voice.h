@@ -3,7 +3,7 @@
 // (ISteamUser voice: the microphone chosen in Steam, Opus inside); the server relays the frames to the
 // players who hear them. Other players' voices play through XAudio2: near ones at their bodies (3D, the
 // listener at the game camera), radio and phone ones without a position, band-limited.
-// Keys and volume: DGMP.ini [Voice] (TalkKey, RadioKey, Volume, Microphone).
+// Keys and volume: DGMP.ini [Voice] (TalkKey N, RadioKey K, Volume, Microphone, OpenMic).
 #include "ue.h"
 #include "shared/netclient.h"
 #include <cstdint>
