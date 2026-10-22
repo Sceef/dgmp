@@ -62,7 +62,7 @@ enum class Msg : uint8_t {
     CustomizeDone = 10, // u8 ok, str skin: the player closed the character creator (or picked one of the offered looks)
     Gear = 9,         // GearList payload: what the player carries (weapons in hand, on the back, holstered)
     Hit = 8,          // u16 victimId, f32 damage, u8 HitZone, str weapon: this player hit another one
-    Voice = 21,       // u8 VoiceKey, u8 VoiceCodec, bytes: a frame of the player's voice while a push-to-talk key is held (kChanVoice)
+    Voice = 21,       // u8 VoiceKey, u8 VoiceCodec, u8 gain (%), bytes: a frame of the player's voice while a push-to-talk key is held (kChanVoice)
     GameEvent = 7,    // u8 GameEventType, str class, str detail, str id, f32 x, y, z: something the player did in the world
     // server -> client
     Welcome = 64,     // u16 yourId, str serverName, str modeName, u8 maxPlayers
@@ -119,7 +119,7 @@ enum class Msg : uint8_t {
     WorldEdits = 85,  // u16 part, u16 parts, str chunk: the mode's world.json (docs/world.md), split in chunks; "" = none
     Corpse = 84,      // u16 playerId: that player died where it stands now; leave a body there
     WorldItem = 83,   // u16 id, u8 op (1 add: str itemKey, i32 count, f32 x,y,z, f32 yaw; 2 remove): a pickup placed by the mode
-    PlayerVoice = 111, // u16 id, u8 VoiceRoute, u8 VoiceCodec, f32 range (units: Near fades out there), bytes: that player's voice (kChanVoice)
+    PlayerVoice = 111, // u16 id, u8 VoiceRoute, u8 VoiceCodec, u8 gain (%), f32 range (units: Near fades out there), bytes: that player's voice (kChanVoice)
     Zombie = 130,     // u16 id, u8 ZombieOp: Add (str type, f32 x,y,z,yaw, i32 world, u16 owner (0xFFFF none), f32 health (<0: the game's)),
                       // Owner (u16 owner), Damage (f32 damage, u16 attacker; to the owner), Died (u16 killer, 0xFFFF none), Remove
     ZombieMoves = 131, // u8 n, n x ZombieState: zombies other clients own, for their puppets here (unreliable)
@@ -134,6 +134,7 @@ enum class VoiceKey : uint8_t { Talk = 0, Radio = 1 };               // which pu
 enum class VoiceRoute : uint8_t { Near = 0, Radio = 1, Call = 2 };   // heard at the speaker's body / over a radio / a phone
 enum VoiceFlags : uint8_t { VoiceOn = 1, VoiceMuted = 2, VoiceRadio = 4, VoiceCall = 8 };
 constexpr size_t kVoiceFrameMax = 2048;
+constexpr uint8_t kVoiceGainMax = 250;  // the speaker's microphone volume in percent: listeners apply it (Steam frames come compressed)
 constexpr size_t kVoiceNameMax = 64;
 
 enum QuitReason : uint8_t { QuitLeft = 0, QuitTimeout = 1, QuitKicked = 2 };

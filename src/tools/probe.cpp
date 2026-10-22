@@ -165,15 +165,15 @@ int main() {
             if (autoUi) for (auto k : keys) c.SendKey(k);
         };
         // Voice: frames heard per speaker and route; echoed frames wait for their time.
-        struct Echo { double at; std::vector<uint8_t> frame; };
+        struct Echo { double at; int gain; std::vector<uint8_t> frame; };
         std::vector<Echo> echoes;
         std::map<std::pair<uint16_t, int>, std::pair<int, size_t>> voiceIn;  // (id, route) -> frames, bytes
         double voiceOutUntil = 0, nextVoiceOut = 0; net::VoiceKey voiceOutKey = net::VoiceKey::Talk;
-        c.on.voice = [&](uint16_t id, net::VoiceRoute route, net::VoiceCodec, float range, const uint8_t* frame, size_t size) {
+        c.on.voice = [&](uint16_t id, net::VoiceRoute route, net::VoiceCodec, int gain, float range, const uint8_t* frame, size_t size) {
             auto& v = voiceIn[{id, int(route)}];
             if (!v.first++) std::printf("* VOICE from %u route %d range %.0f m (%zu bytes)\n", id, int(route), range / 100.f, size);
             v.second += size;
-            if (voiceEcho > 0 && route == net::VoiceRoute::Near) echoes.push_back({Now() + voiceEcho, std::vector<uint8_t>(frame, frame + size)});
+            if (voiceEcho > 0 && route == net::VoiceRoute::Near) echoes.push_back({Now() + voiceEcho, gain, std::vector<uint8_t>(frame, frame + size)});
         };
         c.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) {
             std::printf("* VOICE SETUP on=%d muted=%d radio=[%s] call=[%s]\n", flags & net::VoiceOn ? 1 : 0, flags & net::VoiceMuted ? 1 : 0, radio.c_str(), call.c_str());
@@ -311,11 +311,11 @@ int main() {
             if (c.status() == net::Client::Status::Connected && now < voiceOutUntil && now >= nextVoiceOut) {
                 nextVoiceOut = now + 0.05;
                 std::vector<uint8_t> frame(120, 0x5A);
-                c.SendVoice(voiceOutKey, net::VoiceCodec::Steam, frame.data(), frame.size());
+                c.SendVoice(voiceOutKey, net::VoiceCodec::Steam, 100, frame.data(), frame.size());
             }
             for (size_t i = 0; i < echoes.size();) {
                 if (now < echoes[i].at) { ++i; continue; }
-                c.SendVoice(echoKey, net::VoiceCodec::Steam, echoes[i].frame.data(), echoes[i].frame.size());
+                c.SendVoice(echoKey, net::VoiceCodec::Steam, echoes[i].gain, echoes[i].frame.data(), echoes[i].frame.size());
                 echoes.erase(echoes.begin() + long(i));
             }
             if (c.status() == net::Client::Status::Connected && now >= nextList) {

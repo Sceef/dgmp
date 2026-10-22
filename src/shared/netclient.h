@@ -69,7 +69,7 @@ public:
         std::function<void(uint16_t id, const std::string& weaponClass, float x, float y, float z)> playerShot;
         // Voice chat: a frame of that player's voice (VoiceRoute; range: where Near fades out, units) and
         // this server's voice setup (VoiceFlags, the channel names the radio key / a call talk to).
-        std::function<void(uint16_t id, VoiceRoute route, VoiceCodec codec, float range, const uint8_t* frame, size_t size)> voice;
+        std::function<void(uint16_t id, VoiceRoute route, VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size)> voice;  // gain: %
         std::function<void(uint8_t flags, const std::string& radio, const std::string& call)> voiceSetup;
         // Freakers (src/zombies.cpp parses them): Msg::Zombie / Msg::ZombieMoves, without the op byte
         std::function<void(Msg op, const uint8_t* payload, size_t size)> zombie;
@@ -134,7 +134,7 @@ public:
     void SendKey(uint8_t virtualKey);
     void SendAnimEnd(uint8_t reason);
     void SendShot(const std::string& weaponClass, float x, float y, float z);
-    void SendVoice(VoiceKey key, VoiceCodec codec, const uint8_t* frame, size_t size);  // unreliable, kChanVoice
+    void SendVoice(VoiceKey key, VoiceCodec codec, int gain, const uint8_t* frame, size_t size);  // unreliable, kChanVoice; gain: microphone volume %
     void SendImageRequest(const std::string& name);
     void SendUiRequest(const std::string& path);
     void SendUiMessage(const std::string& name, const std::string& json);

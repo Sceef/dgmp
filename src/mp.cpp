@@ -1578,7 +1578,7 @@ void HookClient() {
         sounds::Play(path, at ? &v : nullptr, volume, pitch);
     };
     client.on.playerShot = [](uint16_t id, const std::string& cls, float x, float y, float z) { sounds::OnPlayerShot(id, cls, FVector{x, y, z}); };
-    client.on.voice = [](uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, float range, const uint8_t* frame, size_t size) { voice::OnFrame(id, route, codec, range, frame, size); };
+    client.on.voice = [](uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size) { voice::OnFrame(id, route, codec, gain, range, frame, size); };
     client.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) { voice::OnSetup(flags, radio, call); };
     client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
     client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) { playeranim::OnPlay(path, flags, rate); };
@@ -1982,7 +1982,7 @@ bool Init() {
     policy::SetDamageWatcher(&OnGhostDamage);
     policy::DisableMenuPause();
     overlay::SetHud(&DrawHudLayer);
-    overlay::SetDraw(&mpui::DrawWindows);  // the mode's dialogs and the character creator
+    overlay::SetDraw([] { mpui::DrawWindows(); voice::DrawWindow(); });  // the mode's dialogs, the character creator, voice settings
     webui::Install();                      // the mode's HTML pages
     if (!net::ParseAddress(target, host, port) || !net::ValidNick(nick)) {
         dg::Log("MP: invalid launch parameters (address '%s', nick '%s')", target.c_str(), nick.c_str());
@@ -2032,7 +2032,10 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         return;
     }
 
-    for (auto& line : hud::TakeSubmitted()) client.SendChat(U(line));
+    for (auto& line : hud::TakeSubmitted()) {
+        if (line == L"/voice") { voice::OpenSettings(); continue; }  // the voice chat settings: the client's own command
+        client.SendChat(U(line));
+    }
 
     RefreshLocal(now, pawn);
     static double nextLook = 0;

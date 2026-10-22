@@ -458,9 +458,9 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         break;
     }
     case Msg::PlayerVoice: {
-        const uint16_t id = r.U16(); const auto route = VoiceRoute(r.U8()); const auto codec = VoiceCodec(r.U8()); const float range = r.F32();
+        const uint16_t id = r.U16(); const auto route = VoiceRoute(r.U8()); const auto codec = VoiceCodec(r.U8()); const int gain = r.U8(); const float range = r.F32();
         size_t n = 0; const uint8_t* frame = r.Rest(n);
-        if (r.ok() && n && on.voice) on.voice(id, route, codec, range, frame, n);
+        if (r.ok() && n && on.voice) on.voice(id, route, codec, gain, range, frame, n);
         break;
     }
     case Msg::VoiceSetup: {
@@ -591,9 +591,9 @@ void Client::SendShot(const std::string& weaponClass, float x, float y, float z)
     Writer w; w.Op(Msg::Shot); w.Str(weaponClass.substr(0, 128)); w.F32(x); w.F32(y); w.F32(z);
     enet_peer_send(peer_, kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
 }
-void Client::SendVoice(VoiceKey key, VoiceCodec codec, const uint8_t* frame, size_t size) {
+void Client::SendVoice(VoiceKey key, VoiceCodec codec, int gain, const uint8_t* frame, size_t size) {
     if (status_ != Status::Connected || !size || size > kVoiceFrameMax) return;
-    Writer w; w.Op(Msg::Voice); w.U8(uint8_t(key)); w.U8(uint8_t(codec)); w.Raw(frame, size);
+    Writer w; w.Op(Msg::Voice); w.U8(uint8_t(key)); w.U8(uint8_t(codec)); w.U8(uint8_t(gain < 0 ? 0 : gain > kVoiceGainMax ? kVoiceGainMax : gain)); w.Raw(frame, size);
     enet_peer_send(peer_, kChanVoice, enet_packet_create(w.buf.data(), w.buf.size(), 0));
 }
 void Client::SendAnimEnd(uint8_t reason) {

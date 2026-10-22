@@ -64,7 +64,7 @@ void Server::SendVoiceSetup(Player& p) {
 }
 
 void Server::OnVoice(Player& from, const uint8_t* payload, size_t size) {
-    if (!cfg_.voice || size < 3 || size - 2 > net::kVoiceFrameMax) return;
+    if (!cfg_.voice || size < 4 || size - 3 > net::kVoiceFrameMax) return;
     const int key = payload[0];
     if (key > 1 || payload[1] != uint8_t(net::VoiceCodec::Steam)) return;
     const double now = Now();
@@ -107,8 +107,9 @@ void Server::OnVoice(Player& from, const uint8_t* payload, size_t size) {
     }
     if (to.empty()) return;
 
-    const size_t frame = size - 2;
-    const size_t packetSize = 1 + 2 + 1 + 1 + 4 + frame;
+    const size_t frame = size - 3;
+    const uint8_t gain = std::min(payload[2], net::kVoiceGainMax);
+    const size_t packetSize = 1 + 2 + 1 + 1 + 1 + 4 + frame;
     if (cfg_.voiceBandwidth > 0) {
         const double cap = cfg_.voiceBandwidth;
         voiceBudget_ = std::min(cap, voiceBudget_ + (now - voiceBudgetAt_) * cap);
@@ -123,7 +124,7 @@ void Server::OnVoice(Player& from, const uint8_t* payload, size_t size) {
             voiceBudget_ -= double(packetSize);
         }
         l->voiceHeard[from.id] = now;
-        net::Writer w; w.Op(net::Msg::PlayerVoice); w.U16(from.id); w.U8(uint8_t(route)); w.U8(payload[1]); w.F32(range); w.Raw(payload + 2, frame);
+        net::Writer w; w.Op(net::Msg::PlayerVoice); w.U16(from.id); w.U8(uint8_t(route)); w.U8(payload[1]); w.U8(gain); w.F32(range); w.Raw(payload + 3, frame);
         enet_peer_send(l->peer, net::kChanVoice, enet_packet_create(w.buf.data(), w.buf.size(), 0));
         voiceBytesOut_ += w.buf.size();
     }
