@@ -51,5 +51,12 @@ on("uiMessage", function(player, name, data)
     end
 end)
 
+-- Server console: "phone" opens or closes the phone of every player (testing without the key).
+on("console", function(line)
+    if line ~= "phone" then return end
+    for _, p in ipairs(players()) do if phoneOpen[p.id] then closePhone(p) else openPhone(p) end end
+    return true
+end)
+
 -- The clock and the player count on everyone's panel.
 every(10000, function() for _, p in ipairs(players()) do status(p) end end)
