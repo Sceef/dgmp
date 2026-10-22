@@ -11,6 +11,7 @@
 #include "playeranim.h"
 #include "blips.h"
 #include "sounds.h"
+#include "voice.h"
 #include "images.h"
 #include "overlay.h"
 #include "imgui.h"
@@ -634,10 +635,10 @@ void SwitchGroupPose(UObject* mainActor, std::vector<GhostPart>& parts, PoseTrac
 
 // Health bars under the names: screen points collected each frame on the game thread, drawn by the
 // overlay (render thread).
-struct Plate { float x, y, distance; int health; };
+struct Plate { float x, y, distance; int health; bool talking; };
 std::mutex plateLock;
 std::vector<Plate> plates, platesNext;
-void NewPlate(float x, float y, float distance, int health) { platesNext.push_back({x, y, distance, health}); }
+void NewPlate(float x, float y, float distance, int health, bool talking) { platesNext.push_back({x, y, distance, health, talking}); }
 void PublishPlates() { std::lock_guard g(plateLock); plates.swap(platesNext); platesNext.clear(); }
 std::string spectatorCaption;  // under plateLock
 // Multiplayer frees F for the modes' interactions: the flashlight goes to L (the game's own remapping,
@@ -660,7 +661,7 @@ bool MoveFlashlightToL() {
     return true;
 }
 void DrawPlates();
-void DrawHudLayer() { DrawPlates(); mpui::DrawHud(); }
+void DrawHudLayer() { DrawPlates(); mpui::DrawHud(); voice::DrawHud(); }
 void DrawPlates() {
     std::vector<Plate> list;
     std::string caption;
@@ -680,6 +681,11 @@ void DrawPlates() {
         const float f = std::clamp(p.health / 100.f, 0.f, 1.f);
         const ImU32 fill = f > 0.6f ? IM_COL32(108, 214, 108, 235) : f > 0.3f ? IM_COL32(242, 209, 107, 235) : IM_COL32(224, 90, 74, 235);
         dl->AddRectFilled(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1), IM_COL32(0, 0, 0, 170), 2.f);
+        if (p.talking) {  // voice chat: a speaking mark left of the bar
+            const ImVec2 c(a.x - 6 - 5 * k, (a.y + b.y) / 2);
+            dl->AddCircleFilled(c, 4.5f * k + 1, IM_COL32(0, 0, 0, 170));
+            dl->AddCircleFilled(c, 4.5f * k, IM_COL32(110, 210, 110, 255));
+        }
         if (f > 0) dl->AddRectFilled(a, ImVec2(a.x + (b.x - a.x) * f, b.y), fill, 2.f);
     }
 }
@@ -1000,7 +1006,7 @@ struct Ghost {
         // The health bar is drawn on screen under the name (DrawPlates); the game says where.
         if (auto f = IsValid(worldController) ? Fn(worldController, "ProjectWorldLocationToScreen") : nullptr) {
             Params pr(f); pr.Set("WorldLocation", FVector{p.X, p.Y, p.Z - 4.f}); Call(worldController, "ProjectWorldLocationToScreen", &pr);
-            if (pr.GetBool("ReturnValue")) { const auto at = pr.Get<FVector2D>("ScreenLocation"); NewPlate(at.X, at.Y, d, health); }
+            if (pr.GetBool("ReturnValue")) { const auto at = pr.Get<FVector2D>("ScreenLocation"); NewPlate(at.X, at.Y, d, health, voice::Talking(id)); }
         }
         // Keep it readable from afar without becoming huge up close.
         float size = std::clamp(12.f + d * 0.009f, 14.f, 60.f);
@@ -1497,6 +1503,7 @@ void HookClient() {
         playeranim::Reset();
         blips::Reset();
         sounds::Reset();
+        voice::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1567,6 +1574,8 @@ void HookClient() {
         sounds::Play(path, at ? &v : nullptr, volume, pitch);
     };
     client.on.playerShot = [](uint16_t id, const std::string& cls, float x, float y, float z) { sounds::OnPlayerShot(id, cls, FVector{x, y, z}); };
+    client.on.voice = [](uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, float range, const uint8_t* frame, size_t size) { voice::OnFrame(id, route, codec, range, frame, size); };
+    client.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) { voice::OnSetup(flags, radio, call); };
     client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
     client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) { playeranim::OnPlay(path, flags, rate); };
     client.on.objectMove = [](uint16_t id, const float to[6], float seconds, float elapsed) { objects::OnMove(id, to, seconds, elapsed); };
@@ -2078,6 +2087,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
     UpdateSpectator(pawn);
     static bool flashlightMoved = false;
     if (!flashlightMoved && gameplay) { static double nextTry = 0; if (now >= nextTry) { nextTry = now + 2; flashlightMoved = MoveFlashlightToL(); } }
+    bool voiceAllowed = false;  // the push-to-talk keys work (set below)
     {
         FVector at{};
         if (auto f = IsValid(pawn) ? Fn(pawn, "K2_GetActorLocation") : nullptr) { Params p(f); Call(pawn, "K2_GetActorLocation", &p); at = p.Get<FVector>("ReturnValue"); }
@@ -2086,6 +2096,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         if (auto f = IsValid(controller) ? Fn(controller, "IsPauseMenuActive") : nullptr) { Params p(f); Call(controller, "IsPauseMenuActive", &p); pauseMenu = p.GetBool("ReturnValue"); }
         const bool playing = gameplay && !pauseMenu && !policy::RewardPanelOpen();
         const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning();
+        voiceAllowed = playing && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen();
         mpui::Update(client, at, canAct, playing && !spec.on);
         vehicles::Update(now, pawn, controller, client);
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen());
@@ -2185,6 +2196,12 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
     FVector cam{s.x, s.y, s.z};
     if (IsValid(controller)) if (UObject* mgr = Field<UObject*>(controller, off::PC_CameraManager); IsValid(mgr)) cam = Field<FVector>(mgr, off::CamMgr_POV_Location);
     for (auto& [id, g] : ghosts) g->Update(now, cam);
+    // Voice chat: push-to-talk (not while typing or in a dialog) and the voices heard, placed from the camera.
+    {
+        FRotator camRot{};
+        if (IsValid(controller)) if (UObject* mgr = Field<UObject*>(controller, off::PC_CameraManager); IsValid(mgr)) camRot = Field<FRotator>(mgr, off::CamMgr_POV_Location + 12);
+        voice::Update(client, voiceAllowed, cam, camRot);
+    }
     UpdateNpcs(now, {s.x, s.y, s.z}, cam);
     // The mode's icons in the world: on screen where they are in front of the camera and near enough.
     {
