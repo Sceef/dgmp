@@ -15,6 +15,7 @@
 #include "voice.h"
 #include "images.h"
 #include "webui.h"
+#include "clientlua.h"
 #include "overlay.h"
 #include "imgui.h"
 #include <mutex>
@@ -663,7 +664,7 @@ bool MoveFlashlightToL() {
     return true;
 }
 void DrawPlates();
-void DrawHudLayer() { DrawPlates(); mpui::DrawHud(); voice::DrawHud(); }
+void DrawHudLayer() { DrawPlates(); clientlua::Draw(); mpui::DrawHud(); voice::DrawHud(); }
 void DrawPlates() {
     std::vector<Plate> list;
     std::string caption;
@@ -1508,6 +1509,7 @@ void HookClient() {
         sounds::Reset();
         voice::Reset();
         webui::Reset();
+        clientlua::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1594,6 +1596,9 @@ void HookClient() {
     client.on.uiList = [](const std::vector<std::pair<std::string, std::string>>& files) { webui::OnList(files, client); };
     client.on.uiData = [](const std::string& path, int part, int parts, const std::string& bytes) { webui::OnData(path, part, parts, bytes); };
     client.on.ui = [](net::UiOp op, const std::string& name, const std::string& text, bool focus) { webui::OnUi(op, name, text, focus); };
+    client.on.scriptList = [](const std::vector<std::pair<std::string, std::string>>& files) { clientlua::OnList(files, client); };
+    client.on.scriptData = [](const std::string& path, int part, int parts, const std::string& bytes) { clientlua::OnData(path, part, parts, bytes); };
+    client.on.scriptEvent = [](const std::string& name, const std::string& json) { clientlua::OnServer(name, json); };
     client.on.icon = [](uint16_t id, const net::Client::Events::IconInfo* info) { if (info) worldIcons[id] = *info; else worldIcons.erase(id); };
     client.on.actor = [](uint16_t id, const net::Client::Events::ActorInfo* info) {
         if (!info) { if (auto it = npcs.find(id); it != npcs.end()) { it->second.Despawn(); npcs.erase(it); } return; }
@@ -2010,7 +2015,7 @@ bool TakeTeleport(FVector& pos, float& yaw, bool& initial) {
     return true;
 }
 
-void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, bool gameplay) {
+void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, bool gameplay) {
     if (!enabled) return;
     const double now = Clock();
     worldPawn = pawn; worldController = controller;
@@ -2034,6 +2039,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
 
     for (auto& line : hud::TakeSubmitted()) {
         if (line == L"/voice") { voice::OpenSettings(); continue; }  // the voice chat settings: the client's own command
+        if (clientlua::OnChat(U(line))) continue;                     // a command of the mode's client scripts
         client.SendChat(U(line));
     }
 
@@ -2100,6 +2106,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
     static bool flashlightMoved = false;
     if (!flashlightMoved && gameplay) { static double nextTry = 0; if (now >= nextTry) { nextTry = now + 2; flashlightMoved = MoveFlashlightToL(); } }
     bool voiceAllowed = false;  // the push-to-talk keys work (set below)
+    bool scriptKeys = false, scriptHud = false;  // the client scripts' keys work / their drawing shows (set below)
     {
         FVector at{};
         if (auto f = IsValid(pawn) ? Fn(pawn, "K2_GetActorLocation") : nullptr) { Params p(f); Call(pawn, "K2_GetActorLocation", &p); at = p.Get<FVector>("ReturnValue"); }
@@ -2109,6 +2116,7 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         const bool playing = gameplay && !pauseMenu && !policy::RewardPanelOpen();
         const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning();
         voiceAllowed = playing && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen();
+        scriptKeys = canAct; scriptHud = playing && !spec.on;
         mpui::Update(client, at, canAct, playing && !spec.on);
         webui::Update(client);
         vehicles::Update(now, pawn, controller, client);
@@ -2240,6 +2248,15 @@ void Update(double, float, UObject* pawn, UObject* controller, bool inWorld, boo
         }
         mpui::SetIcons(std::move(shown));
     }
+    // The mode's client scripts (docs/client-lua.md).
+    {
+        clientlua::Frame f;
+        f.dt = dt; f.pawn = pawn; f.controller = controller; f.hudShown = scriptHud; f.canAct = scriptKeys;
+        f.id = client.localId(); f.name = nick; f.world = myWorld; f.dead = localDead;
+        f.haveState = haveState; f.state = s; f.cam = cam;
+        if (IsValid(controller)) if (UObject* mgr = Field<UObject*>(controller, off::PC_CameraManager); IsValid(mgr)) f.camRot = Field<FRotator>(mgr, off::CamMgr_POV_Location + 12);
+        clientlua::Update(f, client);
+    }
     PublishPlates();
     UpdateMarkers(now, {s.x, s.y, s.z});
 
@@ -2256,6 +2273,14 @@ std::vector<RemoteBody> RemoteBodies() {
     std::vector<RemoteBody> out;
     for (auto& [id, g] : ghosts) if (g->Spawned() && IsValid(g->body)) out.push_back({id, g->lastMeshPos, !g->deadShown});
     return out;
+}
+uint16_t PlayerOfActor(UObject* actor) {
+    if (!actor) return 0;
+    for (auto& [id, g] : ghosts) {
+        if (g->body == actor || g->bike == actor) return id;
+        for (auto& part : g->bodyParts) if (part.actor == actor) return id;
+    }
+    return 0;
 }
 std::vector<UObject*> GhostActors() {
     std::vector<UObject*> out;

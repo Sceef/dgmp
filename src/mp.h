@@ -33,6 +33,8 @@ std::vector<ue::UObject*> GhostActors();
 // The remote players drawn here now: id, where the body stands (feet), alive (not dead or hidden).
 struct RemoteBody { uint16_t id; ue::FVector pos; bool alive; };
 std::vector<RemoteBody> RemoteBodies();
+// The remote player whose body (or bike) this actor is: its id, 0 none.
+uint16_t PlayerOfActor(ue::UObject* actor);
 
 void Shutdown();
 

@@ -1,4 +1,5 @@
 #include "webui.h"
+#include "clientlua.h"
 #include "overlay.h"
 #include "mpui.h"
 #include "skins.h"
@@ -632,7 +633,7 @@ void Reset() {
 void Update(net::Client& client) {
     std::vector<std::pair<std::string, std::string>> out;
     { std::lock_guard g(outLock); out.swap(outgoing); }
-    for (auto& [name, json] : out) client.SendUiMessage(name, json);
+    for (auto& [name, json] : out) if (!clientlua::OnPageMessage(name, json)) client.SendUiMessage(name, json);  // (a client script's onUi takes it first)
     if (pending.on && FilesReady()) {
         Post([page = pending.page, messages = pending.messages] {
             web.page = page; web.queued = messages;
