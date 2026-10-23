@@ -135,7 +135,9 @@ void FireNow(Trap& t, UObject* pawn, uint16_t localId) {
     }
     Destroy(t.wire);
     if (t.type == "wire") t.cleanupAt = Clock() + kStakesStay;
-    if (IsValid(t.actor)) Call(t.actor, "TrapExplode");  // the game's explosion: it removes the actor itself
+    // The way an NPC sets it off: the trap fires its weapon (the blast, its smoke and debris, the damage) and
+    // goes. TrapExplode alone only shakes the camera and removes it.
+    if (IsValid(t.actor)) Call(t.actor, "TriggerWeaponAIPawn");
     t.actor = nullptr;
 }
 }  // namespace
