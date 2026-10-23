@@ -127,7 +127,7 @@ draw.image("logo.png", x, y, w, h)   -- картинка из modes/<режим>
 
 | Функция | |
 |---|---|
-| `createObject{model= или asset=, x, y, z, pitch, yaw, roll, scale = 1, collision = true}` → id | `model` — меш из `data/props.txt`, `asset` — путь `/Game/...`; до 500 |
+| `createObject{model= или asset=, x, y, z, pitch, yaw, roll, scale = 1, collision = true, ghost = false}` → id | `model` — меш из `data/props.txt`, `asset` — путь `/Game/...`; до 500. `ghost = true` — «призрак»: обводка игры (как у чутья выживания) и мерцание, без столкновений — предпросмотр «сюда встанет» |
 | `setObject(id, {поля})` | сразу на месте (движение прекращается) |
 | `moveObject(id, {x, y, z, pitch, yaw, roll, time = секунды или speed = м/с})` → секунды | плавно туда |
 | `removeObject(id)` | |

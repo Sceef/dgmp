@@ -107,13 +107,15 @@ public:
         std::function<void(const std::string& path, int part, int parts, const std::string& bytes)> scriptData;
         std::function<void(const std::string& name, const std::string& json)> scriptEvent;
         std::function<void(uint16_t id, const std::string& json)> itemWindow;  // json "": close it
+        std::function<void(const uint8_t* payload, size_t size)> trap;          // Msg::Trap without the op (src/traps.cpp parses it)
         struct IconInfo { float x, y, z, size, distance; int world; uint32_t color; std::string image, text; bool throughWalls = false; };
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
         struct CarryInfo { std::string model; float x, y, z, yaw; int world; uint16_t carrier; uint8_t roll = 0; };  // roll: CarryRoll
         std::function<void(uint16_t id, const CarryInfo* info)> carry;  // info null = removed
         struct BlipInfo { float x = 0, y = 0, z = 0; std::string icon; uint32_t color = 0; float scale = 1; bool map = true, radar = true, edge = false; int world = -1; };
         std::function<void(uint16_t id, const BlipInfo* info)> blip;  // info null = removed
-        struct ObjectInfo { std::string asset; float x = 0, y = 0, z = 0, pitch = 0, yaw = 0, roll = 0, scale = 1; int world = -1; bool collision = true; };
+        // ghost: outlined and blinking (a client script's preview of where something goes; not sent by the server)
+        struct ObjectInfo { std::string asset; float x = 0, y = 0, z = 0, pitch = 0, yaw = 0, roll = 0, scale = 1; int world = -1; bool collision = true; bool ghost = false; };
         std::function<void(uint16_t id, const ObjectInfo* info)> object;  // info null = removed
         std::function<void(uint16_t id, const float to[6], float seconds, float elapsed)> objectMove;
     } on;
