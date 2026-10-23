@@ -111,7 +111,7 @@ enum class Msg : uint8_t {
     ScriptData = 124, // str path, u16 part, u16 parts, str bytes: a client script's file, in parts
     ScriptEvent = 125, // str name, str json: the server's Lua (player:clientSend) to the client scripts' onServer(name, fn)
     ItemWindow = 126, // u16 windowId, str json: the mode's item window (docs/API.md "Окно предметов"): panes of items; "" closes it
-    Trap = 127,       // u16 id, u8 TrapOp: Add (str type, f32 x,y,z,yaw, f32 x2,y2,z2 (a wire's other end), i32 world, u8 explosive, u8 lethal),
+    Trap = 127,       // u16 id, u8 TrapOp: Add (str type, f32 x,y,z,yaw, f32 x2,y2,z2 (a wire's other end), i32 world, u8 explosive, u8 lethal, f32 bleed (s)),
                       // Fire (u16 victim, 0xFFFF none: explode / catch it), Remove (docs/API.md "Ловушки")
     VehicleRoute = 103, // u16 vehicleId, f32 speed (units/s), f32 elapsed (s since it set off), u8 loop, u16 n, n x f32 x,y,z: the way its NPC drives it (n 0: it stopped)
     Carry = 104,      // u16 id, u8 op (1 add/update: str model, f32 x,y,z,yaw, i32 world (-1 every), u16 carrier (0xFFFF: it lies there), u8 CarryRoll; 2 remove):

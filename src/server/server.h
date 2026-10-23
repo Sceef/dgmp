@@ -226,7 +226,8 @@ struct Trap {
     int32_t world = 0;
     bool players = true, zombies = true;      // who sets it off
     bool explosive = true;                    // wire: an IED at its first end goes off; false: only the mode's handler
-    bool lethal = true;                       // bear trap: a player it holds dies once its bleeding has taken nearly all health
+    bool lethal = true;                       // bear trap: a player it holds bleeds out (dies) unless it gets free...
+    float bleed = 20;                         // ...in this many seconds
     double rearm = 0;                         // > 0: ready again after this many seconds (else it goes off once)
     double armedAt = 0;                       // not before this
     bool fired = false; double firedAt = 0;

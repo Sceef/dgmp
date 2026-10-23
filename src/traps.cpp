@@ -29,7 +29,10 @@ struct Trap {
     float yaw = 0;
     int world = 0;
     bool explosive = true;
-    bool lethal = true;         // bear trap: the player it holds dies near 0 health (the game's bleeding stops short of it)
+    bool lethal = true;         // bear trap: the player it holds bleeds out in `bleed` seconds (the game's own bleeding
+    float bleed = 20;           // stops at about a quarter of health)
+    bool ours = false;          // a bear trap that went off on this player (it is hostile to it now)
+    bool held = false;          // ...and holds it: the player stands in its jaws
     UObject* actor = nullptr;   // the game's trap
     UObject* wire = nullptr;    // a wire's line
     UObject* stakes[2] = {};    // a wire's stakes in the ground under its ends
@@ -147,7 +150,7 @@ void FireNow(Trap& t, UObject* pawn, uint16_t localId) {
             Call(t.actor, "SetUnFriendly");
             Call(t.actor, "TurnOnBearTrap");
             SetCollision(ObjectProp(t.actor, "ActivationTrigger"), 1);
-            t.pullAt = Clock() + 0.15; t.pullStep = 1;  // (Update: arming takes the game a moment; pulled at once, only the trap turned)
+            t.pullAt = Clock() + 0.15; t.pullStep = 1; t.ours = true;  // (Update: arming takes the game a moment; pulled at once, only the trap turned)
             return;
         }
         Call(t.actor, "CloseTheTrapFinish");
@@ -169,7 +172,7 @@ void OnMessage(const uint8_t* data, size_t size) {
     if (op == net::TrapOp::Add) {
         Trap t;
         t.type = r.Str(32); t.a.X = r.F32(); t.a.Y = r.F32(); t.a.Z = r.F32(); t.yaw = r.F32();
-        t.b.X = r.F32(); t.b.Y = r.F32(); t.b.Z = r.F32(); t.world = r.I32(); t.explosive = r.U8() != 0; t.lethal = r.U8() != 0;
+        t.b.X = r.F32(); t.b.Y = r.F32(); t.b.Z = r.F32(); t.world = r.I32(); t.explosive = r.U8() != 0; t.lethal = r.U8() != 0; t.bleed = r.F32();
         if (!r.ok()) return;
         if (auto old = list.find(id); old != list.end()) Despawn(old->second);
         list[id] = t;
@@ -211,27 +214,38 @@ void Pull(Trap& t, UObject* pawn) {
         Call(pawn, "K2_SetActorLocation", &p);
     }
 }
-UObject* localPawn = nullptr;  // (Caught: the trap holding it)
-// The bear trap of ours holding this player (its victim), or null.
+// The bear trap holding this player, or null: one that went off on it while the player stands in its jaws (the game
+// keeps the player there until the mash-the-key escape succeeds; then it walks off and the trap lets go of it).
 const Trap* Holder() {
-    if (!IsValid(localPawn)) return nullptr;
-    for (auto& [id, t] : list) if (t.type == "beartrap" && IsValid(t.actor) && ObjectProp(t.actor, "PawnVictim") == localPawn) return &t;
+    for (auto& [id, t] : list) if (t.held) return &t;
     return nullptr;
 }
 
 void Update(UObject* pawn, uint16_t localId) {
-    localPawn = pawn;
     if (!IsValid(pawn)) return;
-    // Held by a lethal bear trap: its bleeding takes health near 0 and stops; there the player dies (the
-    // multiplayer death sees health at 0).
+    const FVector me = ActorPos(pawn);
+    const double now = Clock();
+    static double last = now;
+    const float dt = float(std::min(0.5, now - last)); last = now;
+    // Which of our bear traps holds this player: in its jaws (60 cm) it is held, past 80 cm free again.
+    for (auto& [id, t] : list) {
+        if (!t.ours || !IsValid(t.actor)) { t.held = false; continue; }
+        const FVector at = ActorPos(t.actor);
+        const float d = std::sqrt((at.X - me.X) * (at.X - me.X) + (at.Y - me.Y) * (at.Y - me.Y));
+        if (t.held && d > 80.f) { t.held = false; t.ours = false; dg::Log("traps: free of the bear trap"); }
+        else if (!t.held && !t.pullAt && d < 60.f) t.held = true;
+    }
+    // A lethal one: the player bleeds out in `bleed` seconds (the game's own bleeding stops at about a quarter);
+    // at 0 the multiplayer death takes over.
     if (const Trap* holder = Holder(); holder && holder->lethal) {
         constexpr int kPawnHealth = 0x1FD4, kPawnMaxHealth = 0x1FE4;  // (as src/mp.cpp)
         float& health = Field<float>(pawn, kPawnHealth);
         const float max = Field<float>(pawn, kPawnMaxHealth);
-        if (max > 0 && health > 0 && health <= max * 0.05f) { health = 0; dg::Log("traps: the bear trap's bleeding killed this player"); }
+        if (max > 0 && health > 0) {
+            health = std::max(0.f, health - max / std::max(1.f, holder->bleed) * dt);
+            if (health <= 1.f) { health = 0; dg::Log("traps: bled out in the bear trap"); }
+        }
     }
-    const FVector me = ActorPos(pawn);
-    const double now = Clock();
     for (auto& [id, t] : list) {
         const float dx = t.a.X - me.X, dy = t.a.Y - me.Y, d2 = dx * dx + dy * dy;
         const bool inRange = t.world == myWorld && d2 < (t.spawned ? kDespawnRange * kDespawnRange : kSpawnRange * kSpawnRange);
