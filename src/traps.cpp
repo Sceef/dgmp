@@ -225,8 +225,6 @@ void Update(UObject* pawn, uint16_t localId) {
     if (!IsValid(pawn)) return;
     const FVector me = ActorPos(pawn);
     const double now = Clock();
-    static double last = now;
-    const float dt = float(std::min(0.5, now - last)); last = now;
     // Which of our bear traps holds this player: in its jaws (60 cm) it is held, past 80 cm free again.
     for (auto& [id, t] : list) {
         if (!t.ours || !IsValid(t.actor)) { t.held = false; continue; }
@@ -235,17 +233,21 @@ void Update(UObject* pawn, uint16_t localId) {
         if (t.held && d > 80.f) { t.held = false; t.ours = false; dg::Log("traps: free of the bear trap"); }
         else if (!t.held && !t.pullAt && d < 60.f) t.held = true;
     }
-    // A lethal one: the player bleeds out in `bleed` seconds (the game's own bleeding stops at about a quarter);
-    // at 0 the multiplayer death takes over.
+    // A lethal one: the player bleeds out in `bleed` seconds (the game's own bleeding stops at about a quarter).
+    // Through the game's damage, twice a second: the screen reddens with every wound, and the last one is a
+    // lethal hit like any other (the multiplayer death at once).
+    static double nextBleed = 0;
     if (const Trap* holder = Holder(); holder && holder->lethal) {
-        constexpr int kPawnHealth = 0x1FD4, kPawnMaxHealth = 0x1FE4;  // (as src/mp.cpp)
-        float& health = Field<float>(pawn, kPawnHealth);
+        constexpr int kPawnMaxHealth = 0x1FE4;  // (as src/mp.cpp)
         const float max = Field<float>(pawn, kPawnMaxHealth);
-        if (max > 0 && health > 0) {
-            health = std::max(0.f, health - max / std::max(1.f, holder->bleed) * dt);
-            if (health <= 1.f) { health = 0; dg::Log("traps: bled out in the bear trap"); }
+        static UObject* statics = nullptr;
+        if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
+        if (now >= nextBleed && max > 0 && IsValid(statics)) if (auto f = Fn(statics, "ApplyDamage")) {
+            nextBleed = now + 0.5;
+            Params p(f); p.Set("DamagedActor", pawn); p.Set<float>("BaseDamage", max / std::max(1.f, holder->bleed) * 0.5f); p.Set("DamageCauser", holder->actor);
+            Call(statics, "ApplyDamage", &p);
         }
-    }
+    } else nextBleed = now + 0.5;
     for (auto& [id, t] : list) {
         const float dx = t.a.X - me.X, dy = t.a.Y - me.Y, d2 = dx * dx + dy * dy;
         const bool inRange = t.world == myWorld && d2 < (t.spawned ? kDespawnRange * kDespawnRange : kSpawnRange * kSpawnRange);
