@@ -665,7 +665,7 @@ bool MoveFlashlightToL() {
     return true;
 }
 void DrawPlates();
-void DrawHudLayer() { DrawPlates(); clientlua::Draw(); mpui::DrawHud(); voice::DrawHud(); }
+void DrawHudLayer() { DrawPlates(); traps::Draw(); clientlua::Draw(); mpui::DrawHud(); voice::DrawHud(); }
 void DrawPlates() {
     std::vector<Plate> list;
     std::string caption;
@@ -2084,7 +2084,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         const float maxHp = Field<float>(pawn, kPawnMaxHealth);
         // The server's setHealth / heal / kill: 0 goes the same way as a lethal hit.
         if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? std::max(2.f, maxHp * wantedHealth / 100.f) : 0.f; wantedHealth = -1; }
-        const bool lethal = policy::TakeLethalHit();
+        const bool lethal = policy::TakeLethalHit() || traps::TakeBledOut();  // (a bear trap does not let the game kill)
         if (!deathPhase && (hp <= 1.5f || lethal)) {
             deathPhase = 1; deathAt = now;
             traps::OnLocalDeath();  // a bear trap holding the body lets go of it

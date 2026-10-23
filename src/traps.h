@@ -18,5 +18,9 @@ void Update(ue::UObject* pawn, uint16_t localId);   // every frame while connect
 bool Caught();
 // This player died (the multiplayer death keeps the same body): the bear trap holding it lets go and goes.
 void OnLocalDeath();
+// A lethal bear trap bled this player out: the multiplayer death now (consumed).
+bool TakeBledOut();
+// Overlay HUD layer (frame thread): the red of bleeding in a bear trap.
+void Draw();
 
 }  // namespace traps

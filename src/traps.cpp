@@ -2,7 +2,9 @@
 #include "worldedit.h"
 #include "log.h"
 #include "shared/protocol.h"
+#include "imgui.h"
 #include <windows.h>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -48,6 +50,8 @@ struct Trap {
 };
 std::map<uint16_t, Trap> list;
 int myWorld = 0;
+std::atomic<float> bleedRed{0};  // 0..1: how red the screen's edges are (bleeding in a bear trap)
+bool bledOut = false;
 
 double Clock() { return GetTickCount64() / 1000.0; }
 UObject* ObjectProp(UObject* o, const char* name) {
@@ -234,36 +238,19 @@ void Update(UObject* pawn, uint16_t localId) {
         if (t.held && d > 80.f) { t.held = false; t.ours = false; dg::Log("traps: free of the bear trap"); }
         else if (!t.held && !t.pullAt && d < 60.f) { t.held = true; t.heldSince = now; t.heldHealth = Field<float>(pawn, 0x1FD4); }
     }
-    // A lethal one: the player bleeds out in `bleed` seconds from the health it had when caught (the game's own
-    // bleeding stops at about a quarter). Twice a second a wound of the game's bleeding damage type (the screen
-    // reddens; health keeps to the schedule however the game weighs the wound), and at the end a lethal hit like
-    // any other: the multiplayer death at once.
-    static double nextBleed = 0;
+    // A lethal one: the player bleeds out in `bleed` seconds from the health it had when caught. Our own: the game's
+    // bleeding stops at about a quarter, its red fades with it, and while the trap holds the player the game does not
+    // let it die. Health follows the schedule, the screen's edges redden more and more (Draw), and at 0 the
+    // multiplayer death comes at once (TakeBledOut), as for an explosion.
     if (const Trap* holder = Holder(); holder && holder->lethal) {
         constexpr int kPawnHealth = 0x1FD4;  // (as src/mp.cpp)
         float& health = Field<float>(pawn, kPawnHealth);
-        static UObject* statics = nullptr;
-        static UObject* bleedType = nullptr;
-        if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
-        if (!IsValid(bleedType)) { bleedType = LoadAsset("/Game/Libraries/Blueprints/DamageTypes/DmgTypeBP_BleedingTick.DmgTypeBP_BleedingTick_C"); if (bleedType) AddToRoot(bleedType); }
-        auto wound = [&](float damage) {
-            auto f = IsValid(statics) ? Fn(statics, "ApplyDamage") : nullptr;
-            if (!f) return;
-            Params p(f); p.Set("DamagedActor", pawn); p.Set<float>("BaseDamage", damage); p.Set("DamageCauser", holder->actor);
-            if (bleedType) p.Set("DamageTypeClass", bleedType);
-            Call(statics, "ApplyDamage", &p);
-        };
-        if (now >= nextBleed && health > 0) {
-            nextBleed = now + 0.5;
-            const float left = 1.f - float(now - holder->heldSince) / std::max(1.f, holder->bleed);
-            const float expected = holder->heldHealth * left;
-            if (expected <= 1.f) { wound(100000.f); dg::Log("traps: bled out in the bear trap"); }  // (lethal: the death path)
-            else {
-                wound(std::max(0.5f, health - expected));
-                if (health > expected) health = expected;
-            }
-        }
-    } else nextBleed = now + 0.5;
+        const float left = std::clamp(1.f - float(now - holder->heldSince) / std::max(1.f, holder->bleed), 0.f, 1.f);
+        const float expected = holder->heldHealth * left;
+        if (health > expected) health = expected;
+        bleedRed = 0.35f + 0.65f * (1.f - left);
+        if (expected <= 1.f && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
+    } else bleedRed = 0;
     for (auto& [id, t] : list) {
         const float dx = t.a.X - me.X, dy = t.a.Y - me.Y, d2 = dx * dx + dy * dy;
         const bool inRange = t.world == myWorld && d2 < (t.spawned ? kDespawnRange * kDespawnRange : kSpawnRange * kSpawnRange);
@@ -291,6 +278,24 @@ void OnLocalDeath() {
         t.ours = t.held = false; t.done = true;
         dg::Log("traps: the bear trap let go of the dead player");
     }
+}
+
+bool TakeBledOut() { const bool was = bledOut; bledOut = false; return was; }
+
+// Red closing in from the screen's edges, pulsing like a heartbeat.
+void Draw() {
+    const float red = bleedRed.load();
+    if (red <= 0) return;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const ImVec2 s = ImGui::GetIO().DisplaySize;
+    const float pulse = 0.85f + 0.15f * std::sin(float(Clock()) * 5.f);
+    const int a = int(std::clamp(red * pulse, 0.f, 1.f) * 200.f);
+    const ImU32 edge = IM_COL32(150, 0, 0, a), clear = IM_COL32(150, 0, 0, 0);
+    const float w = s.x * (0.18f + 0.22f * red), h = s.y * (0.18f + 0.22f * red);
+    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, s.y), edge, clear, clear, edge);              // left
+    dl->AddRectFilledMultiColor(ImVec2(s.x - w, 0), ImVec2(s.x, s.y), clear, edge, edge, clear);      // right
+    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(s.x, h), edge, edge, clear, clear);              // top
+    dl->AddRectFilledMultiColor(ImVec2(0, s.y - h), ImVec2(s.x, s.y), clear, clear, edge, edge);      // bottom
 }
 
 }  // namespace traps
