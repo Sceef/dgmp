@@ -96,7 +96,7 @@ command("wire", function(player) setWire(player, true) end)
 command("clothesline", function(player) setWire(player, false) end)
 command("beartrap", function(player) local x, y, z = ahead(player, 2); createTrap({ type = "beartrap", x = x, y = y, z = z, world = player.world }) end)
 command("boom", function(player) local x, y, z = ahead(player, 10); explode(x, y, z, player.world) end)
-command("place", function(player, args, kind) if kind == "mine" or kind == "beartrap" or kind == "wire" then place(player, kind) end end)
+command("place", function(player, args, kind) if kind == "mine" or kind == "beartrap" or kind == "wire" then place(player, kind, true) end end)
 command("traps", function(player)
     for _, t in ipairs(traps()) do
         player:message(("%d %s %s at %.0f %.0f %.0f%s"):format(t.id, t.type, t.armed and "armed" or "-", t.x, t.y, t.z,
@@ -106,7 +106,9 @@ end)
 
 -- Setting one from the backpack: the window closes and the player aims where it goes (client/main.lua);
 -- the item stays in the backpack until the trap is there ("placeAt").
-function place(player, kind)  -- (the local declared above)
+local freePlace = {}  -- player id -> kind: /place sets one without the item (testing)
+function place(player, kind, free)  -- (the local declared above)
+    freePlace[player.id] = free and kind or nil
     inventory.close(player)
     player:clientSend("place", { kind = kind, maxLength = 10 })
     return false
@@ -134,7 +136,11 @@ local ITEM = { mine = "mine", beartrap = "beartrap", wire = "tripwire" }
 on("clientMessage", function(player, name, data)
     if name ~= "placeAt" or type(data) ~= "table" or not ITEM[data.kind] or type(data.a) ~= "table" then return end
     local bag = inventory.of(player)
-    if not bag:has(ITEM[data.kind]) then return end
+    local free = freePlace[player.id] == data.kind
+    if not free and not bag:has(ITEM[data.kind]) then
+        local names = { mine = { "mine", "мины" }, beartrap = { "bear trap", "капкана" }, wire = { "tripwire", "растяжки" } }
+        return player:message(T(player, "No " .. names[data.kind][1] .. " in the backpack.", "Нет " .. names[data.kind][2] .. " в рюкзаке."), RED)
+    end
     local px, py, pz = player:position()
     local function point(p)
         if type(p) ~= "table" then return nil end
@@ -152,9 +158,14 @@ on("clientMessage", function(player, name, data)
         if len < 100 or len > 1000 then return player:message(T(player, "A wire is 1 to 10 m long.", "Растяжка — от 1 до 10 м."), RED) end
         trap = createTrap({ type = "wire", x = ax, y = ay, z = az + 30, x2 = bx, y2 = by, z2 = bz + 30, world = player.world })
     else
+        if (ax - px) ^ 2 + (ay - py) ^ 2 < 150 ^ 2 then  -- under your own feet it would catch you at once
+            return player:message(T(player, "Not under your feet: at least 1.5 m away.", "Не под ноги: хотя бы в 1,5 м."), RED)
+        end
         trap = createTrap({ type = data.kind, x = ax, y = ay, z = az, yaw = tonumber(data.yaw) or 0, world = player.world })
     end
-    if trap then bag:remove(ITEM[data.kind], 1) end
+    if trap then
+        if free then freePlace[player.id] = nil else bag:remove(ITEM[data.kind], 1) end
+    end
 end)
 
 -- ---------------------------------------------------------------- the world of the demo
