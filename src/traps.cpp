@@ -33,6 +33,7 @@ struct Trap {
     float bleed = 20;           // stops at about a quarter of health)
     bool ours = false;          // a bear trap that went off on this player (it is hostile to it now)
     bool held = false;          // ...and holds it: the player stands in its jaws
+    double heldSince = 0; float heldHealth = 0;  // since when, with how much health (the bleeding's schedule)
     UObject* actor = nullptr;   // the game's trap
     UObject* wire = nullptr;    // a wire's line
     UObject* stakes[2] = {};    // a wire's stakes in the ground under its ends
@@ -231,21 +232,36 @@ void Update(UObject* pawn, uint16_t localId) {
         const FVector at = ActorPos(t.actor);
         const float d = std::sqrt((at.X - me.X) * (at.X - me.X) + (at.Y - me.Y) * (at.Y - me.Y));
         if (t.held && d > 80.f) { t.held = false; t.ours = false; dg::Log("traps: free of the bear trap"); }
-        else if (!t.held && !t.pullAt && d < 60.f) t.held = true;
+        else if (!t.held && !t.pullAt && d < 60.f) { t.held = true; t.heldSince = now; t.heldHealth = Field<float>(pawn, 0x1FD4); }
     }
-    // A lethal one: the player bleeds out in `bleed` seconds (the game's own bleeding stops at about a quarter).
-    // Through the game's damage, twice a second: the screen reddens with every wound, and the last one is a
-    // lethal hit like any other (the multiplayer death at once).
+    // A lethal one: the player bleeds out in `bleed` seconds from the health it had when caught (the game's own
+    // bleeding stops at about a quarter). Twice a second a wound of the game's bleeding damage type (the screen
+    // reddens; health keeps to the schedule however the game weighs the wound), and at the end a lethal hit like
+    // any other: the multiplayer death at once.
     static double nextBleed = 0;
     if (const Trap* holder = Holder(); holder && holder->lethal) {
-        constexpr int kPawnMaxHealth = 0x1FE4;  // (as src/mp.cpp)
-        const float max = Field<float>(pawn, kPawnMaxHealth);
+        constexpr int kPawnHealth = 0x1FD4;  // (as src/mp.cpp)
+        float& health = Field<float>(pawn, kPawnHealth);
         static UObject* statics = nullptr;
+        static UObject* bleedType = nullptr;
         if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
-        if (now >= nextBleed && max > 0 && IsValid(statics)) if (auto f = Fn(statics, "ApplyDamage")) {
-            nextBleed = now + 0.5;
-            Params p(f); p.Set("DamagedActor", pawn); p.Set<float>("BaseDamage", max / std::max(1.f, holder->bleed) * 0.5f); p.Set("DamageCauser", holder->actor);
+        if (!IsValid(bleedType)) { bleedType = LoadAsset("/Game/Libraries/Blueprints/DamageTypes/DmgTypeBP_BleedingTick.DmgTypeBP_BleedingTick_C"); if (bleedType) AddToRoot(bleedType); }
+        auto wound = [&](float damage) {
+            auto f = IsValid(statics) ? Fn(statics, "ApplyDamage") : nullptr;
+            if (!f) return;
+            Params p(f); p.Set("DamagedActor", pawn); p.Set<float>("BaseDamage", damage); p.Set("DamageCauser", holder->actor);
+            if (bleedType) p.Set("DamageTypeClass", bleedType);
             Call(statics, "ApplyDamage", &p);
+        };
+        if (now >= nextBleed && health > 0) {
+            nextBleed = now + 0.5;
+            const float left = 1.f - float(now - holder->heldSince) / std::max(1.f, holder->bleed);
+            const float expected = holder->heldHealth * left;
+            if (expected <= 1.f) { wound(100000.f); dg::Log("traps: bled out in the bear trap"); }  // (lethal: the death path)
+            else {
+                wound(std::max(0.5f, health - expected));
+                if (health > expected) health = expected;
+            }
         }
     } else nextBleed = now + 0.5;
     for (auto& [id, t] : list) {
@@ -266,5 +282,15 @@ void Update(UObject* pawn, uint16_t localId) {
 
 // Held while one of our bear traps has this player as its victim (it lets go once the escape succeeds or it dies).
 bool Caught() { return Holder() != nullptr; }
+
+void OnLocalDeath() {
+    for (auto& [id, t] : list) {
+        if (!t.ours) continue;
+        // The game's own "the trapped player died": it lets go of the body (the multiplayer death keeps it).
+        if (IsValid(t.actor)) { Call(t.actor, "PlayerDied"); Destroy(t.actor); }
+        t.ours = t.held = false; t.done = true;
+        dg::Log("traps: the bear trap let go of the dead player");
+    }
+}
 
 }  // namespace traps

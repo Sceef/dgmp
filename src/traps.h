@@ -16,5 +16,7 @@ void Reset();                                       // disconnected: every trap 
 void Update(ue::UObject* pawn, uint16_t localId);   // every frame while connected
 // This player is held by a bear trap (the game's mash-F escape runs): the mode's keys and prompts must not take F.
 bool Caught();
+// This player died (the multiplayer death keeps the same body): the bear trap holding it lets go and goes.
+void OnLocalDeath();
 
 }  // namespace traps

@@ -2087,6 +2087,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         const bool lethal = policy::TakeLethalHit();
         if (!deathPhase && (hp <= 1.5f || lethal)) {
             deathPhase = 1; deathAt = now;
+            traps::OnLocalDeath();  // a bear trap holding the body lets go of it
             LeaveCorpse(L.mesh, reportedLook);
             HideLocalBody(pawn, true);
             SetHudVisible(false);  // the restored health would show while the player "lies dead"
