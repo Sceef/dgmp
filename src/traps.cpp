@@ -38,7 +38,8 @@ struct Trap {
     uint16_t victim = 0xFFFF;
     bool done = false;          // fired
     double cleanupAt = 0;       // a fired wire: its stakes go then
-    double pullAt = 0;          // a bear trap catching this player: it is put into the jaws then (once they are armed)
+    double pullAt = 0;          // a bear trap catching this player: it steps out of the jaws' reach then, and in
+    int pullStep = 0;           // 1: out (next: in)
     int catching = 0;           // a bear trap catching this player: 1 moved aside, 2 brought under its feet (next frames)
 };
 std::map<uint16_t, Trap> list;
@@ -146,7 +147,7 @@ void FireNow(Trap& t, UObject* pawn, uint16_t localId) {
             Call(t.actor, "SetUnFriendly");
             Call(t.actor, "TurnOnBearTrap");
             SetCollision(ObjectProp(t.actor, "ActivationTrigger"), 1);
-            t.pullAt = Clock() + 0.15;  // (Update: arming takes the game a moment; pulled at once, only the trap turned)
+            t.pullAt = Clock() + 0.15; t.pullStep = 1;  // (Update: arming takes the game a moment; pulled at once, only the trap turned)
             return;
         }
         Call(t.actor, "CloseTheTrapFinish");
@@ -192,12 +193,21 @@ void SetWorld(int world) { myWorld = world; }
 
 void Reset() { for (auto& [id, t] : list) Despawn(t); list.clear(); myWorld = 0; }
 
+// The victim comes into the armed jaws from outside them (a pawn already standing inside raises no overlap):
+// first a step out, 1.5 m away from the trap, then, a frame later, into its centre.
 void Pull(Trap& t, UObject* pawn) {
     t.pullAt = 0;
     if (!IsValid(t.actor) || !IsValid(pawn)) return;
     const FVector trap = ActorPos(t.actor), body = ActorPos(pawn);
+    FVector to{trap.X, trap.Y, body.Z};
+    if (t.pullStep == 1) {
+        float dx = body.X - trap.X, dy = body.Y - trap.Y; const float d = std::sqrt(dx * dx + dy * dy);
+        if (d > 1) { dx /= d; dy /= d; } else { dx = 1; dy = 0; }
+        to = {trap.X + dx * 150.f, trap.Y + dy * 150.f, body.Z};
+        t.pullStep = 2; t.pullAt = Clock() + 0.05;
+    } else t.pullStep = 0;
     if (auto f = Fn(pawn, "K2_SetActorLocation")) {
-        Params p(f); p.Set("NewLocation", FVector{trap.X, trap.Y, body.Z}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true);
+        Params p(f); p.Set("NewLocation", to); p.SetBool("bSweep", false); p.SetBool("bTeleport", true);
         Call(pawn, "K2_SetActorLocation", &p);
     }
 }
