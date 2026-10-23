@@ -132,12 +132,26 @@ inventory.define("tripwire", {
     actions = { { id = "set", label = { en = "Stretch", ru = "Натянуть" }, fn = function(player) return place(player, "wire") end } },
 })
 
--- Where the player put it (client/main.lua: aimed, with a ghost of it): each point within 12 m of the player (a 10 m wire
--- is stretched standing at one end); a wire 1..10 m long, 30 cm over the ground at each end. The item is taken only
--- when the trap is there.
+-- Where the player put it (client/main.lua: aimed, with a ghost of it): within 4 m of the player when it is put. A wire
+-- as in the game: its first end is set ("wireStart", kept here as it was then), the player walks on stretching it, and
+-- sets the other end within 4 m of where it stands; the wire is 1..10 m long, 30 cm over the ground at each end. The
+-- item is taken only when the trap is there.
 local ITEM = { mine = "mine", beartrap = "beartrap", wire = "tripwire" }
-local REACH = 1200  -- units: as far from the player as a point may be (the same in client/main.lua)
+local REACH = 400       -- units: as far from the player as a point may be when it is put (RANGE in client/main.lua)
+local wireStart = {}    -- player id -> {x, y, z}: the first end of the wire it is stretching
 on("clientMessage", function(player, name, data)
+    if name == "wireStart" and type(data) == "table" and type(data.a) == "table" then
+        local px, py, pz = player:position()
+        local x, y, z = tonumber(data.a.x), tonumber(data.a.y), tonumber(data.a.z)
+        if x and y and z and (x - px) ^ 2 + (y - py) ^ 2 + (z - pz) ^ 2 <= REACH ^ 2 then
+            wireStart[player.id] = { x = x, y = y, z = z }
+        else
+            wireStart[player.id] = nil
+            player:clientSend("wireRefused", {})
+            player:message(T(player, "Too far from you.", "Слишком далеко от вас."), RED)
+        end
+        return
+    end
     if name ~= "placeAt" or type(data) ~= "table" or not ITEM[data.kind] or type(data.a) ~= "table" then return end
     local bag = inventory.of(player)
     local free = freePlace[player.id] == data.kind
@@ -152,8 +166,15 @@ on("clientMessage", function(player, name, data)
         if not (x and y and z) or (x - px) ^ 2 + (y - py) ^ 2 + (z - pz) ^ 2 > REACH ^ 2 then return nil end
         return x, y, z
     end
-    local ax, ay, az = point(data.a)
-    if not ax then return player:message(T(player, "Too far from you.", "Слишком далеко от вас."), RED) end
+    local ax, ay, az
+    if data.kind == "wire" then  -- its first end as it was set, not as the client says now
+        local a = wireStart[player.id]
+        if not a then return player:message(T(player, "Set the wire's first end again.", "Поставьте первый конец растяжки заново."), RED) end
+        ax, ay, az = a.x, a.y, a.z
+    else
+        ax, ay, az = point(data.a)
+        if not ax then return player:message(T(player, "Too far from you.", "Слишком далеко от вас."), RED) end
+    end
     local trap
     if data.kind == "wire" then
         local bx, by, bz = point(data.b)
@@ -161,6 +182,7 @@ on("clientMessage", function(player, name, data)
         local len = math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2)
         if len < 100 or len > 1000 then return player:message(T(player, "A wire is 1 to 10 m long.", "Растяжка — от 1 до 10 м."), RED) end
         trap = createTrap({ type = "wire", x = ax, y = ay, z = az + 30, x2 = bx, y2 = by, z2 = bz + 30, world = player.world })
+        wireStart[player.id] = nil
     else
         if (ax - px) ^ 2 + (ay - py) ^ 2 < 150 ^ 2 then  -- under your own feet it would catch you at once
             return player:message(T(player, "Not under your feet: at least 1.5 m away.", "Не под ноги: хотя бы в 1,5 м."), RED)

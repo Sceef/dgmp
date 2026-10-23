@@ -6,7 +6,7 @@ local GHOST = {
     beartrap = "/Game/Environments/ManMade/Props/beartrap/BearTrap_Closed_Mesh.BearTrap_Closed_Mesh",
     wire = "/Game/Weapons/Trap_Weapons/Mines/IED/IED.IED",   -- the IED at the wire's first end
 }
-local RANGE = 1200    -- units: as far as the server accepts a point (REACH in main.lua)
+local RANGE = 400     -- units: as far from you as a point may be put (REACH in main.lua)
 local placing = nil   -- {kind, maxLength, a = a wire's first end, ghost = object id}
 
 local function ru() return me().lang == "ru" end
@@ -33,7 +33,8 @@ local function put()
         return stop()
     end
     if not placing.a then
-        placing.a = p   -- the ghost IED stays at the first end
+        placing.a = p   -- the ghost IED stays at the first end; you walk on stretching the wire
+        send("wireStart", { a = { x = p.x, y = p.y, z = p.z } })
         playSound("ui_tutorial_x_press", { volume = 0.5 })
         return
     end
@@ -45,6 +46,8 @@ local function put()
     send("placeAt", { kind = "wire", a = { x = placing.a.x, y = placing.a.y, z = placing.a.z }, b = { x = p.x, y = p.y, z = p.z } })
     stop()
 end
+
+onServer("wireRefused", function() if placing then placing.a = nil end end)  -- (the first end was too far)
 
 onServer("place", function(data)
     stop()
