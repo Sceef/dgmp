@@ -2120,7 +2120,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         bool pauseMenu = false;
         if (auto f = IsValid(controller) ? Fn(controller, "IsPauseMenuActive") : nullptr) { Params p(f); Call(controller, "IsPauseMenuActive", &p); pauseMenu = p.GetBool("ReturnValue"); }
         const bool playing = gameplay && !pauseMenu && !policy::RewardPanelOpen();
-        const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning();
+        const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning() && !traps::Caught();  // (in a bear trap F is the game's escape)
         voiceAllowed = playing && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen();
         scriptKeys = canAct; scriptHud = playing && !spec.on;
         mpui::Update(client, at, canAct, playing && !spec.on);

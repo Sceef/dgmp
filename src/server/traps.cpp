@@ -49,7 +49,7 @@ bool Trap::Hit(float px, float py, float pz, float qx, float qy, float qz) const
 void Server::SendTrap(Player* to, const Trap& t) {
     net::Writer w; w.Op(net::Msg::Trap); w.U16(t.id); w.U8(uint8_t(net::TrapOp::Add));
     w.Str(t.type); w.F32(t.x); w.F32(t.y); w.F32(t.z); w.F32(t.yaw); w.F32(t.x2); w.F32(t.y2); w.F32(t.z2);
-    w.I32(t.world); w.U8(t.explosive);
+    w.I32(t.world); w.U8(t.explosive); w.U8(t.lethal);
     Send(to, w, true);
 }
 

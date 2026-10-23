@@ -830,7 +830,8 @@ struct Api {
     }
     // createTrap{type="mine"|"ied"|"beartrap"|"wire"|"zone", x=, y=, z= (the ground), yaw=, x2=, y2=, z2= (wire's other end),
     // radius= (m; point traps: mine 1.5, ied 2, beartrap 0.6, zone 2), world=0, players=true, zombies=true,
-    // explosive=true (wire), rearm= (s: goes off again after that; else once), onTrigger=function(trap, player, zombieId) return false end} -> id
+    // explosive=true (wire), lethal=true (beartrap: kills a held player its bleeding brought near 0), rearm= (s: goes off again
+    // after that; else once), onTrigger=function(trap, player, zombieId) return false end} -> id
     static int CreateTrapLua(lua_State* L) {
         luaL_checktype(L, 1, LUA_TTABLE);
         // The fields as data (onTrigger is a function: kept apart below).
@@ -855,6 +856,7 @@ struct Api {
         if (o["players"].type() == json::Value::Type::Bool) t.players = o["players"].asBool();
         if (o["zombies"].type() == json::Value::Type::Bool) t.zombies = o["zombies"].asBool();
         if (o["explosive"].type() == json::Value::Type::Bool) t.explosive = o["explosive"].asBool();
+        if (o["lethal"].type() == json::Value::Type::Bool) t.lethal = o["lethal"].asBool();
         if (o["rearm"].isNumber()) t.rearm = std::max(0.0, o["rearm"].asNumber());
         t.armedAt = Srv(L).Now() + 1.0;  // not under the feet of whoever placed it
         const uint16_t id = Srv(L).AddTrap(t);

@@ -88,8 +88,10 @@ local function setWire(player, explosive)
             victim:message(T(victim, "A wire across the road!", "Растяжка поперёк дороги!"), RED)
         end or nil })
 end
+local pickups = {}  -- trap id -> interaction id: its owner may take it back while it has not gone off
 on("trap", function(trap, player, zombie)
     log(("trap %d (%s) set off by %s"):format(trap.id, trap.type, player and player.name or zombie and ("zombie " .. zombie) or "?"))
+    if pickups[trap.id] then removeInteraction(pickups[trap.id]); pickups[trap.id] = nil end
 end)
 command("mine", setMine)
 command("wire", function(player) setWire(player, true) end)
@@ -165,6 +167,17 @@ on("clientMessage", function(player, name, data)
     end
     if trap then
         if free then freePlace[player.id] = nil else bag:remove(ITEM[data.kind], 1) end
+        -- Its owner takes it back with F while it has not gone off (into the backpack).
+        local owner, kind = player.id, data.kind
+        local id
+        id = createInteraction({ x = ax, y = ay, z = az + 50, radius = 1.5, key = "F", world = player.world, text = "Take the trap / Забрать ловушку",
+            onUse = function(p)
+                if p.id ~= owner then return p:message(T(p, "Not your trap.", "Это не ваша ловушка."), RED) end
+                if not getTrap(trap) then return end
+                if inventory.of(p):add(ITEM[kind], 1) == 0 then return p:message(T(p, "The backpack is full.", "Рюкзак полон."), RED) end
+                removeTrap(trap); removeInteraction(id); pickups[trap] = nil
+            end })
+        pickups[trap] = id
     end
 end)
 

@@ -29,6 +29,7 @@ struct Trap {
     float yaw = 0;
     int world = 0;
     bool explosive = true;
+    bool lethal = true;         // bear trap: the player it holds dies near 0 health (the game's bleeding stops short of it)
     UObject* actor = nullptr;   // the game's trap
     UObject* wire = nullptr;    // a wire's line
     UObject* stakes[2] = {};    // a wire's stakes in the ground under its ends
@@ -37,6 +38,8 @@ struct Trap {
     uint16_t victim = 0xFFFF;
     bool done = false;          // fired
     double cleanupAt = 0;       // a fired wire: its stakes go then
+    double pullAt = 0;          // a bear trap catching this player: it is put into the jaws then (once they are armed)
+    int catching = 0;           // a bear trap catching this player: 1 moved aside, 2 brought under its feet (next frames)
 };
 std::map<uint16_t, Trap> list;
 int myWorld = 0;
@@ -54,14 +57,23 @@ FVector ActorPos(UObject* actor) {
     return IsValid(root) ? Field<FVector>(root, off::Scene_C2W_Trans) : FVector{};
 }
 
+void SetCollision(UObject* component, uint8_t type) {  // ECollisionEnabled: 0 none, 1 query only
+    if (auto f = IsValid(component) ? Fn(component, "SetCollisionEnabled") : nullptr) { Params p(f); p.Set<uint8_t>("NewType", type); Call(component, "SetCollisionEnabled", &p); }
+}
 // The game's trap without a mind of its own: its triggers (pawns, hordes, the tutorial, a bear trap's jaws and
-// shot) do not react, and its backpack pickup cannot be taken (it would hand out mines). Only those: the
-// explosion uses the rest of it (its overlap sphere, the weapon), so nothing else is touched.
+// shot) do not react, and it cannot be picked up into the backpack (it would hand out mines and traps). Only
+// those: the explosion uses the rest of it (its overlap sphere, the weapon), so nothing else is touched.
 void Neutralize(UObject* actor) {
     SetBoolProp(actor, "PlayerCanTrigger", false);
-    for (const char* name : {"PawnTrigger_Code", "HordeTrigger_Code", "HordeCriticalTrigger_Code", "TutorialTrigger", "ActivationTrigger", "ShootTrigger"})
-        if (UObject* c = ObjectProp(actor, name)) if (auto f = Fn(c, "SetCollisionEnabled")) { Params p(f); p.Set<uint8_t>("NewType", 0); Call(c, "SetCollisionEnabled", &p); }
-    if (UObject* pickup = ObjectProp(actor, "PickupRef")) if (auto f = Fn(pickup, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(pickup, "SetActorEnableCollision", &p); }
+    for (const char* name : {"PawnTrigger_Code", "HordeTrigger_Code", "HordeCriticalTrigger_Code", "TutorialTrigger", "ActivationTrigger", "ShootTrigger",
+                             "InventoryPickup", "BearTrapPickup"})
+        SetCollision(ObjectProp(actor, name), 0);
+    // The pickup actor stays (the trap's scripts refer to it) but a kilometre under the ground: no "[E] pick up".
+    if (UObject* pickup = ObjectProp(actor, "PickupRef")) {
+        if (auto f = Fn(pickup, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(pickup, "SetActorEnableCollision", &p); }
+        FVector at = ActorPos(pickup); at.Z -= 100000.f;
+        worldedit::PlaceActor(pickup, at, FRotator{0, 0, 0}, 1.f);
+    }
 }
 
 // A line from a to b: the engine's cylinder (1 m long, 1 m wide), stretched and turned along it.
@@ -123,11 +135,18 @@ void FireNow(Trap& t, UObject* pawn, uint16_t localId) {
     dg::Log("traps: %s fires (victim %u, actor %s)", t.type.c_str(), unsigned(t.victim), IsValid(t.actor) ? "here" : "missing");
     if (t.type == "beartrap") {
         if (!IsValid(t.actor)) return;
-        // Its victim is caught the game's way (stuck, mash to get free, bleeding); the others see it snap shut.
-        if (t.victim == localId && IsValid(pawn)) if (UObject* f = Fn(t.actor, "Trap Player")) {
-            Params p(f);
-            if (UObject* first = FirstParam(f)) std::memcpy(static_cast<uint8_t*>(p.Data()) + Field<int32_t>(first, off::UProperty_Offset), &pawn, sizeof pawn);
-            ProcessEvent(t.actor, f, p.Data());
+        // Its victim is caught the game's way (stuck, mash F to get free, bleeding). The game catches a pawn that
+        // moves into the jaws' trigger of a hostile, armed trap (a spawned one is friendly to the player; the trap
+        // itself does not move): so it turns hostile and armed with its trigger on, and the victim is put at its
+        // centre (it may have walked half a metre on by the time the server's word came): that move is the overlap.
+        // (Switching the trigger on under a standing pawn raises none.) The others see it snap shut.
+        if (t.victim == localId && IsValid(pawn)) {
+            SetBoolProp(t.actor, "PlayerCanTrigger", true);  // (Neutralize took it: the jaws' handler checks it)
+            SetBoolProp(t.actor, "IsPlayerPlaced", false);   // a spawned one counts as the player's own, which never catches the player
+            Call(t.actor, "SetUnFriendly");
+            Call(t.actor, "TurnOnBearTrap");
+            SetCollision(ObjectProp(t.actor, "ActivationTrigger"), 1);
+            t.pullAt = Clock() + 0.15;  // (Update: arming takes the game a moment; pulled at once, only the trap turned)
             return;
         }
         Call(t.actor, "CloseTheTrapFinish");
@@ -149,7 +168,7 @@ void OnMessage(const uint8_t* data, size_t size) {
     if (op == net::TrapOp::Add) {
         Trap t;
         t.type = r.Str(32); t.a.X = r.F32(); t.a.Y = r.F32(); t.a.Z = r.F32(); t.yaw = r.F32();
-        t.b.X = r.F32(); t.b.Y = r.F32(); t.b.Z = r.F32(); t.world = r.I32(); t.explosive = r.U8() != 0;
+        t.b.X = r.F32(); t.b.Y = r.F32(); t.b.Z = r.F32(); t.world = r.I32(); t.explosive = r.U8() != 0; t.lethal = r.U8() != 0;
         if (!r.ok()) return;
         if (auto old = list.find(id); old != list.end()) Despawn(old->second);
         list[id] = t;
@@ -173,8 +192,34 @@ void SetWorld(int world) { myWorld = world; }
 
 void Reset() { for (auto& [id, t] : list) Despawn(t); list.clear(); myWorld = 0; }
 
+void Pull(Trap& t, UObject* pawn) {
+    t.pullAt = 0;
+    if (!IsValid(t.actor) || !IsValid(pawn)) return;
+    const FVector trap = ActorPos(t.actor), body = ActorPos(pawn);
+    if (auto f = Fn(pawn, "K2_SetActorLocation")) {
+        Params p(f); p.Set("NewLocation", FVector{trap.X, trap.Y, body.Z}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true);
+        Call(pawn, "K2_SetActorLocation", &p);
+    }
+}
+UObject* localPawn = nullptr;  // (Caught: the trap holding it)
+// The bear trap of ours holding this player (its victim), or null.
+const Trap* Holder() {
+    if (!IsValid(localPawn)) return nullptr;
+    for (auto& [id, t] : list) if (t.type == "beartrap" && IsValid(t.actor) && ObjectProp(t.actor, "PawnVictim") == localPawn) return &t;
+    return nullptr;
+}
+
 void Update(UObject* pawn, uint16_t localId) {
+    localPawn = pawn;
     if (!IsValid(pawn)) return;
+    // Held by a lethal bear trap: its bleeding takes health near 0 and stops; there the player dies (the
+    // multiplayer death sees health at 0).
+    if (const Trap* holder = Holder(); holder && holder->lethal) {
+        constexpr int kPawnHealth = 0x1FD4, kPawnMaxHealth = 0x1FE4;  // (as src/mp.cpp)
+        float& health = Field<float>(pawn, kPawnHealth);
+        const float max = Field<float>(pawn, kPawnMaxHealth);
+        if (max > 0 && health > 0 && health <= max * 0.05f) { health = 0; dg::Log("traps: the bear trap's bleeding killed this player"); }
+    }
     const FVector me = ActorPos(pawn);
     const double now = Clock();
     for (auto& [id, t] : list) {
@@ -183,8 +228,17 @@ void Update(UObject* pawn, uint16_t localId) {
         if (!inRange) { if (t.spawned) Despawn(t); t.fireAt = 0; continue; }  // (an explosion far away is not seen)
         if (!t.spawned && !t.done && !t.failed) { Spawn(t, pawn); if (t.fireAt) t.fireAt = std::max(t.fireAt, now + kFireDelay); }
         if (t.fireAt && now >= t.fireAt) FireNow(t, pawn, localId);
+        if (t.catching == 1 && IsValid(t.actor)) {  // (see FireNow: the bear trap comes under its victim)
+            FVector feet = ActorPos(pawn); feet.Z -= 90.f;
+            worldedit::PlaceActor(t.actor, feet, FRotator{0, t.yaw, 0}, 1.f);
+            t.catching = 2;
+        }
+        if (t.pullAt && now >= t.pullAt) Pull(t, pawn);
         if (t.cleanupAt && now >= t.cleanupAt) { t.cleanupAt = 0; Destroy(t.stakes[0]); Destroy(t.stakes[1]); }
     }
 }
+
+// Held while one of our bear traps has this player as its victim (it lets go once the escape succeeds or it dies).
+bool Caught() { return Holder() != nullptr; }
 
 }  // namespace traps

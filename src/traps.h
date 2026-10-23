@@ -14,5 +14,7 @@ void OnMessage(const uint8_t* data, size_t size);  // Msg::Trap without the op b
 void SetWorld(int world);
 void Reset();                                       // disconnected: every trap goes
 void Update(ue::UObject* pawn, uint16_t localId);   // every frame while connected
+// This player is held by a bear trap (the game's mash-F escape runs): the mode's keys and prompts must not take F.
+bool Caught();
 
 }  // namespace traps
