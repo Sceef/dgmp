@@ -296,6 +296,8 @@ struct Player {
     uint16_t vehicle = 0;                          // server vehicle it drives (0: none)
     uint16_t passengerOf = 0;                      // server vehicle it rides as a passenger (0: none)
     uint16_t dialogId = 0;                         // the dialog open on its screen (0: none)
+    uint16_t itemWindow = 0;                       // the item window open on its screen (0: none)
+    double itemWindowAt = 0; int itemActions = 0;  // item window action rate limit
     net::DialogStyle dialogStyle = net::DialogStyle::MsgBox;
     std::vector<std::string> dialogItems;          // a list dialog's lines (its answer names one)
     double uiWindow = 0; int uiCount = 0;          // page message rate limit (UiMessage)
@@ -475,6 +477,9 @@ public:
     void Ui(Player* p, net::UiOp op, const std::string& name = {}, const std::string& text = {}, bool flag = false);
     // The mode's client scripts (docs/client-lua.md): a message for their onServer(name, fn).
     void ClientSend(Player* p, const std::string& name, const std::string& json);
+    // The mode's item window (docs/API.md "Окно предметов"): shows or updates it (an open one keeps its id); "" closes.
+    uint16_t ItemWindow(Player* p, const std::string& json);
+    void CloseItemWindow(Player* p);
     uint16_t AddIcon(Icon i);
     bool UpdateIcon(const Icon& i);
     bool RemoveIcon(uint16_t id);
@@ -639,7 +644,7 @@ private:
     std::map<uint16_t, Marker> markers_;
     std::map<uint16_t, WorldItem> items_;
     std::map<uint16_t, Interaction> interactions_;
-    uint16_t nextInteraction_ = 1, nextDialog_ = 1;
+    uint16_t nextInteraction_ = 1, nextDialog_ = 1, nextItemWindow_ = 1;
     std::set<uint8_t> watchedKeys_;
     void SendInteraction(_ENetPeer* peer, const Interaction& i);
     void SendWatchedKeys(Player* to);  // null: everyone

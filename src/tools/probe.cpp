@@ -4,11 +4,11 @@
 //   dgmp-probe master <host[:port]>          the master server's list, each server queried
 //   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text] [--auto]
 //       stays connected, walks a small circle, prints server events; stdin lines are sent as chat, except:
-//       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !dlg <id> <1|0> [item],
+//       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !key <letter> (a bound key), !dlg <id> <1|0> [item],
 //       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll),
 //       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
 //       !ui <name> [json] (the mode's page sent dgmp.send(name, data)), !cs <name> [json] (the client script sent send(name, data)),
-//       !cserr <text> (a client script failed),
+//       !cserr <text> (a client script failed), !iw <window id> <json> (an action in the mode's item window),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       Zombies (docs/zombies.md): the ones it owns walk toward it and are reported 10 times a second; !zhit <id> <damage>
 //       (we hurt its puppet), !zdie <id> [killer id] (the one we own died), !zatk <id> <player> <damage> (the one we own hurt that player);
@@ -130,6 +130,7 @@ int main() {
         c.on.scriptList = [](const std::vector<std::pair<std::string, std::string>>& files) {
             std::printf("* client scripts:"); for (auto& f : files) std::printf(" %s", f.first.c_str()); std::printf("%s\n", files.empty() ? " (none)" : "");
         };
+        c.on.itemWindow = [](uint16_t id, const std::string& json) { std::printf("* ITEM WINDOW %u %s\n", id, json.empty() ? "(closed)" : json.c_str()); };
         c.on.scriptEvent = [](const std::string& name, const std::string& json) { std::printf("* client script event %s %s\n", name.c_str(), json.c_str()); };
         c.on.ui = [](net::UiOp op, const std::string& name, const std::string& text, bool flag) {
             if (op == net::UiOp::Open) std::printf("* UI open %s%s\n", text.c_str(), flag ? " (focus)" : "");
@@ -250,6 +251,7 @@ int main() {
                     else if (std::sscanf(s.c_str(), "!at %f %f %f", &x, &y, &z) == 3) { px = x; py = y; pz = z + 90.f; still = true; nextState = 0; }
                     else if (s == "!walk") still = false;
                     else if (std::sscanf(s.c_str(), "!use %u", &id) == 1) c.SendUse(uint16_t(id));
+                    else if (s.size() == 6 && s.rfind("!key ", 0) == 0) c.SendKey(uint8_t(std::toupper(static_cast<unsigned char>(s[5]))));  // a watched key (bindKey)
                     else if (std::sscanf(s.c_str(), "!dlg %u %u %d", &id, &ok, &item) >= 2) c.SendDialogResponse(uint16_t(id), ok != 0, item, "");
                     else if (std::sscanf(s.c_str(), "!pick %u", &id) == 1) c.SendCarry(uint16_t(id), net::CarryOp::Pick);
                     else if (std::sscanf(s.c_str(), "!put %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Put, x, y, z, 0);
@@ -267,6 +269,10 @@ int main() {
                         c.SendScriptMessage(rest.substr(0, sp), sp == std::string::npos ? "null" : rest.substr(sp + 1));
                     }
                     else if (s.rfind("!cserr ", 0) == 0) c.SendScriptError(s.substr(7));
+                    else if (s.rfind("!iw ", 0) == 0) {  // !iw <window id> <json>: an action in the item window
+                        const auto rest = s.substr(4); const auto sp = rest.find(' ');
+                        if (sp != std::string::npos) c.SendItemAction(uint16_t(std::atoi(rest.substr(0, sp).c_str())), rest.substr(sp + 1));
+                    }
                     else if (s.rfind("!shot ", 0) == 0) c.SendShot(s.substr(6), px, py, pz);
                     else if (s.rfind("!voice ", 0) == 0) {
                         float secs = 0; char how[16] = "";

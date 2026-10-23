@@ -596,6 +596,27 @@ struct Api {
         Srv(L).Ui(&p, net::UiOp::Event, name, json);
         return 0;
     }
+    // player:itemWindow({title=, panes={{id=, title=, info=, empty=, items={{id=, name=, count=, icon=, text=,
+    // actions={{id=, label=}}}}}}, hint=}, onAction) -> window id: shows it, or updates the open one in place.
+    // onAction(player, action): {type = "move", pane = 1|2, item = n, count = n} (to the other pane),
+    // {type = "action", pane =, item =, id = "<action id>"}, {type = "close"}. player:closeItemWindow().
+    static int PItemWindow(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        luaL_checktype(L, 2, LUA_TTABLE);
+        const std::string json = ToJson(L, 2, 0).dump();
+        if (json.size() > net::kItemWindowMax) luaL_error(L, "itemWindow: the window is too large (%d KB at most)", int(net::kItemWindowMax / 1024));
+        const uint16_t id = Srv(L).ItemWindow(&p, json);
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.itemwindows");
+        if (lua_isfunction(L, 3)) lua_pushvalue(L, 3); else lua_pushnil(L);
+        lua_rawseti(L, -2, p.id); lua_pop(L, 1);
+        lua_pushinteger(L, id); return 1;
+    }
+    static int PCloseItemWindow(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        Srv(L).CloseItemWindow(&p);
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.itemwindows"); lua_pushnil(L); lua_rawseti(L, -2, p.id); lua_pop(L, 1);
+        return 0;
+    }
     // player:clientSend(name, data): the mode's client scripts' onServer(name, fn) get data (docs/client-lua.md).
     static int PClientSend(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
@@ -1785,6 +1806,7 @@ bool Script::Load(const std::string& modeId) {
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.playerdata");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.markers");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.dialogs");
+    lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.itemwindows");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.interactions");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.keys");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.routes");
@@ -1797,7 +1819,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"isOnBike", &Api::PIsOnBike}, {"kick", &Api::PKick}, {"ban", &Api::PBan}, {"setHealth", &Api::PSetHealth}, {"heal", &Api::PHeal}, {"kill", &Api::PKill}, {"setTime", &Api::PSetTime}, {"setWeather", &Api::PSetWeather}, {"playAnim", &Api::PPlayAnim}, {"stopAnim", &Api::PStopAnim}, {"playSound", &Api::PPlaySound}, {"damage", &Api::PDamage}, {"hint", &Api::PHint},
                                 {"giveItem", &Api::PGiveItem}, {"takeItem", &Api::PTakeItem}, {"giveWeapon", &Api::PGiveWeapon}, {"setAmmo", &Api::PSetAmmo},
                                 {"takeWeapons", &Api::PTakeWeapons}, {"takeTools", &Api::PTakeTools}, {"clearInventory", &Api::PClearInventory},
-                                {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"ui", &Api::PUi}, {"uiFocus", &Api::PUiFocus}, {"uiSend", &Api::PUiSend}, {"clientSend", &Api::PClientSend}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
+                                {"inventory", &Api::PInventory}, {"itemCount", &Api::PItemCount}, {"giveBike", &Api::PGiveBike}, {"takeBike", &Api::PTakeBike}, {"putOnBike", &Api::PPutOnBike}, {"freeze", &Api::PFreeze}, {"spectate", &Api::PSpectate}, {"setSkin", &Api::PSetSkin}, {"dialog", &Api::PDialog}, {"putInVehicle", &Api::PPutInVehicle}, {"markVehicle", &Api::PMarkVehicle}, {"exitVehicle", &Api::PExitVehicle}, {"setWorld", &Api::PSetWorld}, {"closeDialog", &Api::PCloseDialog}, {"ui", &Api::PUi}, {"uiFocus", &Api::PUiFocus}, {"uiSend", &Api::PUiSend}, {"clientSend", &Api::PClientSend}, {"itemWindow", &Api::PItemWindow}, {"closeItemWindow", &Api::PCloseItemWindow}, {"hud", &Api::PHud}, {"clearHud", &Api::PClearHud}, {"setUniform", &Api::PSetUniform}, {"customize", &Api::PCustomize},
                                 {"setAdmin", &Api::PSetAdmin}, {"objective", &Api::PObjective}, {"objectiveMeter", &Api::PObjectiveMeter}, {"setLook", &Api::PSetLook}, {"tip", &Api::PTip}, {"restoreInventory", &Api::PRestoreInventory},
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
                                 {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
@@ -1947,6 +1969,14 @@ void Script::UiMessage(Player& p, const std::string& name, const std::string& js
     json::Value v;
     if (json::Value::Parse(json, v)) Api::PushJson(L_, v); else lua_pushnil(L_);
     Fire("uiMessage", 3);
+}
+void Script::ItemAction(Player& p, uint16_t window, const json::Value& action) {
+    if (!L_) return;
+    const bool closed = action.str("type") == "close";
+    Api::PushJson(L_, action);
+    CallKept(L_, "dgmp.itemwindows", p.id, closed, p, 1, server_, mode_, "itemWindow onAction");
+    Api::PushPlayer(L_, p); lua_pushinteger(L_, window); Api::PushJson(L_, action);
+    Fire("itemWindow", 3);
 }
 void Script::ClientMessage(Player& p, const std::string& name, const std::string& json) {
     if (!L_) return;

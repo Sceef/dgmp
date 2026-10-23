@@ -13,6 +13,7 @@
 namespace mpui {
 
 void OnDialog(const net::Client::Events::DialogInfo& d);
+void OnItemWindow(uint16_t id, const std::string& json);  // the mode's item window ("" closes it)
 void OnHud(const std::string& id, const std::string& json);
 void OnInteraction(uint16_t id, const net::Client::Events::InteractionInfo* info);
 void OnWatchKeys(const std::vector<uint8_t>& keys);
@@ -32,7 +33,7 @@ void SetIcons(std::vector<WorldIcon> list);
 // Every frame while connected. `at`: the player (actor root); `canAct`: it plays (no menu, chat or
 // death). Sends the dialog answer, interaction uses and watched key presses.
 void Update(net::Client& client, const ue::FVector& at, bool canAct, bool hudShown);
-bool DialogOpen();
+bool DialogOpen();  // a dialog or the item window is open (it has the cursor)
 
 // Overlay callbacks: the windows (the dialog and the character creator) and the HUD layer.
 void DrawWindows();

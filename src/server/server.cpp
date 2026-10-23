@@ -358,6 +358,18 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         for (auto& f : scriptFiles_) if (f.name == path) { SendFileParts(p, net::Msg::ScriptData, f); break; }
         break;
     }
+    case net::Msg::ItemAction: {
+        const uint16_t id = r.U16(); const auto json = r.Str(net::kItemActionMax);
+        if (!r.ok() || !id || id != p->itemWindow) break;  // not the window it has open
+        const double now = Now();
+        if (now - p->itemWindowAt >= 1.0) { p->itemWindowAt = now; p->itemActions = 0; }
+        if (++p->itemActions > 20) break;
+        json::Value v;
+        if (!json::Value::Parse(json, v) || !v.isObject()) break;
+        if (v.str("type") == "close") p->itemWindow = 0;
+        script_->ItemAction(*p, id, v);
+        break;
+    }
     case net::Msg::ScriptMessage: {
         const auto name = r.Str(net::kScriptNameMax); const auto json = r.Str(net::kScriptFromClientMax);
         if (!r.ok() || name.empty()) break;
@@ -1393,6 +1405,19 @@ void Server::SendScriptList(Player* to) {
     net::Writer w; w.Op(net::Msg::ScriptList); w.U16(uint16_t(scriptFiles_.size()));
     for (auto& f : scriptFiles_) { w.Str(f.name); w.Str(f.hash); }
     Send(to, w, true);
+}
+uint16_t Server::ItemWindow(Player* p, const std::string& json) {
+    if (!p || p->bot) return 0;
+    if (!p->itemWindow) { if (!++nextItemWindow_) ++nextItemWindow_; p->itemWindow = nextItemWindow_; }
+    net::Writer w; w.Op(net::Msg::ItemWindow); w.U16(p->itemWindow); w.Str(json);
+    Send(p, w, true);
+    return p->itemWindow;
+}
+void Server::CloseItemWindow(Player* p) {
+    if (!p || p->bot || !p->itemWindow) return;
+    net::Writer w; w.Op(net::Msg::ItemWindow); w.U16(p->itemWindow); w.Str("");
+    p->itemWindow = 0;
+    Send(p, w, true);
 }
 void Server::ClientSend(Player* p, const std::string& name, const std::string& json) {
     if (!p || p->bot) return;

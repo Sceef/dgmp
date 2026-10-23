@@ -1571,6 +1571,7 @@ void HookClient() {
     };
     client.on.spectate = [](bool on, const std::vector<uint16_t>& only) { spec.want = on; spec.only = only; };
     client.on.dialog = [](const net::Client::Events::DialogInfo& d) { mpui::OnDialog(d); };
+    client.on.itemWindow = [](uint16_t id, const std::string& json) { mpui::OnItemWindow(id, json); };
     client.on.hud = [](const std::string& id, const std::string& json) { mpui::OnHud(id, json); };
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
     client.on.watchKeys = [](const std::vector<uint8_t>& keys) { mpui::OnWatchKeys(keys); };

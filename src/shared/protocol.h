@@ -61,6 +61,7 @@ enum class Msg : uint8_t {
     ScriptRequest = 42, // str path: send me this file of the mode's client scripts (ScriptList: not in my cache)
     ScriptMessage = 43, // str name, str json: the mode's client script sent a message (send) to the server's Lua (clientMessage)
     ScriptError = 44,   // str text: a client script failed (the server logs it for the mode's author)
+    ItemAction = 45,    // u16 windowId, str json: the player did something in the mode's item window ({type = "move" | "action" | "close", ...})
     Shot = 20,        // str weapon class, f32 x,y,z: this player fired (relayed to the players nearby as PlayerShot)
     AnimEnd = 19,     // u8 reason (0 it ended, 1 the player moved): the animation the mode played (PlayAnim) is over
     CarryAction = 18,  // u16 carryId, u8 CarryOp, f32 x,y,z,yaw: pick it up / put it down there / the game dropped it there
@@ -109,6 +110,7 @@ enum class Msg : uint8_t {
     ScriptList = 123, // u16 n, n x (str path, str sha256): the mode's client scripts (modes/<mode>/client, docs/client-lua.md); fetch the ones not cached
     ScriptData = 124, // str path, u16 part, u16 parts, str bytes: a client script's file, in parts
     ScriptEvent = 125, // str name, str json: the server's Lua (player:clientSend) to the client scripts' onServer(name, fn)
+    ItemWindow = 126, // u16 windowId, str json: the mode's item window (docs/API.md "Окно предметов"): panes of items; "" closes it
     VehicleRoute = 103, // u16 vehicleId, f32 speed (units/s), f32 elapsed (s since it set off), u8 loop, u16 n, n x f32 x,y,z: the way its NPC drives it (n 0: it stopped)
     Carry = 104,      // u16 id, u8 op (1 add/update: str model, f32 x,y,z,yaw, i32 world (-1 every), u16 carrier (0xFFFF: it lies there), u8 CarryRoll; 2 remove):
                       // a box the players carry in both hands (docs/API.md "Переноска"); carrier = your id: hold it, else let it go
@@ -168,6 +170,7 @@ struct VehicleState { float x = 0, y = 0, z = 0, yaw = 0, fuel = 1, health = 1; 
 enum class UiOp : uint8_t { Open = 1, Close = 2, Focus = 3, Event = 4 };
 constexpr size_t kUiPathMax = 160, kUiNameMax = 64, kUiToPageMax = 65536, kUiFromPageMax = 16384;
 // Client scripts (docs/client-lua.md): file paths, message names and sizes each way, an error report.
+constexpr size_t kItemWindowMax = 65536, kItemActionMax = 1024;  // an item window's description / one action
 constexpr size_t kScriptPathMax = 160, kScriptNameMax = 64, kScriptToClientMax = 65536, kScriptFromClientMax = 16384, kScriptErrorMax = 1024;
 enum class DialogStyle : uint8_t { MsgBox = 0, Input = 1, Password = 2, List = 3, Close = 255 };
 constexpr size_t kDialogTextMax = 4096, kDialogItemsMax = 200;

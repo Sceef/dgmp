@@ -120,6 +120,19 @@ void Respond(bool ok) {
               dialog.info.style == net::DialogStyle::Input || dialog.info.style == net::DialogStyle::Password ? std::string(dialog.input) : std::string()};
     dialog.open = false;
 }
+// ---------------------------------------------------------------- the mode's item window
+// One or two panes of items (an inventory and a trunk); the server decides what any click does.
+struct WinItem { std::string id, name, text, icon; int count = 1; std::vector<std::pair<std::string, std::string>> actions; };  // (id, label)
+struct WinPane { std::string id, title, info, empty; std::vector<WinItem> items; };
+struct ItemWin {
+    bool open = false;
+    uint16_t id = 0;
+    std::string title, hint;
+    std::vector<WinPane> panes;
+    int pane = 0, item = -1;  // the selection
+} itemWin;
+std::vector<std::pair<uint16_t, std::string>> itemActions;  // to send (window, json)
+void ItemAct(json::Value v) { itemActions.emplace_back(itemWin.id, v.dump()); }
 std::vector<std::string> Cells(const std::string& row) {
     std::vector<std::string> out; size_t at = 0;
     for (size_t k; (k = row.find('\t', at)) != std::string::npos; at = k + 1) out.push_back(row.substr(at, k - at));
@@ -250,6 +263,31 @@ void OnDialog(const net::Client::Events::DialogInfo& d) {
     dialog.open = true; dialog.info = d;
     snprintf(dialog.input, sizeof dialog.input, "%s", d.defaultText.c_str());
 }
+void OnItemWindow(uint16_t id, const std::string& text) {
+    std::lock_guard g(lock);
+    if (text.empty()) { if (itemWin.id == id) itemWin.open = false; return; }
+    json::Value v;
+    if (!json::Value::Parse(text, v) || !v.isObject()) return;
+    const bool same = itemWin.open && itemWin.id == id;
+    ItemWin w; w.open = true; w.id = id;
+    w.title = v.str("title"); w.hint = v.str("hint");
+    for (auto& p : v["panes"].elements()) {
+        if (w.panes.size() >= 2) break;
+        WinPane pane; pane.id = p.str("id"); pane.title = p.str("title"); pane.info = p.str("info"); pane.empty = p.str("empty");
+        for (auto& it : p["items"].elements()) {
+            WinItem item; item.id = it.str("id"); item.name = it.str("name", item.id); item.text = it.str("text"); item.icon = it.str("icon");
+            item.count = it["count"].isNumber() ? it["count"].asInt() : 1;
+            for (auto& a : it["actions"].elements()) if (a.isObject()) item.actions.emplace_back(a.str("id"), a.str("label", a.str("id")));
+            if (pane.items.size() < 500) pane.items.push_back(std::move(item));
+        }
+        w.panes.push_back(std::move(pane));
+    }
+    if (same) {  // an update: the selection stays where it was (on a list that got shorter, the last one)
+        w.pane = std::min(itemWin.pane, std::max(0, int(w.panes.size()) - 1)); w.item = itemWin.item;
+        if (w.pane < int(w.panes.size())) w.item = std::min(w.item, int(w.panes[size_t(w.pane)].items.size()) - 1);
+    }
+    itemWin = std::move(w);
+}
 void OnHud(const std::string& id, const std::string& text) {
     std::lock_guard g(lock);
     if (text.empty()) { if (id.empty()) hud.clear(); else hud.erase(id); return; }
@@ -286,9 +324,9 @@ void Reset() {
     overlay::SetBlockedKey(0);
     std::lock_guard g(lock);
     icons.clear();
-    dialog = Dialog{}; answer = Answer{}; hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{}; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
+    dialog = Dialog{}; answer = Answer{}; itemWin = ItemWin{}; itemActions.clear(); hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{}; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
 }
-bool DialogOpen() { std::lock_guard g(lock); return dialog.open; }
+bool DialogOpen() { std::lock_guard g(lock); return dialog.open || itemWin.open; }
 void SetWorld(int w) { std::lock_guard g(lock); world = w; }
 void SetIcons(std::vector<WorldIcon> list) { std::lock_guard g(lock); icons = std::move(list); }
 void SetCarryPrompt(const std::string& text, float progress) { std::lock_guard g(lock); carryPrompt = {text, progress}; }
@@ -302,7 +340,9 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
         std::lock_guard g(lock);
         hudShown = shown;
         if (answer.pending) { answer.pending = false; client.SendDialogResponse(answer.id, answer.ok, answer.item, answer.text); }
-        open = dialog.open;
+        for (auto& [id, json] : itemActions) client.SendItemAction(id, json);
+        itemActions.clear();
+        open = dialog.open || itemWin.open;
         // The interaction the player stands at (the nearest).
         prompt = Prompt{};
         const bool act = canAct && !open && !skins::CreatorOpen() && !overlay::CursorMode();
@@ -348,10 +388,89 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
     }
 }
 
+// The item window: the panes side by side, the chosen item's actions and moving it under them.
+void DrawItemWindow() {
+    if (!itemWin.open) return;
+    ImGuiIO& io = ImGui::GetIO();
+    const int panes = std::max(1, int(itemWin.panes.size()));
+    const float paneW = std::min(420.f, io.DisplaySize.x * 0.4f), listH = std::min(420.f, io.DisplaySize.y * 0.5f);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    const std::string title = Plain(itemWin.title.empty() ? std::string(lang::Pick("Предметы", "Items")) : itemWin.title) + "###dgmpitems";
+    bool keep = true;
+    ImGui::Begin(title.c_str(), &keep, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+    const float icon = 36;
+    for (int p = 0; p < int(itemWin.panes.size()); ++p) {
+        WinPane& pane = itemWin.panes[size_t(p)];
+        if (p) ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::PushID(p);
+        ColoredText(pane.title.empty() ? std::string(" ") : pane.title);
+        if (!pane.info.empty()) { ImGui::SameLine(paneW - ImGui::CalcTextSize(Plain(pane.info).c_str()).x); ColoredText(pane.info); }
+        ImGui::BeginChild("##list", ImVec2(paneW, listH), true);
+        if (pane.items.empty()) ImGui::TextDisabled("%s", pane.empty.empty() ? lang::Pick("Пусто", "Empty") : Plain(pane.empty).c_str());
+        for (int i = 0; i < int(pane.items.size()); ++i) {
+            const WinItem& it = pane.items[size_t(i)];
+            ImGui::PushID(i);
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##item", itemWin.pane == p && itemWin.item == i, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, icon))) {
+                itemWin.pane = p; itemWin.item = i;
+                // A double click moves all of it to the other pane.
+                if (ImGui::IsMouseDoubleClicked(0) && panes == 2) ItemAct(json::Value::Object().set("type", "move").set("pane", p + 1).set("item", i + 1).set("count", it.count));
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const images::View v = images::Get(it.icon);
+            if (v.texture) dl->AddImage(ImTextureID(reinterpret_cast<uintptr_t>(v.texture)), at, ImVec2(at.x + icon, at.y + icon));
+            else dl->AddRect(at, ImVec2(at.x + icon, at.y + icon), ImGui::GetColorU32(ImGuiCol_Border), 4);
+            const float tx = at.x + icon + 8;
+            const auto name = Lines(it.name, ImGui::GetColorU32(ImGuiCol_Text))[0];
+            DrawLine(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, at.y + 1), name, false);
+            if (!it.text.empty()) {
+                const auto sub = Lines(it.text, ImGui::GetColorU32(ImGuiCol_TextDisabled))[0];
+                DrawLine(dl, ImGui::GetFont(), ImGui::GetFontSize() * 0.9f, ImVec2(tx, at.y + icon / 2 + 1), sub, false);
+            }
+            if (it.count != 1) {
+                const std::string n = "x" + std::to_string(it.count);
+                const float w = ImGui::CalcTextSize(n.c_str()).x;
+                dl->AddText(ImVec2(at.x + ImGui::GetContentRegionAvail().x - w - 4, at.y + (icon - ImGui::GetFontSize()) / 2), ImGui::GetColorU32(ImGuiCol_Text), n.c_str());
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+        ImGui::EndGroup();
+    }
+    // The chosen item: what it can do, and moving it.
+    const WinItem* sel = itemWin.pane < int(itemWin.panes.size()) && itemWin.item >= 0 && itemWin.item < int(itemWin.panes[size_t(itemWin.pane)].items.size())
+        ? &itemWin.panes[size_t(itemWin.pane)].items[size_t(itemWin.item)] : nullptr;
+    if (sel) {
+        const int p = itemWin.pane + 1, i = itemWin.item + 1;
+        for (size_t a = 0; a < sel->actions.size(); ++a) {
+            if (a) ImGui::SameLine();
+            ImGui::PushID(int(a));
+            if (ImGui::Button(Plain(sel->actions[a].second).c_str())) ItemAct(json::Value::Object().set("type", "action").set("pane", p).set("item", i).set("id", sel->actions[a].first));
+            ImGui::PopID();
+        }
+        if (panes == 2) {
+            if (!sel->actions.empty()) ImGui::SameLine();
+            const char* all = itemWin.pane == 0 ? lang::Pick("Переложить  >>", "Move  >>") : lang::Pick("<<  Переложить", "<<  Move");
+            if (ImGui::Button(all)) ItemAct(json::Value::Object().set("type", "move").set("pane", p).set("item", i).set("count", sel->count));
+            if (sel->count > 1) {
+                ImGui::SameLine();
+                if (ImGui::Button(lang::Pick("1 шт.", "1 only"))) ItemAct(json::Value::Object().set("type", "move").set("pane", p).set("item", i).set("count", 1));
+            }
+        }
+    } else ImGui::TextDisabled("%s", lang::Pick("Выберите предмет", "Pick an item"));
+    if (!itemWin.hint.empty()) ColoredText(itemWin.hint);
+    if (ImGui::Button(lang::Pick("Закрыть", "Close")) || ImGui::IsKeyPressed(ImGuiKey_Escape)) keep = false;
+    ImGui::End();
+    if (!keep) { ItemAct(json::Value::Object().set("type", "close")); itemWin.open = false; }
+}
+
 void DrawWindows() {
     {
         std::lock_guard g(lock);
         DrawDialog();
+        DrawItemWindow();
     }
     if (skins::CreatorOpen()) skins::DrawCreator();
 }
