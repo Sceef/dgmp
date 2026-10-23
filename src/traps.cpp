@@ -13,7 +13,8 @@ using namespace ue;
 namespace traps {
 namespace {
 constexpr float kSpawnRange = 30000.f, kDespawnRange = 32000.f;  // 300 m
-constexpr double kFireDelay = 0.3;  // a trap spawned for its own explosion (explode()) goes off after its BeginPlay
+constexpr double kFireDelay = 1.0;  // a trap spawned for its own explosion (explode()) goes off once it is set up
+constexpr double kStakesStay = 7.0; // a fired wire's stakes stay this long
 
 const char* ClassFor(const std::string& type, bool explosive) {
     if (type == "mine") return "/Game/Weapons/Trap_Weapons/Mines/ProximityMine/MineTrap.MineTrap_C";
@@ -35,6 +36,7 @@ struct Trap {
     double fireAt = 0;          // fire then (0: not asked)
     uint16_t victim = 0xFFFF;
     bool done = false;          // fired
+    double cleanupAt = 0;       // a fired wire: its stakes go then
 };
 std::map<uint16_t, Trap> list;
 int myWorld = 0;
@@ -132,6 +134,7 @@ void FireNow(Trap& t, UObject* pawn, uint16_t localId) {
         return;
     }
     Destroy(t.wire);
+    if (t.type == "wire") t.cleanupAt = Clock() + kStakesStay;
     if (IsValid(t.actor)) Call(t.actor, "TrapExplode");  // the game's explosion: it removes the actor itself
     t.actor = nullptr;
 }
@@ -178,6 +181,7 @@ void Update(UObject* pawn, uint16_t localId) {
         if (!inRange) { if (t.spawned) Despawn(t); t.fireAt = 0; continue; }  // (an explosion far away is not seen)
         if (!t.spawned && !t.done && !t.failed) { Spawn(t, pawn); if (t.fireAt) t.fireAt = std::max(t.fireAt, now + kFireDelay); }
         if (t.fireAt && now >= t.fireAt) FireNow(t, pawn, localId);
+        if (t.cleanupAt && now >= t.cleanupAt) { t.cleanupAt = 0; Destroy(t.stakes[0]); Destroy(t.stakes[1]); }
     }
 }
 

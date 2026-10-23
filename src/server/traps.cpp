@@ -71,7 +71,7 @@ bool Server::RemoveTrap(uint16_t id) {
 }
 
 // Sets it off now: every client fires its copy (victim: the player it caught, 0xFFFF none). A trap that
-// goes off once is forgotten a few seconds later (its explosion plays out first).
+// goes off once is forgotten 10 s later (its explosion plays out, a wire's stakes go first).
 void Server::FireTrap(uint16_t id, uint16_t victim) {
     auto it = traps_.find(id);
     if (it == traps_.end() || it->second.fired) return;
@@ -123,7 +123,7 @@ void Server::TickTraps() {
         else if (auto again = traps_.find(tid); again != traps_.end()) again->second.armedAt = now + 1.0;
     }
     std::vector<uint16_t> gone;
-    for (auto& [tid, t] : traps_) if (t.fired && now - t.firedAt > 5.0) gone.push_back(tid);
+    for (auto& [tid, t] : traps_) if (t.fired && now - t.firedAt > 10.0) gone.push_back(tid);  // (clients take a wire's stakes away after 7 s)
     for (uint16_t tid : gone) RemoveTrap(tid);
     for (auto it = zombiePrev_.begin(); it != zombiePrev_.end();) it = zombies_.count(it->first) ? std::next(it) : zombiePrev_.erase(it);
 }
