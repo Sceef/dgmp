@@ -37,6 +37,7 @@ struct Trap {
     bool ours = false;          // a bear trap that went off on this player (it is hostile to it now)
     bool held = false;          // ...and holds it: the player stands in its jaws
     double heldSince = 0; float heldHealth = 0;  // since when, with how much health (the bleeding's schedule)
+    bool removed = false;       // the server forgot it while it held this player: it goes once the player is free
     UObject* actor = nullptr;   // the game's trap
     UObject* wire = nullptr;    // a wire's line
     UObject* stakes[2] = {};    // a wire's stakes in the ground under its ends
@@ -188,6 +189,7 @@ void OnMessage(const uint8_t* data, size_t size) {
     if (it == list.end()) return;
     if (op == net::TrapOp::Remove) {
         Trap& t = it->second;
+        if (t.ours && IsValid(t.actor)) { t.removed = true; return; }  // (it still holds this player: Update removes it)
         if (!t.done) Despawn(t); else { Destroy(t.wire); Destroy(t.stakes[0]); Destroy(t.stakes[1]); }
         list.erase(it); return;
     }
@@ -232,11 +234,15 @@ void Update(UObject* pawn, uint16_t localId) {
     const FVector me = ActorPos(pawn);
     const double now = Clock();
     // Which of our bear traps holds this player: in its jaws (60 cm) it is held, past 80 cm free again.
+    for (auto it = list.begin(); it != list.end();) {  // forgotten by the server and free of them: gone now
+        if (it->second.removed && !it->second.ours) { Despawn(it->second); it = list.erase(it); } else ++it;
+    }
     for (auto& [id, t] : list) {
         if (!t.ours || !IsValid(t.actor)) { t.held = false; continue; }
         const FVector at = ActorPos(t.actor);
         const float d = std::sqrt((at.X - me.X) * (at.X - me.X) + (at.Y - me.Y) * (at.Y - me.Y));
         if (t.held && d > 80.f) { t.held = false; t.ours = false; dg::Log("traps: free of the bear trap"); }
+        if (t.held && now - t.heldSince > std::max(60.0, double(t.bleed) + 10)) { t.held = false; t.ours = false; }  // (never held for ever)
         else if (!t.held && !t.pullAt && d < 60.f) { t.held = true; t.heldSince = now; t.heldHealth = Field<float>(pawn, 0x1FD4); }
     }
     // A lethal one: the player bleeds out in `bleed` seconds from the health it had when caught. Our own: the game's
