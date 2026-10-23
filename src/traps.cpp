@@ -4,6 +4,7 @@
 #include "shared/protocol.h"
 #include "imgui.h"
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
