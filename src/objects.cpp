@@ -18,13 +18,12 @@ struct Obj {
     UObject* actor = nullptr;
     bool failed = false;                   // the asset does not load: not tried again
     bool collisionOff = false;
-    bool hidden = false;                   // a ghost's blink
 };
 std::map<uint16_t, Obj> objs;
 bool outlineShown = false;                 // the game's highlight post process is on for our ghosts
 
 // A ghost is drawn with the game's survival-vision outline (custom depth stencil 2, shown by the controller's
-// FocusPostHighlightOnly post process) and blinks, so that it reads as "here it would go", not as the thing.
+// FocusPostHighlightOnly post process), so that it reads as "here it would go", not as the thing.
 void Outline(UObject* actor, bool on) {
     static UObject* primitive = nullptr;
     if (!primitive) primitive = FindClass("PrimitiveComponent");
@@ -124,14 +123,10 @@ void Update(double, UObject* pawn) {
             o.actor = worldedit::SpawnMesh(o.info.asset, FVector{at[0], at[1], at[2]}, FRotator{at[3], at[4], at[5]}, o.info.scale, pawn);
             if (!o.actor) { o.failed = true; dg::Log("Objects: cannot spawn %u (%s)", id, o.info.asset.c_str()); continue; }
             if (!o.info.collision) if (auto f = Fn(o.actor, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(o.actor, "SetActorEnableCollision", &p); }
-            if (o.info.ghost) { Outline(o.actor, true); o.hidden = false; }
+            if (o.info.ghost) Outline(o.actor, true);
             continue;
         }
-        if (o.info.ghost) {  // on 0.5 s, off 0.15 s
-            ghosts = true;
-            const bool hide = std::fmod(now, 0.65) > 0.5;
-            if (hide != o.hidden) if (auto f = Fn(o.actor, "SetActorHiddenInGame")) { Params p(f); p.SetBool("bNewHidden", hide); Call(o.actor, "SetActorHiddenInGame", &p); o.hidden = hide; }
-        }
+        ghosts |= o.info.ghost;
         if (o.moveTime > 0) {
             worldedit::PlaceActor(o.actor, FVector{at[0], at[1], at[2]}, FRotator{at[3], at[4], at[5]}, o.info.scale);
             if (now >= o.moveStart + o.moveTime) { for (int i = 0; i < 6; ++i) o.from[i] = o.to[i]; o.moveTime = 0; }

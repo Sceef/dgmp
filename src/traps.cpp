@@ -30,6 +30,7 @@ struct Trap {
     bool explosive = true;
     UObject* actor = nullptr;   // the game's trap
     UObject* wire = nullptr;    // a wire's line
+    UObject* stakes[2] = {};    // a wire's stakes in the ground under its ends
     bool spawned = false, failed = false;
     double fireAt = 0;          // fire then (0: not asked)
     uint16_t victim = 0xFFFF;
@@ -51,14 +52,14 @@ FVector ActorPos(UObject* actor) {
     return IsValid(root) ? Field<FVector>(root, off::Scene_C2W_Trans) : FVector{};
 }
 
-// The game's trap without a mind of its own: none of its triggers reacts (nor the tutorial), and it cannot be
-// picked up into the backpack (that would hand out mines).
+// The game's trap without a mind of its own: its triggers (pawns, hordes, the tutorial, a bear trap's jaws and
+// shot) do not react, and its backpack pickup cannot be taken (it would hand out mines). Only those: the
+// explosion uses the rest of it (its overlap sphere, the weapon), so nothing else is touched.
 void Neutralize(UObject* actor) {
     SetBoolProp(actor, "PlayerCanTrigger", false);
-    for (const char* name : {"PawnTrigger_Code", "HordeTrigger_Code", "HordeCriticalTrigger_Code", "NormalTrigger", "HordeTrigger",
-                             "TutorialTrigger", "ActivationTrigger", "ShootTrigger", "InventoryPickup", "BearTrapPickup", "TrapOverlapSphere"})
+    for (const char* name : {"PawnTrigger_Code", "HordeTrigger_Code", "HordeCriticalTrigger_Code", "TutorialTrigger", "ActivationTrigger", "ShootTrigger"})
         if (UObject* c = ObjectProp(actor, name)) if (auto f = Fn(c, "SetCollisionEnabled")) { Params p(f); p.Set<uint8_t>("NewType", 0); Call(c, "SetCollisionEnabled", &p); }
-    if (UObject* pickup = ObjectProp(actor, "PickupRef")) Destroy(pickup);
+    if (UObject* pickup = ObjectProp(actor, "PickupRef")) if (auto f = Fn(pickup, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(pickup, "SetActorEnableCollision", &p); }
 }
 
 // A line from a to b: the engine's cylinder (1 m long, 1 m wide), stretched and turned along it.
@@ -102,12 +103,22 @@ void Spawn(Trap& t, UObject* pawn) {
         if (IsValid(t.actor)) Neutralize(t.actor);
         else { t.failed = true; dg::Log("traps: %s did not spawn", cls); }
     }
-    if (t.type == "wire") t.wire = SpawnWire(FVector{t.a.X, t.a.Y, t.a.Z}, t.b, pawn);
+    if (t.type == "wire") {
+        t.wire = SpawnWire(FVector{t.a.X, t.a.Y, t.a.Z}, t.b, pawn);
+        const float yaw = std::atan2(t.b.Y - t.a.Y, t.b.X - t.a.X) * 57.2957795f;
+        const FVector ends[2] = {t.a, t.b};
+        for (int i = 0; i < 2; ++i) {
+            t.stakes[i] = worldedit::SpawnMesh("/Game/Environments/ManMade/Props/Ropes/ropes_stake_v2.ropes_stake_v2", Ground(pawn, ends[i]), FRotator{0, yaw, 0}, 1.f, pawn);
+            if (IsValid(t.stakes[i])) if (auto f = Fn(t.stakes[i], "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(t.stakes[i], "SetActorEnableCollision", &p); }
+        }
+    }
+    dg::Log("traps: %s spawned at %.0f %.0f %.0f%s", t.type.c_str(), t.a.X, t.a.Y, t.a.Z, IsValid(t.actor) ? "" : " (no game actor)");
 }
-void Despawn(Trap& t) { Destroy(t.actor); Destroy(t.wire); t.spawned = false; }
+void Despawn(Trap& t) { Destroy(t.actor); Destroy(t.wire); Destroy(t.stakes[0]); Destroy(t.stakes[1]); t.spawned = false; }
 
 void FireNow(Trap& t, UObject* pawn, uint16_t localId) {
     t.done = true; t.fireAt = 0;
+    dg::Log("traps: %s fires (victim %u, actor %s)", t.type.c_str(), unsigned(t.victim), IsValid(t.actor) ? "here" : "missing");
     if (t.type == "beartrap") {
         if (!IsValid(t.actor)) return;
         // Its victim is caught the game's way (stuck, mash to get free, bleeding); the others see it snap shut.
@@ -141,7 +152,11 @@ void OnMessage(const uint8_t* data, size_t size) {
     }
     auto it = list.find(id);
     if (it == list.end()) return;
-    if (op == net::TrapOp::Remove) { if (!it->second.done) Despawn(it->second); else Destroy(it->second.wire); list.erase(it); return; }
+    if (op == net::TrapOp::Remove) {
+        Trap& t = it->second;
+        if (!t.done) Despawn(t); else { Destroy(t.wire); Destroy(t.stakes[0]); Destroy(t.stakes[1]); }
+        list.erase(it); return;
+    }
     if (op == net::TrapOp::Fire) {
         it->second.victim = r.U16();
         it->second.fireAt = Clock() + (it->second.spawned ? 0 : kFireDelay);  // (spawned in Update first)

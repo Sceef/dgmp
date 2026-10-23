@@ -618,7 +618,7 @@ struct Api {
         o.x = Num(s, idx, "x", o.x); o.y = Num(s, idx, "y", o.y); o.z = Num(s, idx, "z", o.z);
         o.pitch = Num(s, idx, "pitch", o.pitch); o.yaw = Num(s, idx, "yaw", o.yaw); o.roll = Num(s, idx, "roll", o.roll);
         o.scale = std::clamp(Num(s, idx, "scale", o.scale), 0.01f, 100.f); o.collision = Flag(s, idx, "collision", o.collision);
-        o.ghost = Flag(s, idx, "ghost", o.ghost); if (o.ghost) o.collision = false;  // a preview: outlined, blinking, nothing bumps into it
+        o.ghost = Flag(s, idx, "ghost", o.ghost); if (o.ghost) o.collision = false;  // a preview: outlined, nothing bumps into it
         for (const char* k : {"model", "asset"}) {
             lua_getfield(s, idx, k);
             if (const char* want = lua_tostring(s, -1)) {
