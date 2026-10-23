@@ -33,6 +33,7 @@ std::atomic<ULONGLONG> lastPresent{0};
 ImFont* large = nullptr;
 std::atomic<bool> keepFocus{false};
 std::atomic<int> blockedKey{0};
+std::atomic<uint64_t> scriptBlocked[4];  // a bit per virtual key
 // The game hides the system cursor (ShowCursor counter below zero, WM_SETCURSOR); in cursor mode the
 // overlay shows it and gives the game back what it raised afterwards. Window thread only.
 bool cursorShown = false;
@@ -68,6 +69,7 @@ LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     ApplyCursor();
     // A key the multiplayer UI uses right now (an interaction's E): the game must not act on it too.
     if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && blockedKey && int(w) == blockedKey && !(visible && cursor)) return 0;
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && w < 256 && (scriptBlocked[w >> 6] & (1ull << (w & 63))) && !(visible && cursor)) return 0;
     if (visible && msg == WM_KEYDOWN && w == VK_TAB && !(l & (1 << 30)) && !(cursor && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput) && !PageFocused()) {
         cursor = !cursor;
         return 0;
@@ -235,6 +237,13 @@ void* CreateTexture(const void* bgra, int width, int height) {
 }
 void* LargeFont() { return large; }
 void SetBlockedKey(int vk) { blockedKey = vk; }
+void SetScriptBlockedKeys(const bool keys[256]) {
+    for (int part = 0; part < 4; ++part) {
+        uint64_t bits = 0;
+        for (int i = 0; i < 64; ++i) if (keys[part * 64 + i]) bits |= 1ull << i;
+        scriptBlocked[part] = bits;
+    }
+}
 void SetKeepFocus(bool keep) { keepFocus = keep; }
 
 }  // namespace overlay

@@ -20,6 +20,8 @@ void OnData(const std::string& path, int part, int parts, const std::string& byt
 // The server's Lua sent the scripts a message (player:clientSend): onServer(name, fn).
 void OnServer(const std::string& name, const std::string& json);
 void Reset();  // disconnected: the scripts stop
+// The server and mode joined: the scripts' storage file (cache/scriptdata) is named after them.
+void SetServer(const std::string& key);
 
 // What the scripts see of this frame.
 struct Frame {

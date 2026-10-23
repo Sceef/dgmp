@@ -17,5 +17,6 @@ void ShowHint(const std::wstring& title, const std::wstring& text, double second
 void AddMessage(uint32_t rgba, const std::wstring& text);
 bool ChatOpen();
 std::vector<std::wstring> TakeSubmitted();  // lines typed by the player since the last call
+void Submit(const std::wstring& line);      // a line as if the player typed it (dev console "say")
 
 }  // namespace hud

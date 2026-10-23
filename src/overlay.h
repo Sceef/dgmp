@@ -35,6 +35,8 @@ void* LargeFont();
 
 // A key the game does not get (key down) while set: 0 none. For a key the UI acts on (interactions).
 void SetBlockedKey(int vk);
+// Keys the mode's client scripts took from the game (bindKey with block = true) while their keys work.
+void SetScriptBlockedKeys(const bool keys[256]);
 
 // The mode's HTML page (webui): drawn over the HUD layer and under the cover and the windows. While
 // `focused` says so, in cursor mode the page gets the mouse and keyboard messages ImGui does not want

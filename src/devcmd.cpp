@@ -6,6 +6,7 @@
 #include "mp.h"
 #include "gameevents.h"
 #include "zombies.h"
+#include "hud.h"
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
@@ -268,6 +269,13 @@ std::string Run(const std::string& line) {
     if (a.empty()) return "empty command";
     std::ostringstream out;
     const auto& cmd = a[0];
+    if (cmd == "say" && a.size() > 1) {  // say <line>: the multiplayer chat line (or /command) as if typed
+        const std::string text = line.substr(line.find(' ') + 1);
+        std::wstring w(size_t(MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0)), wchar_t{});
+        MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), w.data(), int(w.size()));
+        hud::Submit(w);
+        return "said";
+    }
     if (cmd == "ai") {  // ai [radius m] [all]: AI pawns (visible ones unless "all"): class, controller, health, distance
         const float radius = a.size() > 1 ? std::stof(a[1]) * 100.f : 1e9f; const bool all = a.size() > 2 && a[2] == "all";
         UObject* cls = FindClass("BendAIPawn"); if (!cls) return "no BendAIPawn";

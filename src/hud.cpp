@@ -337,5 +337,6 @@ void AddMessage(uint32_t rgba, const std::wstring& text) {
 }
 bool ChatOpen() { std::lock_guard g(lock); return open; }
 std::vector<std::wstring> TakeSubmitted() { std::lock_guard g(lock); std::vector<std::wstring> out; out.swap(submitted); return out; }
+void Submit(const std::wstring& line) { std::lock_guard g(lock); submitted.push_back(line); }
 
 }  // namespace hud

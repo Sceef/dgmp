@@ -11,6 +11,8 @@ extern "C" {
 #include "log.h"
 #include "mp.h"
 #include "mpui.h"
+#include "objects.h"
+#include "blips.h"
 #include "overlay.h"
 #include "policy.h"
 #include "profile.h"
@@ -110,9 +112,69 @@ std::vector<Timer> timers;
 int nextTimer = 1;
 std::set<int> boundKeys;
 bool keyWasDown[256] = {};
+bool keyBlocked[256] = {};  // bindKey(..., {block = true}): the game does not get it while the scripts' keys work
 std::set<std::string> uiNames, commandNames;
 Frame cur;
 double sendWindow = 0; int sendCount = 0;
+
+// Objects and blips only this player has (ids from kLocalBase up: the server's count from 1).
+constexpr uint16_t kLocalBase = 0xF000;
+struct LocalObject { net::Client::Events::ObjectInfo info; float to[6]{}; };
+std::map<uint16_t, LocalObject> localObjects;
+std::map<uint16_t, net::Client::Events::BlipInfo> localBlips;
+uint16_t nextLocal = kLocalBase;
+uint16_t NewLocalId() {
+    for (int tries = 0; tries < 0x1000; ++tries) {
+        const uint16_t id = nextLocal; nextLocal = nextLocal == 0xFFFE ? kLocalBase : uint16_t(nextLocal + 1);
+        if (!localObjects.count(id) && !localBlips.count(id)) return id;
+    }
+    return 0;
+}
+// data/props.txt: lower-case mesh name -> asset path (the same catalog the server uses).
+std::string ResolveProp(const std::string& nameOrPath) {
+    if (nameOrPath.rfind("/Game/", 0) == 0) return nameOrPath;
+    static std::map<std::string, std::string> props;
+    if (props.empty()) {
+        std::ifstream in(fs::path(profile::Root()) / L"data" / L"props.txt");
+        for (std::string line; std::getline(in, line);) {
+            size_t at = 0; std::string cols[4];
+            for (int i = 0; i < 4; ++i) { const auto tab = line.find('\t', at); cols[i] = line.substr(at, tab == std::string::npos ? std::string::npos : tab - at); at = tab == std::string::npos ? line.size() : tab + 1; }
+            const auto dot = cols[3].rfind('.');
+            if (cols[3].empty() || cols[3][0] != '/' || dot == std::string::npos) continue;
+            std::string key = cols[3].substr(dot + 1); for (auto& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
+            props.emplace(key, cols[3]);
+        }
+    }
+    std::string key = nameOrPath; for (auto& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
+    auto it = props.find(key);
+    return it == props.end() ? std::string() : it->second;
+}
+
+// The scripts' own saved data (storage.*): cache/scriptdata/<server and mode>.json on this computer.
+std::string serverKey;
+json::Value saved = json::Value::Object();
+bool savedDirty = false; double nextSave = 0;
+constexpr size_t kStorageMax = 256 * 1024;
+fs::path StorageFile() {
+    std::string name;
+    for (char c : serverKey) name += std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.' ? c : '_';
+    return fs::path(profile::Root()) / L"cache" / L"scriptdata" / (name.empty() ? std::string("local") : name).append(".json");
+}
+void LoadStorage() {
+    saved = json::Value::Object(); savedDirty = false;
+    std::ifstream in(StorageFile(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    json::Value v;
+    if (!text.empty() && json::Value::Parse(text, v) && v.isObject()) saved = v;
+}
+void SaveStorage() {
+    if (!savedDirty) return;
+    savedDirty = false;
+    std::error_code ec; fs::create_directories(StorageFile().parent_path(), ec);
+    const fs::path file = StorageFile(), temp = file.wstring() + L".part";
+    { std::ofstream out(temp, std::ios::binary | std::ios::trunc); out << saved.dump(); }
+    fs::rename(temp, file, ec);
+}
 
 // What the scripts drew: built on the game thread each frame, drawn by the overlay.
 struct Cmd {
@@ -263,7 +325,8 @@ struct Api {
     static int OnServer(lua_State* s) { return Keep(s, "cl.server", nullptr, false); }   // onServer(name, fn(data))
     static int OnUi(lua_State* s) { return Keep(s, "cl.ui", &uiNames, false); }          // onUi(name, fn(data))
     static int Command(lua_State* s) { return Keep(s, "cl.commands", &commandNames, true); }  // command(name, fn(args, words...))
-    // bindKey("G", function(key) end): the key's presses while the player plays; unbindKey("G").
+    // bindKey("G", function(key) end [, {block = true}]): the key's presses while the player plays; block: the
+    // game does not get them then; unbindKey("G").
     static int BindKey(lua_State* s) {
         const std::string name = luaL_checkstring(s, 1);
         const int vk = KeyCode(name);
@@ -271,6 +334,7 @@ struct Api {
         luaL_checktype(s, 2, LUA_TFUNCTION);
         Registry("cl.keys"); lua_pushvalue(s, 2); lua_rawseti(s, -2, vk);
         boundKeys.insert(vk);
+        keyBlocked[vk] = lua_istable(s, 3) && Flag(s, 3, "block", false) && vk > VK_XBUTTON2;  // (mouse buttons are never taken)
         keyWasDown[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;  // a key held now is no press yet
         return 0;
     }
@@ -278,7 +342,7 @@ struct Api {
         const int vk = KeyCode(luaL_checkstring(s, 1));
         if (vk < 0) return 0;
         Registry("cl.keys"); lua_pushnil(s); lua_rawseti(s, -2, vk);
-        boundKeys.erase(vk);
+        boundKeys.erase(vk); keyBlocked[vk] = false;
         return 0;
     }
     static int IsKeyDown(lua_State* s) {
@@ -549,6 +613,120 @@ struct Api {
         c.color = Abgr(ColorArg(s, 6, 0xFFFFFFFF));
         return 0;
     }
+    // ---- objects and blips only this player has (docs/client-lua.md)
+    static void ObjectFields(lua_State* s, int idx, net::Client::Events::ObjectInfo& o) {
+        o.x = Num(s, idx, "x", o.x); o.y = Num(s, idx, "y", o.y); o.z = Num(s, idx, "z", o.z);
+        o.pitch = Num(s, idx, "pitch", o.pitch); o.yaw = Num(s, idx, "yaw", o.yaw); o.roll = Num(s, idx, "roll", o.roll);
+        o.scale = std::clamp(Num(s, idx, "scale", o.scale), 0.01f, 100.f); o.collision = Flag(s, idx, "collision", o.collision);
+        for (const char* k : {"model", "asset"}) {
+            lua_getfield(s, idx, k);
+            if (const char* want = lua_tostring(s, -1)) {
+                const std::string path = ResolveProp(want);
+                if (path.empty()) luaL_error(s, "createObject: unknown model '%s' (a mesh of data/props.txt or a /Game/... path)", want);
+                o.asset = path;
+            }
+            lua_pop(s, 1);
+        }
+    }
+    // createObject{model= or asset=, x, y, z, pitch, yaw, roll, scale = 1, collision = true} -> id
+    static int CreateObject(lua_State* s) {
+        luaL_checktype(s, 1, LUA_TTABLE);
+        if (localObjects.size() >= 500) luaL_error(s, "createObject: 500 objects at most");
+        LocalObject o; ObjectFields(s, 1, o.info);
+        if (o.info.asset.empty()) luaL_error(s, "createObject: model or asset is required");
+        const uint16_t id = NewLocalId();
+        if (!id) luaL_error(s, "createObject: no free id");
+        const float at[6] = {o.info.x, o.info.y, o.info.z, o.info.pitch, o.info.yaw, o.info.roll};
+        std::copy(at, at + 6, o.to);
+        localObjects[id] = o;
+        objects::OnObject(id, &o.info);
+        lua_pushinteger(s, id); return 1;
+    }
+    static LocalObject* CheckObject(lua_State* s) {
+        auto it = localObjects.find(uint16_t(luaL_checkinteger(s, 1)));
+        return it == localObjects.end() ? nullptr : &it->second;
+    }
+    // setObject(id, {fields}) -> true: there at once (a move stops)
+    static int SetObject(lua_State* s) {
+        LocalObject* o = CheckObject(s); luaL_checktype(s, 2, LUA_TTABLE);
+        if (!o) { lua_pushboolean(s, false); return 1; }
+        o->info.x = o->to[0]; o->info.y = o->to[1]; o->info.z = o->to[2]; o->info.pitch = o->to[3]; o->info.yaw = o->to[4]; o->info.roll = o->to[5];
+        ObjectFields(s, 2, o->info);
+        const float at[6] = {o->info.x, o->info.y, o->info.z, o->info.pitch, o->info.yaw, o->info.roll};
+        std::copy(at, at + 6, o->to);
+        objects::OnObject(uint16_t(lua_tointeger(s, 1)), &o->info);
+        lua_pushboolean(s, true); return 1;
+    }
+    // moveObject(id, {x, y, z, pitch, yaw, roll, time = seconds | speed = metres a second}) -> seconds
+    static int MoveObject(lua_State* s) {
+        LocalObject* o = CheckObject(s); luaL_checktype(s, 2, LUA_TTABLE);
+        if (!o) { lua_pushnil(s); return 1; }
+        float to[6]; std::copy(o->to, o->to + 6, to);
+        static const char* names[] = {"x", "y", "z", "pitch", "yaw", "roll"};
+        for (int i = 0; i < 6; ++i) to[i] = Num(s, 2, names[i], to[i]);
+        float seconds = Num(s, 2, "time", -1);
+        if (seconds < 0) {
+            const float speed = std::max(0.01f, Num(s, 2, "speed", 2)), dx = to[0] - o->to[0], dy = to[1] - o->to[1], dz = to[2] - o->to[2];
+            seconds = std::sqrt(dx * dx + dy * dy + dz * dz) / 100.f / speed;
+        }
+        std::copy(to, to + 6, o->to);
+        objects::OnMove(uint16_t(lua_tointeger(s, 1)), to, seconds, 0);
+        lua_pushnumber(s, seconds); return 1;
+    }
+    static int RemoveObject(lua_State* s) {
+        const auto id = uint16_t(luaL_checkinteger(s, 1));
+        const bool had = localObjects.erase(id) > 0;
+        if (had) objects::OnObject(id, nullptr);
+        lua_pushboolean(s, had); return 1;
+    }
+    static void BlipFields(lua_State* s, int idx, net::Client::Events::BlipInfo& b) {
+        b.x = Num(s, idx, "x", b.x); b.y = Num(s, idx, "y", b.y); b.z = Num(s, idx, "z", b.z);
+        b.scale = std::clamp(Num(s, idx, "scale", b.scale), 0.1f, 5.f);
+        b.map = Flag(s, idx, "map", b.map); b.radar = Flag(s, idx, "radar", b.radar); b.edge = Flag(s, idx, "edge", b.edge);
+        lua_getfield(s, idx, "icon"); if (const char* icon = lua_tostring(s, -1)) b.icon = icon; lua_pop(s, 1);
+        lua_getfield(s, idx, "color"); if (!lua_isnil(s, -1)) b.color = ColorArg(s, lua_gettop(s), 0xFFFFFFFF); lua_pop(s, 1);
+    }
+    // createBlip{x, y, z, icon = "MAP_...", color, scale = 1, map = true, radar = true, edge = false} -> id
+    static int CreateBlip(lua_State* s) {
+        luaL_checktype(s, 1, LUA_TTABLE);
+        if (localBlips.size() >= 200) luaL_error(s, "createBlip: 200 blips at most");
+        net::Client::Events::BlipInfo b; BlipFields(s, 1, b);
+        const uint16_t id = NewLocalId();
+        if (!id) luaL_error(s, "createBlip: no free id");
+        localBlips[id] = b;
+        blips::OnBlip(id, &b);
+        lua_pushinteger(s, id); return 1;
+    }
+    static int SetBlip(lua_State* s) {
+        auto it = localBlips.find(uint16_t(luaL_checkinteger(s, 1))); luaL_checktype(s, 2, LUA_TTABLE);
+        if (it == localBlips.end()) { lua_pushboolean(s, false); return 1; }
+        BlipFields(s, 2, it->second);
+        blips::OnBlip(it->first, &it->second);
+        lua_pushboolean(s, true); return 1;
+    }
+    static int RemoveBlip(lua_State* s) {
+        const auto id = uint16_t(luaL_checkinteger(s, 1));
+        const bool had = localBlips.erase(id) > 0;
+        if (had) blips::OnBlip(id, nullptr);
+        lua_pushboolean(s, had); return 1;
+    }
+
+    // ---- storage.* : saved on this computer for this server and mode (256 KB in all)
+    static int StorageGet(lua_State* s) { luajson::PushJson(s, saved[luaL_checkstring(s, 1)]); return 1; }
+    static int StorageSet(lua_State* s) {
+        const std::string key = luaL_checkstring(s, 1);
+        if (key.empty() || key.size() > 128) luaL_error(s, "storage.set: the key must be 1..128 characters");
+        json::Value before = saved;
+        if (lua_isnoneornil(s, 2)) saved.erase(key); else saved.set(key, luajson::ToJson(s, 2));
+        if (saved.dump().size() > kStorageMax) { saved = std::move(before); luaL_error(s, "storage.set: the scripts' storage holds %d KB at most", int(kStorageMax / 1024)); }
+        savedDirty = true;
+        return 0;
+    }
+    static int StorageKeys(lua_State* s) {
+        lua_newtable(s); int i = 0;
+        for (auto& [k, v] : saved.items()) { lua_pushstring(s, k.c_str()); lua_rawseti(s, -2, ++i); }
+        return 1;
+    }
     static int JsonEncode(lua_State* s) { const std::string t = luajson::ToJson(s, 1).dump(); lua_pushlstring(s, t.data(), t.size()); return 1; }
     static int JsonDecode(lua_State* s) {
         json::Value v;
@@ -564,6 +742,11 @@ void Stop() {
         L = nullptr;
         dg::Log("client scripts stopped");
     }
+    for (auto& [id, o] : localObjects) objects::OnObject(id, nullptr);
+    for (auto& [id, b] : localBlips) blips::OnBlip(id, nullptr);
+    localObjects.clear(); localBlips.clear();
+    std::fill(std::begin(keyBlocked), std::end(keyBlocked), false); overlay::SetScriptBlockedKeys(keyBlocked);
+    SaveStorage();
     used = 0; timers.clear(); boundKeys.clear(); uiNames.clear(); commandNames.clear(); building.clear();
     std::lock_guard g(drawLock); shown.clear();
 }
@@ -592,13 +775,18 @@ void Start() {
                                 {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer}, {"now", &Api::Now},
                                 {"send", &Api::Send}, {"uiSend", &Api::UiSend}, {"me", &Api::Me}, {"players", &Api::Players},
                                 {"camera", &Api::Camera}, {"screen", &Api::Screen}, {"worldToScreen", &Api::WorldToScreen}, {"raycast", &Api::Raycast},
-                                {"chat", &Api::Chat}, {"hint", &Api::Hint}, {"playSound", &Api::PlaySound}, {nullptr, nullptr}};
+                                {"chat", &Api::Chat}, {"hint", &Api::Hint}, {"playSound", &Api::PlaySound},
+                                {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"removeObject", &Api::RemoveObject},
+                                {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip}, {nullptr, nullptr}};
     lua_pushglobaltable(L); luaL_setfuncs(L, globals, 0); lua_pop(L, 1);
     const luaL_Reg draw[] = {{"text", &Api::DrawText}, {"text3d", &Api::DrawText3d}, {"rect", &Api::DrawRect}, {"line", &Api::DrawLine},
                              {"circle", &Api::DrawCircle}, {"image", &Api::DrawImage}, {nullptr, nullptr}};
     luaL_newlib(L, draw); lua_setglobal(L, "draw");
     const luaL_Reg jsonLib[] = {{"encode", &Api::JsonEncode}, {"decode", &Api::JsonDecode}, {nullptr, nullptr}};
     luaL_newlib(L, jsonLib); lua_setglobal(L, "json");
+    const luaL_Reg storageLib[] = {{"get", &Api::StorageGet}, {"set", &Api::StorageSet}, {"keys", &Api::StorageKeys}, {nullptr, nullptr}};
+    luaL_newlib(L, storageLib); lua_setglobal(L, "storage");
+    LoadStorage();
     lua_sethook(L, &Hook, LUA_MASKCOUNT, 10000);
 
     if (luaL_loadbufferx(L, code.data(), code.size(), "@main.lua", "t") != LUA_OK) { Report("main.lua", lua_tostring(L, -1)); lua_pop(L, 1); return; }
@@ -645,6 +833,7 @@ void OnServer(const std::string& name, const std::string& json) {
 }
 
 void Reset() { Stop(); files.clear(); arriving.clear(); early.clear(); wanted = false; client = nullptr; }
+void SetServer(const std::string& key) { serverKey = key; }
 
 void Update(const Frame& frame, net::Client& c) {
     client = &c;
@@ -664,6 +853,8 @@ void Update(const Frame& frame, net::Client& c) {
     std::erase_if(timers, [](const Timer& t) { return t.due < 0; });
     // Key presses (edges) while the player plays; a key held when that ends is no new press after.
     const bool keys = frame.canAct && GameFocused() && !overlay::CursorMode() && !mpui::DialogOpen() && !webui::Focused();
+    { static const bool none[256] = {}; overlay::SetScriptBlockedKeys(keys ? keyBlocked : none); }  // (chat and dialogs keep every key)
+    if (savedDirty && now >= nextSave) { nextSave = now + 5; SaveStorage(); }
     for (const int vk : std::vector<int>(boundKeys.begin(), boundKeys.end())) {
         const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
         if (down && !keyWasDown[vk] && keys) { lua_pushstring(L, KeyName(vk).c_str()); CallKept("cl.keys", nullptr, vk, 1, "bindKey(\"" + KeyName(vk) + "\")"); }
