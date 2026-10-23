@@ -762,6 +762,68 @@ struct Api {
         if (z.health >= 0) { lua_pushnumber(L, z.health); lua_setfield(L, -2, "health"); }
         lua_pushboolean(L, z.dead); lua_setfield(L, -2, "dead");
         if (Player* o = z.owner != 0xFFFF ? Srv(L).Find(z.owner) : nullptr) { PushPlayer(L, *o); lua_setfield(L, -2, "owner"); }
+        if (!z.zone.empty()) { lua_pushstring(L, z.zone.c_str()); lua_setfield(L, -2, "zone"); }
+        if (z.horde) { lua_pushinteger(L, z.horde); lua_setfield(L, -2, "horde"); }
+    }
+    static void PushZombieZone(lua_State* L, const ZombieZone& z) {
+        PushJson(L, Server::ZombieZoneJson(z));
+        lua_pushinteger(L, lua_Integer(z.alive.size())); lua_setfield(L, -2, "alive");
+    }
+    // createZombieZone{name=, x=, y=, z=, radius=30 (m), types={"Swarmer"} or type=, max=6, respawn=60 (s), wake=150 (m), world=0, enabled=true}
+    static int CreateZombieZone(lua_State* L) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        const std::string error = Srv(L).SetZombieZone(ToJson(L, 1, 0), true);
+        if (!error.empty()) luaL_error(L, "createZombieZone: %s", error.c_str());
+        if (!Srv(L).ZombiesOn()) Srv(L).Log("[%s] createZombieZone: zombies are off (server.ini Zombies=1 turns them on)", Self(L).mode_.c_str());
+        return 0;
+    }
+    // setZombieZone(name, {fields}): change any field but the name; enabled = false takes its zombies away
+    static int SetZombieZoneLua(lua_State* L) {
+        const std::string name = luaL_checkstring(L, 1); luaL_checktype(L, 2, LUA_TTABLE);
+        json::Value v = ToJson(L, 2, 0); v.set("name", name);
+        const std::string error = Srv(L).SetZombieZone(v, false);
+        if (!error.empty()) luaL_error(L, "setZombieZone: %s", error.c_str());
+        return 0;
+    }
+    static int RemoveZombieZone(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveZombieZone(luaL_checkstring(L, 1))); return 1; }
+    static int GetZombieZone(lua_State* L) {
+        if (const ZombieZone* z = Srv(L).FindZombieZone(luaL_checkstring(L, 1))) PushZombieZone(L, *z); else lua_pushnil(L);
+        return 1;
+    }
+    static int ZombieZonesList(lua_State* L) {
+        lua_newtable(L); int i = 0;
+        for (auto& z : Srv(L).ZombieZones()) { PushZombieZone(L, z); lua_rawseti(L, -2, ++i); }
+        return 1;
+    }
+    // createHorde(x, y, z, count [, {radius=10 (m), type= or types=, world=0}]) -> id or nil
+    static int CreateHordeLua(lua_State* L) {
+        const float x = float(luaL_checknumber(L, 1)), y = float(luaL_checknumber(L, 2)), z = float(luaL_checknumber(L, 3));
+        const int count = int(luaL_checkinteger(L, 4));
+        float radius = 1000; int32_t world = 0; std::vector<std::string> types;
+        if (lua_istable(L, 5)) {
+            const json::Value o = ToJson(L, 5, 0);
+            if (o["radius"].isNumber()) radius = std::max(1.f, float(o["radius"].asNumber()) * 100);
+            if (o["world"].isNumber()) world = int32_t(o["world"].asNumber());
+            if (o["type"].isString()) types.push_back(o["type"].asString());
+            for (auto& t : o["types"].elements()) if (t.isString()) types.push_back(t.asString());
+        }
+        if (types.empty()) types.push_back("Swarmer");
+        const uint16_t id = Srv(L).CreateHorde(x, y, z, count, radius, types, world);
+        if (id) lua_pushinteger(L, id); else lua_pushnil(L);
+        return 1;
+    }
+    static int RemoveHordeLua(lua_State* L) { lua_pushboolean(L, Srv(L).RemoveHorde(uint16_t(luaL_checkinteger(L, 1)))); return 1; }
+    // getHorde(id) -> {id, alive = {zombie ids}, died} or nil (all of it is gone)
+    static int GetHordeLua(lua_State* L) {
+        const Horde* h = Srv(L).FindHorde(uint16_t(luaL_checkinteger(L, 1)));
+        if (!h) { lua_pushnil(L); return 1; }
+        lua_createtable(L, 0, 3);
+        lua_pushinteger(L, h->id); lua_setfield(L, -2, "id");
+        lua_pushinteger(L, h->died); lua_setfield(L, -2, "died");
+        lua_createtable(L, int(h->alive.size()), 0);
+        for (size_t i = 0; i < h->alive.size(); ++i) { lua_pushinteger(L, h->alive[i]); lua_rawseti(L, -2, lua_Integer(i + 1)); }
+        lua_setfield(L, -2, "alive");
+        return 1;
     }
     // createZombie(x, y, z [, type [, yaw [, world]]]) -> id, or nil (server.ini Zombies=0, too many)
     static int CreateZombie(lua_State* L) {
@@ -1747,7 +1809,7 @@ bool Script::Load(const std::string& modeId) {
 
     const luaL_Reg globals[] = {{"print", &Api::Log}, {"log", &Api::Log}, {"on", &Api::On}, {"command", &Api::Command}, {"players", &Api::Players},
                                 {"getPlayer", &Api::GetPlayer}, {"broadcast", &Api::Broadcast}, {"setTime", &Api::SetTime}, {"setWeather", &Api::SetWeather},
-                                {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"setZombieOwner", &Api::SetZombieOwner}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
+                                {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"setZombieOwner", &Api::SetZombieOwner}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createZombieZone", &Api::CreateZombieZone}, {"setZombieZone", &Api::SetZombieZoneLua}, {"removeZombieZone", &Api::RemoveZombieZone}, {"getZombieZone", &Api::GetZombieZone}, {"zombieZones", &Api::ZombieZonesList}, {"createHorde", &Api::CreateHordeLua}, {"removeHorde", &Api::RemoveHordeLua}, {"getHorde", &Api::GetHordeLua}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
                                 {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256}, {"passwordHash", &Api::PasswordHashLua}, {"passwordCheck", &Api::PasswordCheckLua},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
@@ -1952,6 +2014,11 @@ void Script::ZombieDeath(uint16_t zombie, Player* killer) {
     Api::PushZombie(L_, *z);
     if (killer) Api::PushPlayer(L_, *killer); else lua_pushnil(L_);
     Fire("zombieDeath", 2);
+}
+void Script::HordeDeath(uint16_t horde) {
+    if (!L_) return;
+    lua_pushinteger(L_, horde);
+    Fire("hordeDeath", 1);
 }
 
 void Script::PlayerShot(Player& p, const std::string& weaponClass, float x, float y, float z) {

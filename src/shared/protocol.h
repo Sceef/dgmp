@@ -53,7 +53,8 @@ enum class Msg : uint8_t {
     // Freakers (docs/zombies.md): the client that owns a zombie runs its AI and reports it
     ZombieStates = 30, // u8 n, n x ZombieState: the zombies this client owns, where they are now (unreliable, ~10 Hz)
     ZombieHit = 31,    // u16 zombieId, f32 damage: this player hurt a zombie another client owns (its puppet here)
-    ZombieDied = 32,   // u16 zombieId: a zombie this client owns died
+    ZombieDied = 32,   // u16 zombieId, u16 killer: a zombie this client owns died; killer: who hurt it last (this player, the
+                       // player whose ZombieHit the server forwarded, 0xFFFF: neither, e.g. a fall or another freaker)
     ZombieAttack = 33, // u16 zombieId, u16 victimId, f32 damage: a zombie this client owns hurt another player (its target pawn here)
     UiRequest = 40,   // str path: send me this file of the mode's HTML UI (UiList: not in my cache)
     UiMessage = 41,   // str name, str json: the mode's page sent a message (dgmp.send) to the server's Lua (uiMessage)

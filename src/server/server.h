@@ -192,7 +192,30 @@ struct Zombie {
     bool dead = false;
     double diedAt = 0;
     uint8_t montageSeq = 0; std::string montage;
+    std::string zone;                         // the zombie zone that spawned it ("": the mode did)
+    uint16_t horde = 0;                       // the horde it belongs to (createHorde; 0: none)
 };
+
+// A zombie zone (docs/zombies.md "Zones"): while a player is near, it keeps `max` zombies inside it, a dead
+// one comes back after `respawn` seconds; nobody near for a while, its zombies go. world.json "zombieZones",
+// placed in the editor, or createZombieZone.
+struct ZombieZone {
+    std::string name;
+    float x = 0, y = 0, z = 0;                // the centre (z: on the ground)
+    float radius = 3000;                      // units (metres in world.json and Lua)
+    std::vector<std::string> types{"Swarmer"};  // each new one is one of these (EAIFactionType names)
+    int max = 6;
+    double respawn = 60;                      // seconds after a death
+    float wake = 15000;                       // units beyond the radius: a player this near fills it
+    int32_t world = 0;
+    bool enabled = true;
+    // state
+    std::vector<uint16_t> alive;              // its zombies now
+    std::vector<double> due;                  // when the dead ones come back
+    double lastAwake = 0;
+};
+// createHorde: zombies spread around a point that belong together (hordeDeath when the last one died).
+struct Horde { uint16_t id = 0; std::vector<uint16_t> alive; int died = 0; };
 
 // A character standing in the world for the mode (shopkeeper, guard): a look, an animation, a name.
 struct Actor {
@@ -522,6 +545,15 @@ public:
     const Zombie* FindZombie(uint16_t id) const { auto it = zombies_.find(id); return it == zombies_.end() ? nullptr : &it->second; }
     const std::map<uint16_t, Zombie>& Zombies() const { return zombies_; }
     bool ZombiesOn() const { return cfg_.zombies; }
+    // Zombie zones and hordes (zombies.cpp). The zone functions answer an error text ("" fine).
+    const std::vector<ZombieZone>& ZombieZones() const { return zombieZones_; }
+    const ZombieZone* FindZombieZone(const std::string& name) const;
+    std::string SetZombieZone(const json::Value& fields, bool create);  // create: a new one (fields need a name)
+    bool RemoveZombieZone(const std::string& name);                     // its zombies go too
+    static json::Value ZombieZoneJson(const ZombieZone& z);
+    uint16_t CreateHorde(float x, float y, float z, int count, float radius, const std::vector<std::string>& types, int32_t world);  // 0: none spawned
+    bool RemoveHorde(uint16_t id);
+    const Horde* FindHorde(uint16_t id) const { auto it = hordes_.find(id); return it == hordes_.end() ? nullptr : &it->second; }
     Player* AddBot(const std::string& nick);
     void RemoveBots();
     bool ReloadMode();
@@ -583,6 +615,13 @@ private:
     void OnZombieAttack(Player& p, const uint8_t* data, size_t size);
     void SendZombie(Player* to, const Zombie& z);  // to null: everyone
     void ZombiesPlayerGone(uint16_t id);           // its zombies go to the next nearest
+    void TickZombieZones();                        // fill the zones players are near, empty the others
+    void LoadZombieZones(const json::Value& world);  // world.json "zombieZones"
+    void ZombieGone(Zombie& z, bool died);         // out of its zone / horde (died: the zone respawns it)
+    std::vector<ZombieZone> zombieZones_;
+    std::map<uint16_t, Horde> hordes_;
+    uint16_t nextHorde_ = 1;
+    double nextZombieZoneTick_ = 0;
     void SendVoiceSetup(Player& p);
     void VoiceStats();                             // console: voice
     float voiceRange_ = 2500;

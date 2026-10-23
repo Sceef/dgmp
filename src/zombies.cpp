@@ -256,6 +256,8 @@ struct Zed {
     bool diedSent = false;
     double puppetSince = 0;                       // health changes right after becoming a puppet are resets, not hits
     UObject* target = nullptr; double targetAt = 0;  // owner: the pawn its AI was last told to hunt (ours or a target pawn)
+    float seenHealth = -1;                        // owner: its health last frame; a drop we did not forward is our own hit
+    uint16_t lastHitBy = 0xFFFF;                  // owner: who hurt it last (us, or the player whose hit the server forwarded)
 };
 std::map<uint16_t, Zed> zeds;
 uint16_t myId = 0xFFFF;
@@ -287,7 +289,7 @@ void BePuppet(Zed& z) {
     Drive(z.pawn, z.pos, z.yaw);
 }
 void BeOwned(Zed& z) {
-    Release(z.pawn); SetBrain(z.pawn, true); z.brain = 1;
+    Release(z.pawn); SetBrain(z.pawn, true); z.brain = 1; z.seenHealth = -1;
     // The last health the previous owner reported; none (or nonsense): a fresh one.
     const float full = Prop<float>(z.pawn, "MaxHealth", 200.f);
     SetProp<float>(z.pawn, "Health", z.health > 0 && z.health <= full ? z.health : full);
@@ -521,7 +523,8 @@ void OnMessage(net::Msg op, const uint8_t* data, size_t size) {
     if (zop == net::ZombieOp::Owner) { z.owner = r.U16(); return; }
     if (zop == net::ZombieOp::Damage) {
         const float damage = r.F32();
-        if (r.ok() && z.brain == 1 && IsValid(z.pawn)) ApplyDamage(z.pawn, damage);
+        const uint16_t attacker = r.U16();
+        if (r.ok() && z.brain == 1 && IsValid(z.pawn)) { ApplyDamage(z.pawn, damage); z.lastHitBy = attacker; z.seenHealth = Health(z.pawn); }
         return;
     }
     if (zop == net::ZombieOp::Died) {
@@ -531,6 +534,26 @@ void OnMessage(net::Msg op, const uint8_t* data, size_t size) {
         return;
     }
     if (zop == net::ZombieOp::Remove) { if (IsValid(z.pawn)) Despawn(z.pawn); zeds.erase(it); }
+}
+
+// Where a zombie stands at that point: on the ground under it (a zone's points are its centre's height; on a
+// slope that is in the air or under the ground), 1 m up like a pawn's middle. Unchanged when nothing is hit.
+FVector OnGround(UObject* context, const FVector& at) {
+    static UObject* kismet = nullptr; static UObject* statics = nullptr;
+    if (!IsValid(kismet)) kismet = FindObject("/Script/Engine.Default__KismetSystemLibrary");
+    if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
+    auto trace = kismet ? Fn(kismet, "LineTraceSingle_NEW") : nullptr, brk = statics ? Fn(statics, "BreakHitResult") : nullptr;
+    if (!trace || !brk || !IsValid(context)) return at;
+    Params t(trace); t.Set("WorldContextObject", context); t.Set("Start", FVector{at.X, at.Y, at.Z + 200}); t.Set("End", FVector{at.X, at.Y, at.Z - 3000});
+    t.Set<uint8_t>("TraceChannel", 0); t.SetBool("bTraceComplex", false); t.SetBool("bIgnoreSelf", true);
+    Call(kismet, "LineTraceSingle_NEW", &t);
+    auto hitProp = FindProperty(trace, "OutHit"), inProp = FindProperty(brk, "Hit");
+    if (!t.GetBool("ReturnValue") || !hitProp || !inProp) return at;
+    Params h(brk);
+    std::memcpy(static_cast<uint8_t*>(h.Data()) + Field<int>(inProp, off::UProperty_Offset), static_cast<uint8_t*>(t.Data()) + Field<int>(hitProp, off::UProperty_Offset), 136);
+    Call(statics, "BreakHitResult", &h);
+    const FVector ground = h.Get<FVector>("ImpactPoint");
+    return {at.X, at.Y, ground.Z + 100};
 }
 
 void Net(double now, UObject* localPawn, net::Client& client, int world) {
@@ -551,7 +574,7 @@ void Net(double now, UObject* localPawn, net::Client& client, int world) {
         if (!z.pawn) {
             if (!z.spawning && now >= z.retryAt) {
                 nextSpawnTag = id; std::string error;
-                z.spawning = Spawn(z.type, z.pos, z.yaw, false, &error);
+                z.spawning = Spawn(z.type, OnGround(localPawn, z.pos), z.yaw, false, &error);
                 nextSpawnTag = 0;
                 if (!z.spawning) { z.retryAt = now + 10; dg::Log("zombies: zombie %u (%s) cannot spawn here: %s", unsigned(id), z.type.c_str(), error.c_str()); }
             }
@@ -561,8 +584,10 @@ void Net(double now, UObject* localPawn, net::Client& client, int world) {
         else if (!mine && z.brain != 0) BePuppet(z);
         if (mine) {
             const float health = Health(z.pawn);
+            if (z.seenHealth >= 0 && health < z.seenHealth - 0.01f) z.lastHitBy = myId;  // not forwarded: this player's own hit
+            z.seenHealth = health;
             if (health <= 0) {
-                if (!z.diedSent) { z.diedSent = true; net::Writer w; w.Op(net::Msg::ZombieDied); w.U16(id); client.SendZombie(w, true); }
+                if (!z.diedSent) { z.diedSent = true; net::Writer w; w.Op(net::Msg::ZombieDied); w.U16(id); w.U16(z.lastHitBy); client.SendZombie(w, true); }
                 continue;
             }
             if (!reportNow || reported >= int(net::kZombiesPerPacket)) continue;

@@ -781,7 +781,7 @@ void Server::LoadEnvironment(const std::string& mode) {
     std::stringstream ss; ss << in.rdbuf();
     json::Value v;
     if (!ss.str().empty() && (!json::Value::Parse(ss.str(), v) || !v.isObject())) v = json::Value();
-    LoadDoors(v); LoadWorldVehicles(v); LoadLoot(v);
+    LoadDoors(v); LoadWorldVehicles(v); LoadLoot(v); LoadZombieZones(v);
     spawns_.clear();
     if (const json::Value& s = v["logic"]["spawn"]; s.isObject() || s.isArray()) {
         auto add = [&](const json::Value& at) { spawns_.push_back({true, float(at["x"].asNumber()), float(at["y"].asNumber()), float(at["z"].asNumber()), float(at["yaw"].asNumber())}); };
@@ -2313,6 +2313,7 @@ bool Server::ReloadMode() {
     ids.clear();
     for (auto& [id, z] : zombies_) ids.push_back(id);
     for (auto id : ids) RemoveZombie(id);
+    hordes_.clear();
     ids.clear();
     for (auto& [id, in] : interactions_) ids.push_back(id);
     for (auto id : ids) RemoveInteraction(id);

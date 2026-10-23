@@ -369,6 +369,17 @@ const char* T(const char* ru) {
     {"Выключенную зону код режима включает сам: setZone(\"имя\", {enabled = true})", "The mode's code turns an off zone on: setZone(\"name\", {enabled = true})"},
     {"Надпись на экране в зоне", "A line on the screen in the zone"},
     {"Своя надпись", "Own text"},
+    {"+ Зомби", "+ Zombies"}, {"Зона зомби (салатовая): пока рядом игрок, в ней держится заданное число зомби (server.ini Zombies=1).",
+     "Zombie zone (lime): while a player is near it keeps its number of zombies (server.ini Zombies=1)."},
+    {"Имя для кода режима: getZombieZone(\"имя\"), setZombieZone(\"имя\", {...}). Латиница, цифры, _ и -",
+     "The name for the mode's code: getZombieZone(\"name\"), setZombieZone(\"name\", {...}). Latin letters, digits, _ and -"},
+    {"Типы зомби", "Zombie types"},
+    {"Через запятую: Swarmer, Newt... Появляются только типы, загруженные в этом регионе (docs/zombies.md)",
+     "Comma separated: Swarmer, Newt... Only the types this region has loaded appear (docs/zombies.md)"},
+    {"Сколько держать", "How many"}, {"Новый вместо убитого через, с", "A new one for a killed one after, s"},
+    {"Просыпается, когда игрок ближе, м", "Wakes when a player is nearer than, m"},
+    {"От края зоны. Без игроков рядом 30 с зона засыпает: её зомби исчезают", "From the zone's edge. With nobody near for 30 s the zone sleeps: its zombies go"},
+
     {"Пусто — стандартная («Безопасная зона» / «PvP-зона»). Можно цвета {RRGGBB}", "Empty: the default one (Safe zone / PvP zone). Colours {RRGGBB} work"},
     {"Переноска", "Carrying"}, {"+ Ящик", "+ Box"}, {"отмена##carry", "cancel##carry"},
     {"ЛКМ в мире ставит ящик", "LMB in the world places a box"},
@@ -544,8 +555,11 @@ struct LItem { WT t; float radius = 5; };     // radius in metres (triggers)
 // A character of the mode (world.json "actors", docs/API.md "NPC"): placed here, made by the server.
 struct WActor { char id[48] = "", group[48] = "", look[192] = "", anim[128] = "idle", name[96] = ""; WT t; bool solid = true; int world = -1; };
 // A PvE / PvP zone (world.json "zones", docs/API.md "PvP и зоны"): sizes in metres, t = the centre on the ground.
+// zombie: a zombie zone instead (world.json "zombieZones", docs/zombies.md): a circle that keeps `max` zombies of
+// `types` (comma separated) while a player is within `wake` m of it, a dead one back after `respawn` s.
 struct WZone { char name[48] = ""; bool pvp = false, box = false; WT t; float radius = 20, length = 40, width = 40, height = 50;
-               bool enabled = true, notify = true; char text[160] = ""; int world = -1; };
+               bool enabled = true, notify = true; char text[160] = ""; int world = -1;
+               bool zombie = false; char types[96] = "Swarmer"; int max = 6; float respawn = 60, wake = 150; };
 // A box to carry in both hands (world.json "carries", docs/API.md "Переноска"): placed here, made by the server.
 struct WCarry { char key[48] = "", model[32] = "crate", tag[48] = ""; WT t; int world = -1; int roll = 0; };  // roll: 0 keep, 1 drop, 2 break
 // Things the server makes from world.json without code (docs/API.md "Транспорт", "Входы", "Лут"):
@@ -851,9 +865,26 @@ json::Value WorldJson(const World& w) {
         v.set("actors", list);
     }
     if (!w.zones.empty()) {
-        json::Value list = json::Value::Array();
+        json::Value list = json::Value::Array(), zombieList = json::Value::Array();
         for (auto& z : w.zones) {
             json::Value j = json::Value::Object();
+            if (z.zombie) {
+                j.set("name", std::string(z.name));
+                j.set("x", double(std::round(z.t.x))); j.set("y", double(std::round(z.t.y))); j.set("z", double(std::round(z.t.z)));
+                j.set("radius", double(z.radius));
+                json::Value types = json::Value::Array();
+                for (const char* p = z.types; *p;) {
+                    while (*p == ',' || *p == ' ') ++p;
+                    const char* e = p; while (*e && *e != ',' && *e != ' ') ++e;
+                    if (e > p) types.push(std::string(p, e));
+                    p = e;
+                }
+                j.set("types", types); j.set("max", z.max); j.set("respawn", double(z.respawn)); j.set("wake", double(z.wake));
+                if (z.world > 0) j.set("world", double(z.world));
+                if (!z.enabled) j.set("enabled", false);
+                zombieList.push(j);
+                continue;
+            }
             j.set("name", std::string(z.name)); j.set("type", std::string(z.pvp ? "pvp" : "pve")); j.set("shape", std::string(z.box ? "box" : "circle"));
             j.set("x", double(std::round(z.t.x))); j.set("y", double(std::round(z.t.y))); j.set("z", double(std::round(z.t.z)));
             if (z.box) { j.set("yaw", double(std::round(z.t.yaw * 10) / 10)); j.set("length", double(z.length)); j.set("width", double(z.width)); }
@@ -865,7 +896,8 @@ json::Value WorldJson(const World& w) {
             if (z.text[0]) j.set("text", std::string(z.text));
             list.push(j);
         }
-        v.set("zones", list);
+        if (list.size()) v.set("zones", list);
+        if (zombieList.size()) v.set("zombieZones", zombieList);
     }
     if (!w.carries.empty()) {
         json::Value list = json::Value::Array();
@@ -965,6 +997,18 @@ void WorldFrom(const json::Value& v, World& w) {
         z.radius = float(j["radius"].asNumber(20)); z.length = float(j["length"].asNumber(40)); z.width = float(j["width"].asNumber(40));
         z.height = float(j["height"].asNumber(50)); z.world = j["world"].isNumber() ? int(j["world"].asNumber()) : -1;
         z.enabled = j["enabled"].asBool(true); z.notify = j["notify"].asBool(true); Copy(z.text, sizeof z.text, j["text"].asString());
+        if (z.name[0]) w.zones.push_back(z);
+    }
+    for (auto& j : v["zombieZones"].elements()) {
+        WZone z; z.zombie = true; z.world = 0;
+        Copy(z.name, sizeof z.name, j["name"].asString());
+        z.t.x = float(j["x"].asNumber()); z.t.y = float(j["y"].asNumber()); z.t.z = float(j["z"].asNumber());
+        z.radius = float(j["radius"].asNumber(30)); z.max = j["max"].asInt(6); z.respawn = float(j["respawn"].asNumber(60)); z.wake = float(j["wake"].asNumber(150));
+        std::string types;
+        for (auto& t : j["types"].elements()) if (t.isString()) types += (types.empty() ? "" : ", ") + t.asString();
+        if (j["type"].isString()) types = j["type"].asString();
+        Copy(z.types, sizeof z.types, types.empty() ? std::string("Swarmer") : types);
+        z.world = j["world"].isNumber() ? int(j["world"].asNumber()) : 0; z.enabled = j["enabled"].asBool(true);
         if (z.name[0]) w.zones.push_back(z);
     }
     for (auto& j : v["carries"].elements()) {
@@ -1264,8 +1308,8 @@ void UpdateLogicVisuals(UObject* pawn) {
         if (mode == 0 && !worldMode.empty())
             for (int i = 0; i < int(world.zones.size()); ++i) {
                 const WZone& z = world.zones[size_t(i)];
-                Want w{"zone#" + std::to_string(i), std::string(z.name) + (z.pvp ? "  (PvP)" : "  (PvE)") + (z.enabled ? "" : " -"), {}, true,
-                       wsel.kind == 5 && wsel.id == std::to_string(i) ? 2 : z.pvp ? 4 : 3, z.box ? 2 : 1, z.length / 2, z.width / 2, true};
+                Want w{"zone#" + std::to_string(i), std::string(z.name) + (z.zombie ? "  (zombies)" : z.pvp ? "  (PvP)" : "  (PvE)") + (z.enabled ? "" : " -"), {}, true,
+                       wsel.kind == 5 && wsel.id == std::to_string(i) ? 2 : z.zombie ? 8 : z.pvp ? 4 : 3, z.box && !z.zombie ? 2 : 1, z.length / 2, z.width / 2, true};
                 w.item.t = z.t; w.item.t.pitch = w.item.t.roll = 0; w.item.radius = z.radius;
                 if (!z.box) w.item.t.yaw = 0;
                 wants.push_back(w);
@@ -1333,9 +1377,9 @@ void UpdateLogicVisuals(UObject* pawn) {
             Params p(f); p.Set("NewLocation", FVector{w.item.t.x, w.item.t.y, w.item.t.z}); p.Set("NewRotation", FRotator{0, w.item.t.yaw, 0}); p.SetBool("bTeleport", true);
             Call(v.actor, "K2_SetActorLocationAndRotation", &p);
         }
-        // 0 trigger, 1 point, 2 selected, 3 PvE, 4 PvP, 5 vehicle, 6 door, 7 loot
-        static const float colors[8][4] = {{0.15f, 0.75f, 0.9f, 1}, {1.f, 0.5f, 0.15f, 1}, {1.f, 0.85f, 0.2f, 1}, {0.2f, 0.85f, 0.35f, 1}, {0.95f, 0.25f, 0.2f, 1},
-                                           {0.7f, 0.35f, 0.95f, 1}, {0.25f, 0.9f, 0.8f, 1}, {0.95f, 0.7f, 0.25f, 1}};
+        // 0 trigger, 1 point, 2 selected, 3 PvE, 4 PvP, 5 vehicle, 6 door, 7 loot, 8 zombie zone
+        static const float colors[9][4] = {{0.15f, 0.75f, 0.9f, 1}, {1.f, 0.5f, 0.15f, 1}, {1.f, 0.85f, 0.2f, 1}, {0.2f, 0.85f, 0.35f, 1}, {0.95f, 0.25f, 0.2f, 1},
+                                           {0.7f, 0.35f, 0.95f, 1}, {0.25f, 0.9f, 0.8f, 1}, {0.95f, 0.7f, 0.25f, 1}, {0.6f, 0.85f, 0.15f, 1}};
         if (v.color != w.color && IsValid(v.material)) if (auto f = Fn(v.material, "SetVectorParameterValue")) {
             Params p(f); p.Set("ParameterName", colorName);
             struct { float r, g, b, a; } c{colors[w.color][0], colors[w.color][1], colors[w.color][2], colors[w.color][3]};
@@ -1348,7 +1392,7 @@ void UpdateLogicVisuals(UObject* pawn) {
                 Params t(Fn(tc, "SetText")); t.Set("Value", FString{wt.c_str(), int32_t(wt.size() + 1), int32_t(wt.size() + 1)}); Call(tc, "SetText", &t);
                 if (auto f = Fn(tc, "SetHorizontalAlignment")) { Params a(f); a.Set<uint8_t>("Value", 1); Call(tc, "SetHorizontalAlignment", &a); }
                 if (auto f = Fn(tc, "SetWorldSize")) { Params a(f); a.Set<float>("Value", 45.f); Call(tc, "SetWorldSize", &a); }
-                static const uint32_t argbs[5] = {0xFF5AD2E6, 0xFFF09646, 0xFFFFD84A, 0xFF5AE678, 0xFFF05A50};
+                static const uint32_t argbs[9] = {0xFF5AD2E6, 0xFFF09646, 0xFFFFD84A, 0xFF5AE678, 0xFFF05A50, 0xFFB35AF2, 0xFF40E6CC, 0xFFF2B340, 0xFF9AD926};
                 const uint32_t argb = argbs[w.color];
                 if (auto f = Fn(tc, "SetTextRenderColor")) { Params a(f); a.Set<uint32_t>("Value", argb); Call(tc, "SetTextRenderColor", &a); }
                 v.text = w.text;
@@ -1595,8 +1639,9 @@ void WorldClick(UObject* pawn, UObject* controller) {
     std::lock_guard g(lock);
     if (!pick.valid) { wsel = {}; return; }
     if (placeZone) {
-        WZone z; z.pvp = placeZone == 2;
-        Copy(z.name, sizeof z.name, FreeZoneName(z.pvp ? "arena" : "safe"));
+        WZone z; z.pvp = placeZone == 2; z.zombie = placeZone == 3;
+        if (z.zombie) { z.radius = 30; z.world = 0; }
+        Copy(z.name, sizeof z.name, FreeZoneName(z.zombie ? "zombies" : z.pvp ? "arena" : "safe"));
         z.t.x = pick.at.X; z.t.y = pick.at.Y; z.t.z = pick.at.Z; z.t.yaw = std::round(cam.rot.Yaw);
         world.zones.push_back(z);
         SelectZone(int(world.zones.size()) - 1);
@@ -1960,34 +2005,60 @@ void DrawZones() {
     if (!ImGui::CollapsingHeader(T("PvP и зоны"), ImGuiTreeNodeFlags_DefaultOpen)) return;
     ImGui::Checkbox(T("Урон между игроками (PvP)"), &world.pvp);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Выключено: игроки ранят друг друга только в PvP-зонах. Код режима может менять это: setPvp(), player:setPvp(), setPvpRule()."));
-    for (int kind = 1; kind <= 2; ++kind) {
+    for (int kind = 1; kind <= 3; ++kind) {
         const bool armed = placeZone == kind;
-        if (kind == 2) ImGui::SameLine();
-        if (ImGui::Button(armed ? (std::string(T("отмена")) + "##zone" + std::to_string(kind)).c_str() : kind == 1 ? T("+ PvE зона") : T("+ PvP зона"))) {
+        if (kind > 1) ImGui::SameLine();
+        if (ImGui::Button(armed ? (std::string(T("отмена")) + "##zone" + std::to_string(kind)).c_str() : kind == 1 ? T("+ PvE зона") : kind == 2 ? T("+ PvP зона") : T("+ Зомби"))) {
             placeZone = armed ? 0 : kind; placeProp.clear(); placeLogic.clear(); placeActor.clear(); placeCarry = false; placeEnt = 0;
             if (!armed) Toast(T("ЛКМ в мире ставит центр зоны"));
         }
     }
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("PvE (зелёная) — безопасная зона: игроки не ранят друг друга, стрелять из неё тоже нельзя. PvP (красная) — урон между игроками есть, даже если PvP режима выключен (нужно, чтобы оба были в PvP-зонах). Зомби и NPC опасны везде."));
+    ImGui::TextDisabled("%s", T("Зона зомби (салатовая): пока рядом игрок, в ней держится заданное число зомби (server.ini Zombies=1)."));
     if (world.zones.empty()) { ImGui::TextDisabled("%s", T("Зон нет")); return; }
     for (int i = 0; i < int(world.zones.size()); ++i) {
         const WZone& z = world.zones[size_t(i)];
         ImGui::PushID(i);
-        ImGui::PushStyleColor(ImGuiCol_Text, z.pvp ? IM_COL32(240, 110, 100, 255) : IM_COL32(110, 220, 130, 255));
-        ImGui::TextUnformatted(z.pvp ? "PvP" : "PvE");
+        ImGui::PushStyleColor(ImGuiCol_Text, z.zombie ? IM_COL32(160, 220, 40, 255) : z.pvp ? IM_COL32(240, 110, 100, 255) : IM_COL32(110, 220, 130, 255));
+        ImGui::TextUnformatted(z.zombie ? "Z  " : z.pvp ? "PvP" : "PvE");
         ImGui::PopStyleColor(); ImGui::SameLine();
         char label[160];
-        if (z.box) snprintf(label, sizeof label, "%s  —  %.0f x %.0f %s%s", z.name, z.length, z.width, T("м"), z.enabled ? "" : T(", выключена"));
+        if (z.zombie) snprintf(label, sizeof label, "%s  —  R %.0f %s, %d  %s%s", z.name, z.radius, T("м"), z.max, z.types, z.enabled ? "" : T(", выключена"));
+        else if (z.box) snprintf(label, sizeof label, "%s  —  %.0f x %.0f %s%s", z.name, z.length, z.width, T("м"), z.enabled ? "" : T(", выключена"));
         else snprintf(label, sizeof label, "%s  —  R %.0f %s%s", z.name, z.radius, T("м"), z.enabled ? "" : T(", выключена"));
         if (ImGui::Selectable(label, wsel.kind == 5 && wsel.id == std::to_string(i))) SelectZone(i);
         ImGui::PopID();
     }
 }
+// The selected zombie zone's settings.
+void DrawZombieZoneProps(WZone* z) {
+    char name[48]; Copy(name, sizeof name, z->name);
+    if (ImGui::InputText(T("Имя зоны"), name, sizeof name)) {
+        bool used = false; for (auto& o : world.zones) used |= &o != z && std::strcmp(o.name, name) == 0;
+        if (ValidId(name) && !used) Copy(z->name, sizeof z->name, name);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Имя для кода режима: getZombieZone(\"имя\"), setZombieZone(\"имя\", {...}). Латиница, цифры, _ и -"));
+    if (ImGui::DragFloat3(T("Центр"), &z->t.x, 5.f, 0, 0, "%.0f")) wsel.t = z->t;
+    ImGui::DragFloat(T("Радиус, м"), &z->radius, 0.5f, 3.f, 1000.f, "%.0f");
+    ImGui::InputText(T("Типы зомби"), z->types, sizeof z->types);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Через запятую: Swarmer, Newt... Появляются только типы, загруженные в этом регионе (docs/zombies.md)"));
+    ImGui::SetNextItemWidth(120); ImGui::InputInt(T("Сколько держать"), &z->max); z->max = std::clamp(z->max, 0, 50);
+    ImGui::DragFloat(T("Новый вместо убитого через, с"), &z->respawn, 1.f, 0.f, 3600.f, "%.0f");
+    ImGui::DragFloat(T("Просыпается, когда игрок ближе, м"), &z->wake, 1.f, 0.f, 1000.f, "%.0f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("От края зоны. Без игроков рядом 30 с зона засыпает: её зомби исчезают"));
+    ImGui::Checkbox(T("Включена при старте"), &z->enabled);
+    ImGui::SetNextItemWidth(120); ImGui::InputInt(T("Мир"), &z->world); if (z->world < 0) z->world = 0;
+    const std::string luaName = z->name;
+    if (ImGui::Button(T("Удалить"))) { WorldDelete(); return; }
+    ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
+    ImGui::TextDisabled("Lua: getZombieZone(\"%s\")", luaName.c_str());
+}
 void DrawZoneProps() {
     WZone* z = ZoneOf(wsel.id);
     if (!z) { wsel = {}; return; }
     ImGui::PushID("zone");
+    if (z->zombie) { DrawZombieZoneProps(z); ImGui::PopID(); return; }
     char name[48]; Copy(name, sizeof name, z->name);
     if (ImGui::InputText(T("Имя зоны"), name, sizeof name)) {
         bool used = false; for (auto& o : world.zones) used |= &o != z && std::strcmp(o.name, name) == 0;

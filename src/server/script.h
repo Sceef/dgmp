@@ -63,6 +63,7 @@ public:
     void VehicleArrive(uint16_t vehicle);  // its NPC got to the end of the way (driveVehicle onArrive, vehicleArrive)
     void ObjectMoved(uint16_t object);     // moveObject got there: its onArrive and the objectMoved event
     void ZombieDeath(uint16_t zombie, Player* killer);  // zombieDeath (killer null: nobody hurt it)
+    void HordeDeath(uint16_t horde);                    // hordeDeath: the last zombie of a horde died
     void AnimEnd(Player& p, const char* reason);
     // [F] at a door of the mode: 0 no say (its lock decides), 1 refused, 2 allowed even when locked.
     int DoorUse(Player& p, const std::string& door, const char* side);

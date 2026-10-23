@@ -11,7 +11,7 @@
 //       !cserr <text> (a client script failed),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
 //       Zombies (docs/zombies.md): the ones it owns walk toward it and are reported 10 times a second; !zhit <id> <damage>
-//       (we hurt its puppet), !zdie <id> (the one we own died), !zatk <id> <player> <damage> (the one we own hurt that player);
+//       (we hurt its puppet), !zdie <id> [killer id] (the one we own died), !zatk <id> <player> <damage> (the one we own hurt that player);
 //       zombie messages are printed.
 //       --steam <steamid> [ticket hex]: the Steam identity sent with Hello.
 //       Voice: !voice <seconds> [radio] sends dummy frames (20 a second) with the talk / radio key; voice heard is
@@ -276,7 +276,7 @@ int main() {
                     }
                     else if (std::sscanf(s.c_str(), "!zhit %u %f", &id, &x) == 2) { net::Writer w; w.Op(net::Msg::ZombieHit); w.U16(uint16_t(id)); w.F32(x); c.SendZombie(w, true); }
                     else if (std::sscanf(s.c_str(), "!zatk %u %u %f", &id, &ok, &x) == 3) { net::Writer w; w.Op(net::Msg::ZombieAttack); w.U16(uint16_t(id)); w.U16(uint16_t(ok)); w.F32(x); c.SendZombie(w, true); }
-                    else if (std::sscanf(s.c_str(), "!zdie %u", &id) == 1) { net::Writer w; w.Op(net::Msg::ZombieDied); w.U16(uint16_t(id)); c.SendZombie(w, true); }
+                    else if (unsigned killer = 0xFFFF; std::sscanf(s.c_str(), "!zdie %u %u", &id, &killer) >= 1) { net::Writer w; w.Op(net::Msg::ZombieDied); w.U16(uint16_t(id)); w.U16(uint16_t(killer)); c.SendZombie(w, true); }
                     else if (s == "!dead") { dead = true; nextState = 0; }
                     else if (s == "!alive") { dead = false; nextState = 0; }
                     else if (s.rfind("!inv", 0) == 0) {
