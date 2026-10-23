@@ -32,6 +32,7 @@ namespace fs = std::filesystem;
 //   array <obj> <ArrayProperty> [max]  elements of an array property
 //   set <obj> <Property> <value>
 //   spawn <classPath|-> <itemKey> [count] [dist]   a pickup in front of the pawn, taken the game's way
+//   actor <assetPath> [dist m] [yaw]   an actor of that blueprint class (or a mesh) on the ground in front of the pawn
 //   trace [seconds]                   log distinct events of the local pawn/controller and their components
 //   refs <obj> [bytes]                 raw scan: offsets holding pointers to live objects (unreflected fields)
 //   ai [radius m] [all]                AI pawns: class, controller, health, distance (visible unless all)
@@ -269,6 +270,19 @@ std::string Run(const std::string& line) {
     if (a.empty()) return "empty command";
     std::ostringstream out;
     const auto& cmd = a[0];
+    if (cmd == "actor" && a.size() > 1) {
+        const float dist = a.size() > 2 ? std::stof(a[2]) * 100.f : 400.f;
+        FVector at = ActorPos(ctxPawn); FRotator rot{0, 0, 0};
+        if (auto f = Fn(ctxPawn, "K2_GetActorRotation")) { Params p(f); Call(ctxPawn, "K2_GetActorRotation", &p); rot = p.Get<FRotator>("ReturnValue"); }
+        const float r = rot.Yaw * 0.0174532925f;
+        at.X += std::cos(r) * dist; at.Y += std::sin(r) * dist; at.Z -= 90.f;
+        const FRotator face{0, a.size() > 3 ? std::stof(a[3]) : rot.Yaw, 0};
+        UObject* actor = worldedit::SpawnMesh(a[1], at, face, 1.f, ctxPawn);
+        if (!actor) return "did not spawn (no such asset?)";
+        keepAlive.clear();
+        out << "@0x" << std::hex << reinterpret_cast<uintptr_t>(actor) << std::dec << " " << FullName(actor) << " at " << at.X << " " << at.Y << " " << at.Z;
+        return out.str();
+    }
     if (cmd == "say" && a.size() > 1) {  // say <line>: the multiplayer chat line (or /command) as if typed
         const std::string text = line.substr(line.find(' ') + 1);
         std::wstring w(size_t(MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0)), wchar_t{});

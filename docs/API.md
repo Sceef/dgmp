@@ -15,6 +15,7 @@
 | [`htmlui`](../modes/htmlui/main.lua) | **HTML-интерфейс**: панель статуса поверх игры и «телефон» на F2 (`ui/index.html`, `app.js`): кнопки и поле ввода шлют сообщения в Lua, Lua отвечает странице |
 | [`clientdemo`](../modes/clientdemo) | **клиентские скрипты** (`client/main.lua` в игре у игрока): спидометр и компас поверх игры, имя игрока под прицелом и G — помахать ему (сервер проверяет расстояние), локальные `/fps` и `/ping` |
 | [`zombies`](../modes/zombies/main.lua) | **зомби** (`server.ini` `Zombies=1`): зона зомби у спавна (или из редактора), `/horde` — стая перед игроком, награда за убийство |
+| [`inventory`](../modes/inventory/main.lua) | **свой инвентарь и ловушки**: рюкзак 30 кг (сохраняется), багажник мотоцикла, канистры (F — взять, «Заправить»), мина, капкан и растяжка из рюкзака ставятся прицелом с призраком (клиентский скрипт), `/boom` — взрыв |
 | [`questtest`](../modes/questtest/main.lua) | запуск квеста из `quests/<id>.json` (кнопка «Проверить» в редакторе квестов) |
 
 Запуск любого: `dgmp-server.exe --mode <id>` или «Создать сервер» в лаунчере.
@@ -1307,6 +1308,77 @@ on("cheat", function(p, kind, info)
     if kind == "hitDamage" then p:ban("урон-хак: " .. info.detail) return true end   -- навсегда
 end)
 ```
+
+## Окно предметов
+
+Готовое окно игры с одним или двумя списками предметов (рюкзак | багажник, рюкзак | тайник): иконки (картинки режима), количество, строка описания, кнопки действий у выбранного предмета, перенос между списками (кнопкой «Переложить», «1 шт.» или двойным щелчком). Что значит любое нажатие, решает сервер: окно только показывает и сообщает. Обычно его открывает библиотека `inventory` (ниже), но можно и напрямую.
+
+```lua
+player:itemWindow({
+    title = "Рюкзак и багажник", hint = "Двойной щелчок — переложить",
+    panes = {
+        { id = "bag", title = "Рюкзак", info = "12.5 / 30 кг", empty = "Пусто",
+          items = { { id = "gas", name = "Канистра", count = 2, icon = "gas.png", text = "10 л", actions = { { id = "refuel", label = "Заправить" } } } } },
+        { id = "trunk", title = "Багажник", items = {} },
+    },
+}, function(player, action)
+    -- action: {type = "move", pane = 1, item = 1, count = 2} | {type = "action", pane =, item =, id = "refuel"} | {type = "close"}
+end)
+player:itemWindow({...})      -- пока окно открыто: обновить на месте (выбор остаётся)
+player:closeItemWindow()
+on("itemWindow", function(player, windowId, action) end)   -- то же для всех окон
+```
+
+Окно держит курсор, как диалог. До 64 КБ описания и 20 действий в секунду от игрока.
+
+## Свой инвентарь — библиотека `inventory`
+
+`modes/_lib/inventory.lua`: предметы режима (канистра бензина, рация, ключ, мина), контейнеры с ограничением по весу и слотам — рюкзак игрока, багажник транспорта, тайник — и окно предметов к ним. Всё решает сервер; игровой рюкзак (патроны, оружие — `player:giveItem`) отдельно.
+
+```lua
+local inventory = require("inventory")
+inventory.define("gas", { name = { en = "Gas can", ru = "Канистра" }, icon = "gas.png", weight = 5, stack = 1,
+    text = { en = "Fills a tank by 40 %", ru = "Заправляет бак на 40 %" },
+    actions = { { id = "refuel", label = { en = "Refuel", ru = "Заправить" },
+                  when = function(player) return nearVehicle(player) ~= nil end,   -- кнопка видна только рядом с транспортом
+                  fn = function(player, ctx) setVehicle(id, { fuel = 1 }) return true end } } })   -- true: один израсходован
+
+local bag = inventory.of(player)              -- рюкзак игрока: по SteamID (без него — по нику), сохраняется
+bag:add("gas", 1)                             -- сколько поместилось (вес, слоты)
+bag:remove("gas", 1); bag:count("gas"); bag:has("gas"); bag:weight(); bag:list()
+local trunk = inventory.trunk(vehicleId, { key = "bob_car", maxWeight = 80 })   -- key: хранить и после перезапуска
+local stash = inventory.container("house:12", { title = "Тайник", maxWeight = 100, slots = 30, persist = true })
+inventory.open(player, bag, trunk, { title = "Рюкзак и багажник" })   -- одно или два хранилища
+inventory.close(player)
+inventory.onMove = function(player, item, count, from, to) return false end   -- запретить перенос
+inventory.bag = { maxWeight = 30, slots = 24 }   -- размер рюкзака (до первого inventory.of)
+```
+
+У предмета: `name`, `icon` (картинка из `images/`), `weight` (кг), `stack` (сколько в одной ячейке), `text` (строка или `function(item, player)`), `actions` (`id`, `label`, `when`, `fn`). Имена и подписи — строкой или `{en =, ru =}` (по языку игрока). Предмет с данными (`bag:add("radio", 1, {freq = 101})`) занимает свою ячейку. Хранилища с `persist = true` лежат в `storage` под ключом `inv:<id>`.
+
+## Ловушки
+
+Игровые мина, СВУ и капкан, растяжка между двумя точками (со СВУ на одном конце) или невидимая зона. Когда ловушка срабатывает, решает **сервер**: игрок (или зомби) в радиусе точечной ловушки или пересёк растяжку на высоте своего тела. Тогда вызываются `onTrigger` и события `trap` (`false` — ничего не происходит), и ловушка срабатывает у всех: взрывчатка взрывается по-игровому (каждая игра ранит своего игрока и своих зомби рядом), капкан ловит жертву у неё на экране (застрял, вырывайтесь, кровотечение) и захлопывается у остальных. Сами игровые срабатыватели и подбор ловушки в рюкзак выключены.
+
+```lua
+createTrap({ type = "mine", x = x, y = y, z = z })                -- z — земля; радиус 1.5 м
+createTrap({ type = "beartrap", x = x, y = y, z = z, yaw = 90 })   -- 0.6 м
+createTrap({ type = "ied", x = x, y = y, z = z, radius = 3 })
+createTrap({ type = "wire", x = x1, y = y1, z = z1 + 30, x2 = x2, y2 = y2, z2 = z2 + 30 })   -- z: высота проволоки
+createTrap({ type = "wire", explosive = false, x = ..., z = z + 150, ..., onTrigger = function(trap, player, zombieId)
+    if not player then return false end            -- зомби проходят
+    player:damage(25)                                -- «бельевая верёвка» на шее мотоциклиста
+    if player:isOnBike() then player:playAnim("dcn_trap_tripwire_clothsline_bike_long") end
+end })
+createTrap({ type = "zone", x = x, y = y, z = z, radius = 5, rearm = 10, onTrigger = function(trap, player) ... end })  -- своя механика
+removeTrap(id); getTrap(id); traps(); fireTrap(id [, player])     -- взорвать сейчас
+explode(x, y, z [, world])                                         -- взрыв СВУ в точке
+on("trap", function(trap, player, zombieId) end)                   -- return false: не срабатывать
+```
+
+Поля: `world` (0), `players = true`, `zombies = true` (кто задевает), `rearm` (секунды до повторной готовности; без него ловушка одноразовая), `radius` (м). Новая ловушка готова через секунду (не под ногами поставившего). Растяжку засчитывает пересечение отрезка движения с проволокой, если она на высоте от щиколоток до головы мотоциклиста (−20 … +220 см от ног); точечные — по расстоянию до центра. Клиенты показывают ловушки в радиусе 300 м.
+
+**Установка прицелом** — на клиентском скрипте (`modes/inventory/client/main.lua`): призрак ловушки (`createObject{..., ghost = true}`) стоит там, куда смотрит прицел; F ставит, G отменяет; растяжка — по двум точкам с линией между ними. Скрипт шлёт точки серверу (`send("placeAt", ...)`), сервер проверяет расстояния и ставит ловушку.
 
 ## Зомби
 

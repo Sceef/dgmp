@@ -146,7 +146,7 @@ void Server::Run() {
         TickVehicles();
         TickObjects();
         if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
-        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); }
+        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); TickTraps(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
         if (now >= nextReloadCheck) {
@@ -672,6 +672,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
     for (auto& [aid, a] : actors_) SendActor(peer, a);
     for (auto& [zid, z] : zombies_) SendZombie(p, z);
+    for (auto& [tid, t] : traps_) if (!t.fired) SendTrap(p, t);
     for (auto& [oid, o] : objects_) SendObject(peer, o);
     for (auto& [bid, b] : blips_) if (b.only == 0xFFFF) SendBlip(p, b);
     for (auto& [cid, c] : carries_) SendCarry(p, c);
@@ -2339,6 +2340,9 @@ bool Server::ReloadMode() {
     for (auto& [id, z] : zombies_) ids.push_back(id);
     for (auto id : ids) RemoveZombie(id);
     hordes_.clear();
+    ids.clear();
+    for (auto& [id, t] : traps_) ids.push_back(id);
+    for (auto id : ids) RemoveTrap(id);
     ids.clear();
     for (auto& [id, in] : interactions_) ids.push_back(id);
     for (auto id : ids) RemoveInteraction(id);

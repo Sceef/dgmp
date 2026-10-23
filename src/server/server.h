@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <array>
 #include <set>
 #include <memory>
 #include <string>
@@ -213,6 +214,23 @@ struct ZombieZone {
     std::vector<uint16_t> alive;              // its zombies now
     std::vector<double> due;                  // when the dead ones come back
     double lastAwake = 0;
+};
+// A trap (src/server/traps.cpp, docs/API.md "Ловушки"): the game's mine, IED or bear trap, a tripwire from
+// x,y,z to x2,y2,z2 (with an IED at its first end when explosive), or an invisible zone. The server sets it off.
+struct Trap {
+    uint16_t id = 0;
+    std::string type = "mine";                // mine, ied, beartrap, wire, zone
+    float x = 0, y = 0, z = 0, yaw = 0;       // on the ground
+    float x2 = 0, y2 = 0, z2 = 0;             // wire: the other end
+    float radius = 150;                       // point traps: units from the centre that set it off
+    int32_t world = 0;
+    bool players = true, zombies = true;      // who sets it off
+    bool explosive = true;                    // wire: an IED at its first end goes off; false: only the mode's handler
+    double rearm = 0;                         // > 0: ready again after this many seconds (else it goes off once)
+    double armedAt = 0;                       // not before this
+    bool fired = false; double firedAt = 0;
+    static bool KnownType(const std::string& t);
+    bool Hit(float px, float py, float pz, float qx, float qy, float qz) const;  // a body moving from p to q sets it off
 };
 // createHorde: zombies spread around a point that belong together (hordeDeath when the last one died).
 struct Horde { uint16_t id = 0; std::vector<uint16_t> alive; int died = 0; };
@@ -558,6 +576,13 @@ public:
     static json::Value ZombieZoneJson(const ZombieZone& z);
     uint16_t CreateHorde(float x, float y, float z, int count, float radius, const std::vector<std::string>& types, int32_t world);  // 0: none spawned
     bool RemoveHorde(uint16_t id);
+    // Traps (traps.cpp): 0 when there are too many or the type is unknown.
+    uint16_t AddTrap(Trap t);
+    bool RemoveTrap(uint16_t id);
+    void FireTrap(uint16_t id, uint16_t victim = 0xFFFF);
+    const Trap* FindTrap(uint16_t id) const { auto it = traps_.find(id); return it == traps_.end() ? nullptr : &it->second; }
+    Trap* MutableTrap(uint16_t id) { auto it = traps_.find(id); return it == traps_.end() ? nullptr : &it->second; }
+    const std::map<uint16_t, Trap>& Traps() const { return traps_; }
     const Horde* FindHorde(uint16_t id) const { auto it = hordes_.find(id); return it == hordes_.end() ? nullptr : &it->second; }
     Player* AddBot(const std::string& nick);
     void RemoveBots();
@@ -624,6 +649,11 @@ private:
     void LoadZombieZones(const json::Value& world);  // world.json "zombieZones"
     void ZombieGone(Zombie& z, bool died);         // out of its zone / horde (died: the zone respawns it)
     std::vector<ZombieZone> zombieZones_;
+    std::map<uint16_t, Trap> traps_;
+    uint16_t nextTrap_ = 1;
+    std::map<uint16_t, std::array<float, 3>> trapPrev_, zombiePrev_;  // where players / zombies were at the last trap check
+    void TickTraps();
+    void SendTrap(Player* to, const Trap& t);
     std::map<uint16_t, Horde> hordes_;
     uint16_t nextHorde_ = 1;
     double nextZombieZoneTick_ = 0;

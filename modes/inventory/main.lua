@@ -1,6 +1,9 @@
--- Own inventory demo (modes/_lib/inventory.lua, docs/API.md "Свой инвентарь"): gas cans lie by the spawn,
--- F picks one up into your backpack, I opens it (next to the bike: backpack | trunk side by side), "Refuel"
--- pours a can into the bike's tank. Scrap is a stackable item; the backpack holds 30 kg and is kept between visits.
+-- Own inventory and traps demo (modes/_lib/inventory.lua, docs/API.md "Свой инвентарь", "Ловушки"): gas cans lie
+-- by the spawn, F picks one up into your backpack, I (or /inv) opens it (next to the bike: backpack | trunk side
+-- by side), "Refuel" pours a can into the bike's tank. A mine and a tripwire in the backpack are set from it.
+-- Scrap is a stackable item; the backpack holds 30 kg and is kept between visits.
+-- Test commands: /place mine|beartrap|wire (aimed, without the item), /mine, /wire, /clothesline, /beartrap, /boom
+-- (in front of you), /traps, /bike.
 
 local inventory = require("inventory")
 local GREEN, RED = "#7CD67C", "#E07070"
@@ -61,6 +64,99 @@ inventory.define("scrap", {
     text = { en = "Stacks by 20", ru = "Стопки по 20" },
 })
 
+-- ---------------------------------------------------------------- traps
+local place  -- place(player, kind): the player aims where a trap goes (defined below)
+-- A point `metres` in front of the player on the ground, and its heading.
+local function ahead(player, metres)
+    local x, y, z, yaw = player:position()
+    local a = math.rad(yaw)
+    return x + math.cos(a) * metres * 100, y + math.sin(a) * metres * 100, z - 90, yaw
+end
+local function setMine(player) local x, y, z = ahead(player, 3); return createTrap({ type = "mine", x = x, y = y, z = z, world = player.world }) end
+-- A wire across the way 4 m ahead, 4 m wide, at shin height (explosive) or at a rider's neck (clothesline).
+local function setWire(player, explosive)
+    local x, y, z, yaw = ahead(player, 4)
+    local side = math.rad(yaw + 90)
+    local h = explosive and 30 or 150
+    return createTrap({ type = "wire", explosive = explosive, world = player.world,
+        x = x - math.cos(side) * 200, y = y - math.sin(side) * 200, z = z + h,
+        x2 = x + math.cos(side) * 200, y2 = y + math.sin(side) * 200, z2 = z + h,
+        onTrigger = not explosive and function(trap, victim)
+            if not victim then return false end            -- zombies walk under it
+            victim:damage(25)
+            if victim:isOnBike() then victim:playAnim("dcn_trap_tripwire_clothsline_bike_long") end
+            victim:message(T(victim, "A wire across the road!", "Растяжка поперёк дороги!"), RED)
+        end or nil })
+end
+on("trap", function(trap, player, zombie)
+    log(("trap %d (%s) set off by %s"):format(trap.id, trap.type, player and player.name or zombie and ("zombie " .. zombie) or "?"))
+end)
+command("mine", setMine)
+command("wire", function(player) setWire(player, true) end)
+command("clothesline", function(player) setWire(player, false) end)
+command("beartrap", function(player) local x, y, z = ahead(player, 2); createTrap({ type = "beartrap", x = x, y = y, z = z, world = player.world }) end)
+command("boom", function(player) local x, y, z = ahead(player, 10); explode(x, y, z, player.world) end)
+command("place", function(player, args, kind) if kind == "mine" or kind == "beartrap" or kind == "wire" then place(player, kind) end end)
+command("traps", function(player)
+    for _, t in ipairs(traps()) do
+        player:message(("%d %s %s at %.0f %.0f %.0f%s"):format(t.id, t.type, t.armed and "armed" or "-", t.x, t.y, t.z,
+            t.x2 and (" to %.0f %.0f %.0f"):format(t.x2, t.y2, t.z2) or ""))
+    end
+end)
+
+-- Setting one from the backpack: the window closes and the player aims where it goes (client/main.lua);
+-- the item stays in the backpack until the trap is there ("placeAt").
+function place(player, kind)  -- (the local declared above)
+    inventory.close(player)
+    player:clientSend("place", { kind = kind, maxLength = 10 })
+    return false
+end
+
+inventory.define("mine", {
+    name = { en = "Proximity mine", ru = "Мина" }, icon = "mine.png", weight = 1.5, stack = 5,
+    text = { en = "Goes off when someone steps near", ru = "Взрывается, когда рядом проходят" },
+    actions = { { id = "set", label = { en = "Set", ru = "Поставить" }, fn = function(player) return place(player, "mine") end } },
+})
+inventory.define("beartrap", {
+    name = { en = "Bear trap", ru = "Капкан" }, icon = "beartrap.png", weight = 3, stack = 3,
+    text = { en = "Catches whoever steps in", ru = "Ловит того, кто наступит" },
+    actions = { { id = "set", label = { en = "Set", ru = "Поставить" }, fn = function(player) return place(player, "beartrap") end } },
+})
+inventory.define("tripwire", {
+    name = { en = "Tripwire", ru = "Растяжка" }, icon = "wire.png", weight = 1, stack = 5,
+    text = { en = "Across the way, an IED at one end", ru = "Поперёк пути, на конце СВУ" },
+    actions = { { id = "set", label = { en = "Stretch", ru = "Натянуть" }, fn = function(player) return place(player, "wire") end } },
+})
+
+-- Where the player put it (client/main.lua: aimed, with a ghost of it): each point within 6 m of the player;
+-- a wire 1..10 m long, 30 cm over the ground at each end. The item is taken only when the trap is there.
+local ITEM = { mine = "mine", beartrap = "beartrap", wire = "tripwire" }
+on("clientMessage", function(player, name, data)
+    if name ~= "placeAt" or type(data) ~= "table" or not ITEM[data.kind] or type(data.a) ~= "table" then return end
+    local bag = inventory.of(player)
+    if not bag:has(ITEM[data.kind]) then return end
+    local px, py, pz = player:position()
+    local function point(p)
+        if type(p) ~= "table" then return nil end
+        local x, y, z = tonumber(p.x), tonumber(p.y), tonumber(p.z)
+        if not (x and y and z) or (x - px) ^ 2 + (y - py) ^ 2 + (z - pz) ^ 2 > 600 ^ 2 then return nil end
+        return x, y, z
+    end
+    local ax, ay, az = point(data.a)
+    if not ax then return player:message(T(player, "Too far from you.", "Слишком далеко от вас."), RED) end
+    local trap
+    if data.kind == "wire" then
+        local bx, by, bz = point(data.b)
+        if not bx then return player:message(T(player, "Too far from you.", "Слишком далеко от вас."), RED) end
+        local len = math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2)
+        if len < 100 or len > 1000 then return player:message(T(player, "A wire is 1 to 10 m long.", "Растяжка — от 1 до 10 м."), RED) end
+        trap = createTrap({ type = "wire", x = ax, y = ay, z = az + 30, x2 = bx, y2 = by, z2 = bz + 30, world = player.world })
+    else
+        trap = createTrap({ type = data.kind, x = ax, y = ay, z = az, yaw = tonumber(data.yaw) or 0, world = player.world })
+    end
+    if trap then bag:remove(ITEM[data.kind], 1) end
+end)
+
 -- ---------------------------------------------------------------- the world of the demo
 local s = server.spawn
 local bike = createVehicle({ x = s.x + 600, y = s.y, z = s.z, yaw = 90, fuel = 0.1 })
@@ -69,11 +165,14 @@ for i = 0, 3 do placeCan(s.x + 300, s.y - 200 + i * 130, s.z - 90) end
 on("playerJoin", function(player)
     local bag = inventory.of(player)
     if bag:count("scrap") == 0 then bag:add("scrap", 25) end
+    if bag:count("mine") == 0 then bag:add("mine", 2) end
+    if bag:count("tripwire") == 0 then bag:add("tripwire", 2) end
+    if bag:count("beartrap") == 0 then bag:add("beartrap", 1) end
     player:message(T(player, "Inventory demo: F takes a gas can, I opens the backpack (next to the bike: and its trunk).",
                              "Инвентарь: F — взять канистру, I — рюкзак (у мотоцикла — ещё и багажник)."), GREEN)
 end)
 
-bindKey("I", function(player)
+local function toggle(player)
     if inventory.isOpen(player) then return inventory.close(player) end
     local v = nearVehicle(player, 4)
     if v then
@@ -81,7 +180,9 @@ bindKey("I", function(player)
     else
         inventory.open(player, inventory.of(player), nil, { title = T(player, "Backpack", "Рюкзак") })
     end
-end)
+end
+bindKey("I", toggle)
+command("inv", toggle)
 command("bike", function(player)  -- the demo bike back next to you, empty
     local x, y, z, yaw = player:position()
     setVehicle(bike, { x = x + 300, y = y, z = z, fuel = 0.05 })

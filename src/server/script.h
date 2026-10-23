@@ -65,6 +65,8 @@ public:
     void ObjectMoved(uint16_t object);     // moveObject got there: its onArrive and the objectMoved event
     void ZombieDeath(uint16_t zombie, Player* killer);  // zombieDeath (killer null: nobody hurt it)
     void HordeDeath(uint16_t horde);                    // hordeDeath: the last zombie of a horde died
+    // A player (or zombie) set a trap off: its onTrigger and the "trap" handlers; false: one of them said no.
+    bool TrapTriggered(uint16_t trap, Player* player, uint16_t zombie);
     void AnimEnd(Player& p, const char* reason);
     // [F] at a door of the mode: 0 no say (its lock decides), 1 refused, 2 allowed even when locked.
     int DoorUse(Player& p, const std::string& door, const char* side);

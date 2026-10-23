@@ -16,6 +16,7 @@
 #include "images.h"
 #include "webui.h"
 #include "clientlua.h"
+#include "traps.h"
 #include "overlay.h"
 #include "imgui.h"
 #include <mutex>
@@ -1511,6 +1512,7 @@ void HookClient() {
         voice::Reset();
         webui::Reset();
         clientlua::Reset();
+        traps::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1572,6 +1574,7 @@ void HookClient() {
     client.on.spectate = [](bool on, const std::vector<uint16_t>& only) { spec.want = on; spec.only = only; };
     client.on.dialog = [](const net::Client::Events::DialogInfo& d) { mpui::OnDialog(d); };
     client.on.itemWindow = [](uint16_t id, const std::string& json) { mpui::OnItemWindow(id, json); };
+    client.on.trap = [](const uint8_t* data, size_t size) { traps::OnMessage(data, size); };
     client.on.hud = [](const std::string& id, const std::string& json) { mpui::OnHud(id, json); };
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
     client.on.watchKeys = [](const std::vector<uint8_t>& keys) { mpui::OnWatchKeys(keys); };
@@ -1587,7 +1590,7 @@ void HookClient() {
     client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
     client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) { playeranim::OnPlay(path, flags, rate); };
     client.on.objectMove = [](uint16_t id, const float to[6], float seconds, float elapsed) { objects::OnMove(id, to, seconds, elapsed); };
-    client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); carry::SetWorld(world); objects::SetWorld(world); blips::SetWorld(world); dg::Log("MP: virtual world %d", world); };
+    client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); carry::SetWorld(world); objects::SetWorld(world); blips::SetWorld(world); traps::SetWorld(world); dg::Log("MP: virtual world %d", world); };
     client.on.vehicle = [](uint16_t id, const net::Client::Events::VehicleInfo* info) { vehicles::OnVehicle(id, info); };
     client.on.vehicleAllow = [](uint16_t id, int seat) { vehicles::OnAllow(id, seat); };
     client.on.vehicleEject = [](uint16_t id) { vehicles::OnEject(id); };
@@ -2126,6 +2129,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         zombies::Net(now, pawn, client, myWorld);
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen() && !webui::Focused());  // (keys typed into a page are not F)
         objects::Update(now, pawn);
+        traps::Update(pawn, client.localId());
         blips::Update(pawn);
         sounds::Update(pawn, client);
         playeranim::Update(pawn, controller, client, canAct && !mpui::DialogOpen() && !webui::Focused(), localDead || Respawning());

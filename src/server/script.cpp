@@ -816,6 +816,85 @@ struct Api {
         for (auto& z : Srv(L).ZombieZones()) { PushZombieZone(L, z); lua_rawseti(L, -2, ++i); }
         return 1;
     }
+    // ---- traps (docs/API.md "Ловушки") ----
+    static void PushTrap(lua_State* L, const Trap& t) {
+        lua_createtable(L, 0, 12);
+        lua_pushinteger(L, t.id); lua_setfield(L, -2, "id");
+        lua_pushstring(L, t.type.c_str()); lua_setfield(L, -2, "type");
+        lua_pushnumber(L, t.x); lua_setfield(L, -2, "x"); lua_pushnumber(L, t.y); lua_setfield(L, -2, "y"); lua_pushnumber(L, t.z); lua_setfield(L, -2, "z");
+        lua_pushnumber(L, t.yaw); lua_setfield(L, -2, "yaw");
+        if (t.type == "wire") { lua_pushnumber(L, t.x2); lua_setfield(L, -2, "x2"); lua_pushnumber(L, t.y2); lua_setfield(L, -2, "y2"); lua_pushnumber(L, t.z2); lua_setfield(L, -2, "z2"); }
+        else { lua_pushnumber(L, t.radius / 100); lua_setfield(L, -2, "radius"); }
+        lua_pushinteger(L, t.world); lua_setfield(L, -2, "world");
+        lua_pushboolean(L, !t.fired && Srv(L).Now() >= t.armedAt); lua_setfield(L, -2, "armed");
+    }
+    // createTrap{type="mine"|"ied"|"beartrap"|"wire"|"zone", x=, y=, z= (the ground), yaw=, x2=, y2=, z2= (wire's other end),
+    // radius= (m; point traps: mine 1.5, ied 2, beartrap 0.6, zone 2), world=0, players=true, zombies=true,
+    // explosive=true (wire), rearm= (s: goes off again after that; else once), onTrigger=function(trap, player, zombieId) return false end} -> id
+    static int CreateTrapLua(lua_State* L) {
+        luaL_checktype(L, 1, LUA_TTABLE);
+        // The fields as data (onTrigger is a function: kept apart below).
+        json::Value o = json::Value::Object();
+        lua_pushnil(L);
+        while (lua_next(L, 1)) {
+            if (lua_type(L, -2) == LUA_TSTRING && !lua_isfunction(L, -1)) o.set(lua_tostring(L, -2), ToJson(L, -1, 0));
+            lua_pop(L, 1);
+        }
+        Trap t;
+        t.type = o.str("type", "mine");
+        if (!Trap::KnownType(t.type)) luaL_error(L, "createTrap: unknown type '%s' (mine, ied, beartrap, wire, zone)", t.type.c_str());
+        auto num = [&](const char* k, float& v, float scale = 1) { if (o[k].isNumber()) v = float(o[k].asNumber()) * scale; };
+        num("x", t.x); num("y", t.y); num("z", t.z); num("yaw", t.yaw);
+        t.radius = t.type == "beartrap" ? 60.f : t.type == "ied" || t.type == "zone" ? 200.f : 150.f;
+        num("radius", t.radius, 100);
+        if (t.type == "wire") {
+            if (!o["x2"].isNumber() || !o["y2"].isNumber()) luaL_error(L, "createTrap: a wire needs x2, y2 (and z2) of its other end");
+            num("x2", t.x2); num("y2", t.y2); t.z2 = t.z; num("z2", t.z2);
+        }
+        if (o["world"].isNumber()) t.world = int32_t(o["world"].asNumber());
+        if (o["players"].type() == json::Value::Type::Bool) t.players = o["players"].asBool();
+        if (o["zombies"].type() == json::Value::Type::Bool) t.zombies = o["zombies"].asBool();
+        if (o["explosive"].type() == json::Value::Type::Bool) t.explosive = o["explosive"].asBool();
+        if (o["rearm"].isNumber()) t.rearm = std::max(0.0, o["rearm"].asNumber());
+        t.armedAt = Srv(L).Now() + 1.0;  // not under the feet of whoever placed it
+        const uint16_t id = Srv(L).AddTrap(t);
+        if (!id) { lua_pushnil(L); return 1; }
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.traps");
+        lua_getfield(L, 1, "onTrigger"); lua_rawseti(L, -2, id); lua_pop(L, 1);
+        lua_pushinteger(L, id); return 1;
+    }
+    static int RemoveTrapLua(lua_State* L) {
+        const auto id = uint16_t(luaL_checkinteger(L, 1));
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.traps"); lua_pushnil(L); lua_rawseti(L, -2, id); lua_pop(L, 1);
+        lua_pushboolean(L, Srv(L).RemoveTrap(id)); return 1;
+    }
+    static int GetTrapLua(lua_State* L) {
+        if (const Trap* t = Srv(L).FindTrap(uint16_t(luaL_checkinteger(L, 1)))) PushTrap(L, *t); else lua_pushnil(L);
+        return 1;
+    }
+    static int TrapsList(lua_State* L) {
+        lua_newtable(L); int i = 0;
+        for (auto& [id, t] : Srv(L).Traps()) { PushTrap(L, t); lua_rawseti(L, -2, ++i); }
+        return 1;
+    }
+    // fireTrap(id [, player]): sets it off now (no handler asked); player: the one a bear trap catches.
+    static int FireTrapLua(lua_State* L) {
+        const auto id = uint16_t(luaL_checkinteger(L, 1));
+        const uint16_t victim = lua_isnoneornil(L, 2) ? 0xFFFF : CheckPlayer(L, 2).id;
+        if (!Srv(L).FindTrap(id)) { lua_pushboolean(L, false); return 1; }
+        Srv(L).FireTrap(id, victim);
+        lua_pushboolean(L, true); return 1;
+    }
+    // explode(x, y, z [, world]): the game's IED explosion there (each game hurts its own player and zombies near it).
+    static int ExplodeLua(lua_State* L) {
+        Trap t; t.type = "ied";
+        t.x = float(luaL_checknumber(L, 1)); t.y = float(luaL_checknumber(L, 2)); t.z = float(luaL_checknumber(L, 3));
+        t.world = int32_t(luaL_optinteger(L, 4, 0));
+        t.players = t.zombies = false;
+        const uint16_t id = Srv(L).AddTrap(t);
+        if (id) Srv(L).FireTrap(id);
+        lua_pushboolean(L, id != 0); return 1;
+    }
     // createHorde(x, y, z, count [, {radius=10 (m), type= or types=, world=0}]) -> id or nil
     static int CreateHordeLua(lua_State* L) {
         const float x = float(luaL_checknumber(L, 1)), y = float(luaL_checknumber(L, 2)), z = float(luaL_checknumber(L, 3));
@@ -1807,6 +1886,7 @@ bool Script::Load(const std::string& modeId) {
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.markers");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.dialogs");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.itemwindows");
+    lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.traps");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.interactions");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.keys");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.routes");
@@ -1831,7 +1911,7 @@ bool Script::Load(const std::string& modeId) {
 
     const luaL_Reg globals[] = {{"print", &Api::Log}, {"log", &Api::Log}, {"on", &Api::On}, {"command", &Api::Command}, {"players", &Api::Players},
                                 {"getPlayer", &Api::GetPlayer}, {"broadcast", &Api::Broadcast}, {"setTime", &Api::SetTime}, {"setWeather", &Api::SetWeather},
-                                {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"setZombieOwner", &Api::SetZombieOwner}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createZombieZone", &Api::CreateZombieZone}, {"setZombieZone", &Api::SetZombieZoneLua}, {"removeZombieZone", &Api::RemoveZombieZone}, {"getZombieZone", &Api::GetZombieZone}, {"zombieZones", &Api::ZombieZonesList}, {"createHorde", &Api::CreateHordeLua}, {"removeHorde", &Api::RemoveHordeLua}, {"getHorde", &Api::GetHordeLua}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
+                                {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"setZombieOwner", &Api::SetZombieOwner}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createZombieZone", &Api::CreateZombieZone}, {"setZombieZone", &Api::SetZombieZoneLua}, {"removeZombieZone", &Api::RemoveZombieZone}, {"getZombieZone", &Api::GetZombieZone}, {"zombieZones", &Api::ZombieZonesList}, {"createHorde", &Api::CreateHordeLua}, {"createTrap", &Api::CreateTrapLua}, {"removeTrap", &Api::RemoveTrapLua}, {"getTrap", &Api::GetTrapLua}, {"traps", &Api::TrapsList}, {"fireTrap", &Api::FireTrapLua}, {"explode", &Api::ExplodeLua}, {"removeHorde", &Api::RemoveHordeLua}, {"getHorde", &Api::GetHordeLua}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
                                 {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256}, {"passwordHash", &Api::PasswordHashLua}, {"passwordCheck", &Api::PasswordCheckLua},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
@@ -2044,6 +2124,33 @@ void Script::ZombieDeath(uint16_t zombie, Player* killer) {
     Api::PushZombie(L_, *z);
     if (killer) Api::PushPlayer(L_, *killer); else lua_pushnil(L_);
     Fire("zombieDeath", 2);
+}
+bool Script::TrapTriggered(uint16_t trap, Player* player, uint16_t zombie) {
+    if (!L_) return true;
+    const Trap* t = server_.FindTrap(trap);
+    if (!t) return false;
+    const int base = lua_gettop(L_);
+    bool fire = true;
+    auto args = [&] {
+        Api::PushTrap(L_, *t);
+        if (player) Api::PushPlayer(L_, *player); else lua_pushnil(L_);
+        if (zombie) lua_pushinteger(L_, zombie); else lua_pushnil(L_);
+    };
+    lua_getfield(L_, LUA_REGISTRYINDEX, "dgmp.traps");
+    if (lua_rawgeti(L_, -1, trap) == LUA_TFUNCTION) {
+        args();
+        g_deadline = Clock() + kCallBudget;
+        if (lua_pcall(L_, 3, 1, 0) != LUA_OK) server_.Log("[%s] trap %u onTrigger error: %s", mode_.c_str(), unsigned(trap), lua_tostring(L_, -1));
+        else if (lua_isboolean(L_, -1) && !lua_toboolean(L_, -1)) fire = false;
+        g_deadline = 0;
+    }
+    lua_settop(L_, base);
+    if (!server_.FindTrap(trap)) return false;  // the handler removed it
+    t = server_.FindTrap(trap);
+    int result = 0;
+    args();
+    Fire("trap", 3, &result);
+    return fire && !(result & 1) && server_.FindTrap(trap);
 }
 void Script::HordeDeath(uint16_t horde) {
     if (!L_) return;

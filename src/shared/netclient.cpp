@@ -530,6 +530,9 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.hint) on.hint(title, text, image, pause != 0, seconds);
         break;
     }
+    case Msg::Trap:
+        if (on.trap) on.trap(data + 1, size - 1);
+        break;
     case Msg::Zombie: case Msg::ZombieMoves:
         if (on.zombie) on.zombie(static_cast<Msg>(data[0]), data + 1, size - 1);
         break;

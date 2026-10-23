@@ -111,6 +111,8 @@ enum class Msg : uint8_t {
     ScriptData = 124, // str path, u16 part, u16 parts, str bytes: a client script's file, in parts
     ScriptEvent = 125, // str name, str json: the server's Lua (player:clientSend) to the client scripts' onServer(name, fn)
     ItemWindow = 126, // u16 windowId, str json: the mode's item window (docs/API.md "Окно предметов"): panes of items; "" closes it
+    Trap = 127,       // u16 id, u8 TrapOp: Add (str type, f32 x,y,z,yaw, f32 x2,y2,z2 (a wire's other end), i32 world, u8 explosive),
+                      // Fire (u16 victim, 0xFFFF none: explode / catch it), Remove (docs/API.md "Ловушки")
     VehicleRoute = 103, // u16 vehicleId, f32 speed (units/s), f32 elapsed (s since it set off), u8 loop, u16 n, n x f32 x,y,z: the way its NPC drives it (n 0: it stopped)
     Carry = 104,      // u16 id, u8 op (1 add/update: str model, f32 x,y,z,yaw, i32 world (-1 every), u16 carrier (0xFFFF: it lies there), u8 CarryRoll; 2 remove):
                       // a box the players carry in both hands (docs/API.md "Переноска"); carrier = your id: hold it, else let it go
@@ -168,6 +170,7 @@ enum class BikeAction : uint8_t { Give = 1, Take = 2, Mount = 3 };  // Mount: th
 // A server vehicle where it stands: position and heading, fuel and health (0..1).
 struct VehicleState { float x = 0, y = 0, z = 0, yaw = 0, fuel = 1, health = 1; };
 enum class UiOp : uint8_t { Open = 1, Close = 2, Focus = 3, Event = 4 };
+enum class TrapOp : uint8_t { Add = 1, Fire = 2, Remove = 3 };
 constexpr size_t kUiPathMax = 160, kUiNameMax = 64, kUiToPageMax = 65536, kUiFromPageMax = 16384;
 // Client scripts (docs/client-lua.md): file paths, message names and sizes each way, an error report.
 constexpr size_t kItemWindowMax = 65536, kItemActionMax = 1024;  // an item window's description / one action
