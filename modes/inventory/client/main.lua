@@ -6,7 +6,7 @@ local GHOST = {
     beartrap = "/Game/Environments/ManMade/Props/beartrap/BearTrap_Closed_Mesh.BearTrap_Closed_Mesh",
     wire = "/Game/Weapons/Trap_Weapons/Mines/IED/IED.IED",   -- the IED at the wire's first end
 }
-local RANGE = 600     -- units: as far as the server accepts a point
+local RANGE = 1200    -- units: as far as the server accepts a point (REACH in main.lua)
 local placing = nil   -- {kind, maxLength, a = a wire's first end, ghost = object id}
 
 local function ru() return me().lang == "ru" end

@@ -132,9 +132,11 @@ inventory.define("tripwire", {
     actions = { { id = "set", label = { en = "Stretch", ru = "Натянуть" }, fn = function(player) return place(player, "wire") end } },
 })
 
--- Where the player put it (client/main.lua: aimed, with a ghost of it): each point within 6 m of the player;
--- a wire 1..10 m long, 30 cm over the ground at each end. The item is taken only when the trap is there.
+-- Where the player put it (client/main.lua: aimed, with a ghost of it): each point within 12 m of the player (a 10 m wire
+-- is stretched standing at one end); a wire 1..10 m long, 30 cm over the ground at each end. The item is taken only
+-- when the trap is there.
 local ITEM = { mine = "mine", beartrap = "beartrap", wire = "tripwire" }
+local REACH = 1200  -- units: as far from the player as a point may be (the same in client/main.lua)
 on("clientMessage", function(player, name, data)
     if name ~= "placeAt" or type(data) ~= "table" or not ITEM[data.kind] or type(data.a) ~= "table" then return end
     local bag = inventory.of(player)
@@ -147,7 +149,7 @@ on("clientMessage", function(player, name, data)
     local function point(p)
         if type(p) ~= "table" then return nil end
         local x, y, z = tonumber(p.x), tonumber(p.y), tonumber(p.z)
-        if not (x and y and z) or (x - px) ^ 2 + (y - py) ^ 2 + (z - pz) ^ 2 > 600 ^ 2 then return nil end
+        if not (x and y and z) or (x - px) ^ 2 + (y - py) ^ 2 + (z - pz) ^ 2 > REACH ^ 2 then return nil end
         return x, y, z
     end
     local ax, ay, az = point(data.a)
