@@ -256,9 +256,10 @@ void Update(UObject* pawn, uint16_t localId) {
         const float expected = holder->heldHealth * left;
         if (health > expected) health = expected;
         bleedRed = 0.35f + 0.65f * (1.f - left);
-        // Dead once the game's bar shows nothing (under 1 %), not a few seconds later at exactly 0.
+        // Dead once the game's bar shows nothing: it is empty at about 15 % of health (seen: ~20 of 135), so at
+        // exactly 0 the player looked dead for three seconds before it died.
         constexpr int kPawnMaxHealth = 0x1FE4;
-        if ((expected <= 1.f || health <= Field<float>(pawn, kPawnMaxHealth) * 0.01f) && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
+        if ((expected <= 1.f || health <= Field<float>(pawn, kPawnMaxHealth) * 0.15f) && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
     } else bleedRed = 0;
     for (auto& [id, t] : list) {
         const float dx = t.a.X - me.X, dy = t.a.Y - me.Y, d2 = dx * dx + dy * dy;
