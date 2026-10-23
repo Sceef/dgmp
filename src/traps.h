@@ -17,7 +17,7 @@ void Update(ue::UObject* pawn, uint16_t localId);   // every frame while connect
 // This player is held by a bear trap (the game's mash-F escape runs): the mode's keys and prompts must not take F.
 bool Caught();
 // This player died (the multiplayer death keeps the same body): the bear trap holding it lets go and goes.
-void OnLocalDeath();
+void OnLocalDeath(ue::UObject* pawn);
 // A lethal bear trap bled this player out: the multiplayer death now (consumed).
 bool TakeBledOut();
 // Overlay HUD layer (frame thread): the red of bleeding in a bear trap.

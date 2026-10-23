@@ -256,7 +256,9 @@ void Update(UObject* pawn, uint16_t localId) {
         const float expected = holder->heldHealth * left;
         if (health > expected) health = expected;
         bleedRed = 0.35f + 0.65f * (1.f - left);
-        if (expected <= 1.f && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
+        // Dead once the game's bar shows nothing (under 1 %), not a few seconds later at exactly 0.
+        constexpr int kPawnMaxHealth = 0x1FE4;
+        if ((expected <= 1.f || health <= Field<float>(pawn, kPawnMaxHealth) * 0.01f) && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
     } else bleedRed = 0;
     for (auto& [id, t] : list) {
         const float dx = t.a.X - me.X, dy = t.a.Y - me.Y, d2 = dx * dx + dy * dy;
@@ -277,14 +279,23 @@ void Update(UObject* pawn, uint16_t localId) {
 // Held while one of our bear traps has this player as its victim (it lets go once the escape succeeds or it dies).
 bool Caught() { return Holder() != nullptr; }
 
-void OnLocalDeath() {
+void OnLocalDeath(UObject* pawn) {
+    bool released = false;
     for (auto& [id, t] : list) {
         if (!t.ours) continue;
-        // The game's own "the trapped player died": it lets go of the body (the multiplayer death keeps it).
-        if (IsValid(t.actor)) { Call(t.actor, "PlayerDied"); Destroy(t.actor); }
+        Destroy(t.actor);  // (not the game's PlayerDied: its death animation went on at the respawn point)
         t.ours = t.held = false; t.done = true;
-        dg::Log("traps: the bear trap let go of the dead player");
+        released = true;
     }
+    if (!released || !IsValid(pawn)) return;
+    // The body leaves the trap's animations at once (the multiplayer death keeps it and moves it to the spawn).
+    UObject* mesh = Field<UObject*>(pawn, 0x3B0);  // Character.Mesh
+    auto get = IsValid(mesh) ? Fn(mesh, "GetAnimInstance") : nullptr;
+    if (!get) return;
+    Params g(get); Call(mesh, "GetAnimInstance", &g);
+    UObject* instance = g.Get<UObject*>("ReturnValue");
+    if (auto f = IsValid(instance) ? Fn(instance, "Montage_Stop") : nullptr) { Params p(f); p.Set<float>("InBlendOutTime", 0.f); Call(instance, "Montage_Stop", &p); }
+    dg::Log("traps: the bear trap let go of the dead player");
 }
 
 bool TakeBledOut() { const bool was = bledOut; bledOut = false; return was; }
