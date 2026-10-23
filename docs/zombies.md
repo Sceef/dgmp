@@ -143,40 +143,75 @@ clients ignore the new messages (and get no zombies).
 Server checks: only the owner's reports move a zombie; positions/health must be finite; a hit must come
 from the zombie's world within 250 m and is capped by `MaxHitDamage`; at most 200 zombies.
 
-### Lua API (prototype)
+### Lua API
 
 | Function | |
 |---|---|
-| `createZombie(x, y, z [, type [, yaw [, world]]])` → `id` or `nil` | `type`: `Swarmer` (default), `Newt`, ... (an `EAIFactionType` the region has loaded); `nil` when `Zombies=0` |
+| `createZombie(x, y, z [, type [, yaw [, world]]])` → `id` or `nil` | `type`: `Swarmer` (default), `Newt`, `Breaker`, ... (an `EAIFactionType` the region lists, see "Types"); `nil` when `Zombies=0` |
 | `removeZombie(id)` → `bool` | gone for everyone (a body too) |
 | `setZombieOwner(id, player)` → `bool` | that player's game runs it while it can (any distance); `nil`: the nearest player again |
-| `getZombie(id)` → table or `nil` | `id, type, x, y, z, yaw, world, health` (once reported), `dead`, `owner` (player) |
+| `getZombie(id)` → table or `nil` | `id, type, x, y, z, yaw, world, health` (once reported), `dead`, `owner` (player), `zone`, `horde` |
 | `zombies()` → list | every zombie (dead ones until they are forgotten) |
-| event `zombieDeath(zombie, killer)` | `killer`: the player who hurt it last (the owner when nobody else did); nil possible |
+| event `zombieDeath(zombie, killer)` | `killer`: the player whose hit came last (the owner's own hits are seen by its game); `nil` when no player hurt it (a fall, another freaker) |
 
-Test mode `modes/zz_zombietest` (temporary): `/z [count] [type] [metres]`, `/zown <id> [off]`, `/zclear`, `/zlist`.
+### Zones
 
-## 4. Next steps (design)
+A zombie zone keeps zombies in a circle while players are near — the usual way to populate a map with no code:
+`server.ini Zombies=1` plus zones placed in the editor ("World" → "PvP and zones" → **+ Zombies**, lime posts;
+`world.json` `"zombieZones"`). Per zone: name, centre, radius (m), types (comma separated), how many, respawn
+(s after a death), wake distance (m from the edge), on at the start, world.
 
-1. **Mode-side spawners** (`modes/_lib/zombies.lua`, no engine work): world.json `zombieZones`
-   `[{name, x, y, z, radius, type, max, respawn, night}]` placed in the editor like PvP zones; the library keeps
-   `max` alive while a player is within ~200 m, respawns after `respawn` s, despawns when nobody is near.
-   `createHorde(x, y, z, count, radius [, type])` = a group of zombies spread over the radius sharing an id
-   (`hordeDeath` when all died). Count limited by what clients can run: the arcade pool gave us pawns well
-   beyond the ambient pool's 15, the practical limit needs measuring (FPS with 30-50 AI freakers).
-2. **Attacks on players who are not the owner:** done in code with target pawns (section 3); needs the
-   in-game test with two clients. Open: human enemies (marauders) need the borrowed skeleton to aim; a
-   target pawn's capsule could block the owner where the remote player stands.
-3. **Who killed it:** the owner's own kill is not reported separately; `killer` is the last remote attacker
-   if there was one. Report the owner's last damage causer with `ZombieDied`.
-4. **Real hordes** (crowd system): needs the story flag / world state that activates `Ambient_Hordes`; then
+- **Awake** while a player of its world stands within `radius + wake`: it fills up (two a tick, 2 a second) to
+  `max`, each new one at a random point of the zone, at least 20 m from every player when such a point is found,
+  of a random type of the list. A killed one comes back `respawn` seconds later (while the zone is awake).
+- **Asleep** after 30 s with nobody near: its zombies are removed; it fills again when someone comes back.
+- Clients put a new zombie on the ground under its point (a downward trace), so zone points on slopes work.
+- Mixing types: freakers of different factions may fight each other (seen in game: swarmer claws killing newts).
+
+| Function | |
+|---|---|
+| `createZombieZone{name=, x=, y=, z=, radius=30, types={"Swarmer"} or type=, max=6, respawn=60, wake=150, world=0, enabled=true}` | metres and seconds; error on a duplicate name |
+| `setZombieZone(name, {fields})` | any field but the name; `enabled = false` takes its zombies away |
+| `removeZombieZone(name)` → `bool` | its zombies go too |
+| `getZombieZone(name)` → table or `nil`, `zombieZones()` → list | the fields plus `alive` (its zombies now) |
+
+### Hordes
+
+`createHorde(x, y, z, count [, {radius=10, types= or type=, world=0}])` → id: `count` zombies (50 at most)
+spread over the radius. `getHorde(id)` → `{id, alive = {zombie ids}, died}` or `nil`; `removeHorde(id)`; event
+`hordeDeath(id)` when its last zombie died. These are ordinary zombies grouped, not the game's crowd hordes.
+
+### Types in any region
+
+The ambient generator lists ~18 spawn types per region but loads classes only for some (Marion Forks: no Breaker,
+Screamer, Reacher, Bear...). A listed type that is not loaded still holds asset references next to its loaded
+fields (`FAssetPtr`, path at +0x10): `m_ControllerClass` 0xE0, `m_PawnClass` 0x110, `m_BehaviorTree` 0x148,
+`m_AnimInstance` 0x170. `Spawn` loads them (`StaticLoadObject`, rooted) into a copy of the type and spawns from
+the copy — verified: a Breaker (3000 health) at Marion Forks attacked the player. A faction the region does not
+list at all still fails. Note for research: a pawn spawned with the dev console `z spawn` is hidden by the AI
+sweep after a moment (only server zombies are claimed); it keeps its sound.
+
+### Load
+
+One game owning ~34 AI freakers next to the player: 155 → 81 FPS (1600×900); the player saw no lag. 50 per
+horde and 200 per server are the limits; a zone holds 50 at most.
+
+Example mode: [`modes/zombies`](../modes/zombies/main.lua) — a zone at the spawn when the map has none, `/horde`,
+a bounty per kill; admin tools `/z [count] [type] [metres]`, `/zown <id> [player|off]`, `/zclear`, `/zlist`,
+`/zones`, `/zone <name> on|off`.
+
+## 4. Open
+
+1. **Two real clients:** attacks on players who are not the owner (target pawns, section 3) were verified with a
+   probe ghost only. Human enemies (marauders) need the borrowed skeleton to aim; a target pawn's capsule could
+   block the owner where the remote player stands.
+2. **Real hordes** (crowd system): needs the story flag / world state that activates `Ambient_Hordes`; then
    either sync only the horde's state (POI, frenzy target) and let every client simulate the crowd itself, or
    keep hordes single-player-like (one owner runs the crowd, others get promoted members only). Research first.
-5. **Types per region:** `Spawn` fails where the faction is not loaded (e.g. no Breaker at Marion Forks).
-   Loading archetypes on demand (`AllArchetypes` holds 300 asset references) is needed for any-type-anywhere.
-6. **Ambient generator interplay:** with `SuppressAI=1` the generator is blocked below importance 255 and
-   force-despawned; the server zombies use its arcade path. If that path turns out blocked by the importance
-   gate, lift the gate while `zombies::Active()` and block the population areas instead.
+3. **Unlisted types:** a faction the region does not list (`AllArchetypes` holds 300 asset references) would need
+   a spawn type built from an archetype.
+4. **Day and night:** the server does not know the game's time unless the mode sets it; zones have no night-only
+   switch (a mode can `setZombieZone(name, {enabled = ...})` on its own clock).
 
 ## 5. Dev console (research tools)
 
@@ -210,4 +245,7 @@ file in `profiles/editor/BendGame/Saved/Screenshots/WindowsNoEditor`).
 | In game, owner-reported death (killer credited, mode event) and puppet death on the owner's word | verified |
 | Montage relay (attack animations on puppets) | not seen yet |
 | Target pawns: a zombie run by this game attacks another player (probe ghost) 17 m from us, the damage reaches that player; it returns to us when that player leaves | verified (one game + probe, screenshot) |
+| Zones: fill to max near a player, respawn after the delay, sleep with nobody near; hordes and `hordeDeath`; bounty to the killer | verified with probes and in game |
+| Breaker (not loaded at Marion Forks) spawned as a server zombie, visible, attacks | verified in game (the user's screenshot) |
+| ~34 AI freakers on one client: 155 → 81 FPS | verified in game |
 | Two real clients | pending (needs the user / two PCs or two game copies) |

@@ -14,6 +14,7 @@
 | [`loader`](../modes/loader/main.lua) | **работа грузчиком**: NPC-бригадир, форма, личные маркеры и строка на экране, ящики для переноски, сдача груза, оплата деньгами при сдаче смены (см. «Переноска» → «Работа: пример») |
 | [`htmlui`](../modes/htmlui/main.lua) | **HTML-интерфейс**: панель статуса поверх игры и «телефон» на F2 (`ui/index.html`, `app.js`): кнопки и поле ввода шлют сообщения в Lua, Lua отвечает странице |
 | [`clientdemo`](../modes/clientdemo) | **клиентские скрипты** (`client/main.lua` в игре у игрока): спидометр и компас поверх игры, имя игрока под прицелом и G — помахать ему (сервер проверяет расстояние), локальные `/fps` и `/ping` |
+| [`zombies`](../modes/zombies/main.lua) | **зомби** (`server.ini` `Zombies=1`): зона зомби у спавна (или из редактора), `/horde` — стая перед игроком, награда за убийство |
 | [`questtest`](../modes/questtest/main.lua) | запуск квеста из `quests/<id>.json` (кнопка «Проверить» в редакторе квестов) |
 
 Запуск любого: `dgmp-server.exe --mode <id>` или «Создать сервер» в лаунчере.
@@ -1305,6 +1306,22 @@ end)
 on("cheat", function(p, kind, info)
     if kind == "hitDamage" then p:ban("урон-хак: " .. info.detail) return true end   -- навсегда
 end)
+```
+
+## Зомби
+
+Фрикеры игры в мультиплеере (экспериментально, `server.ini` `Zombies=1`). ИИ зомби работает в игре ближайшего к нему игрока, остальные видят его копию. Подробно — [`docs/zombies.md`](zombies.md).
+
+- **Зоны зомби** ставят в редакторе («Мир» → «PvP и зоны» → «+ Зомби», салатовые столбики) или кодом. Пока рядом игрок, в зоне держится заданное число зомби; убитый возвращается через `respawn` секунд; без игроков рядом 30 с зона засыпает.
+- **Типы** — `Swarmer`, `Newt`, `Breaker`, `Screamer`, ...: любой тип, который регион перечисляет, даже если игра его там не загрузила (загружается при первом спавне).
+
+```lua
+createZombieZone({ name = "camp", x = -82000, y = -301000, z = -5250, radius = 30, types = { "Swarmer", "Newt" }, max = 6, respawn = 60 })
+setZombieZone("camp", { enabled = false })          -- зомби зоны исчезают
+local id = createZombie(x, y, z, "Breaker")         -- один зомби
+local horde = createHorde(x, y, z, 12, { radius = 10 })  -- стая
+on("zombieDeath", function(zombie, killer) if killer then killer:giveMoney(10) end end)  -- zombie.zone / zombie.horde
+on("hordeDeath", function(id) broadcast("Стая уничтожена") end)
 ```
 
 ## Скрипты сервера

@@ -1491,6 +1491,7 @@ void OnPose(uint16_t id, const uint8_t* data, size_t size) {
 void HookClient() {
     client.on.welcome = [](const std::string& name, const std::string& mode) {
         serverName = name; modeName = mode; phase = Phase::Joined; lostAfterJoin = false; everJoined = true; reportedLook.clear(); reportedGear.clear();
+        clientlua::SetServer(host + "_" + std::to_string(port) + "_" + mode);  // the client scripts' storage file
         steam::CancelTicket();  // the server has checked it: nobody else can reuse it
         hud::SetBanner(L"", L"");
         hud::AddMessage(0xA9C4E4FF, std::wstring(lang::Pick(L"Подключено к ",L"Connected to ")) + W(name) + L" (" + W(mode) + L")");
@@ -1968,6 +1969,7 @@ void UpdateSpectator(UObject* pawn) {
 // A remote player's body took damage on this screen. Only hits this player made are reported; the
 // victim's own client applies them.
 void OnGhostDamage(UObject* actor, UObject* component, float damage, UObject* instigator, UObject* causer) {
+    if (damage > 0) zombies::OnDamage(actor, damage, IsValid(worldController) && instigator == worldController, causer);  // (its own pawns)
     if (damage <= 0 || !IsValid(worldController) || instigator != worldController) return;
     for (auto& [id, g] : ghosts) {
         if (g->body != actor) continue;

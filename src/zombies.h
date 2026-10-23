@@ -30,6 +30,8 @@ void Update(double now, float dt, ue::UObject* localPawn);
 void OnMessage(net::Msg op, const uint8_t* data, size_t size);
 void Net(double now, ue::UObject* localPawn, net::Client& client, int world);
 bool IsOurs(ue::UObject* pawn);  // a server zombie's pawn here (the AI sweep leaves it alone)
+// A watched pawn took point or radial damage (policy's damage watcher); byUs: this player caused it.
+void OnDamage(ue::UObject* actor, float damage, bool byUs, ue::UObject* causer);
 bool Active();                   // the server has zombies: the arcade spawner must stay usable
 void Reset();                    // disconnected: they go
 

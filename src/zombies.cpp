@@ -1,6 +1,7 @@
 #include "zombies.h"
 #include "log.h"
 #include "mp.h"
+#include "policy.h"
 #include <windows.h>
 #include <cmath>
 #include <cstring>
@@ -15,6 +16,28 @@ namespace zombies {
 namespace {
 constexpr int kSpawnTypeSize = 1056;          // BendAmbientSpawnType
 constexpr int kSpawnType_Faction = 0x0, kSpawnType_LoadedPawn = 0x130;
+// A type the region lists but has not loaded keeps asset references (FAssetPtr: weak pointer, tag, path
+// FString at +0x10) next to its loaded fields: m_ControllerClass 0xE0 -> m_LoadedController 0x100,
+// m_PawnClass 0x110 -> m_LoadedPawn 0x130, m_BehaviorTree 0x148 -> 0x168, m_AnimInstance 0x170 -> 0x190.
+struct TypeAsset { int ref, loaded; };
+constexpr TypeAsset kTypeAssets[] = {{0xE0, 0x100}, {0x110, 0x130}, {0x148, 0x168}, {0x170, 0x190}};
+
+// The listed type's assets loaded into `out` (a copy of the type): false if its pawn or controller does not load.
+bool LoadType(const uint8_t* type, uint8_t* out) {
+    std::memcpy(out, type, kSpawnTypeSize);
+    for (const TypeAsset& a : kTypeAssets) {
+        UObject*& loaded = *reinterpret_cast<UObject**>(out + a.loaded);
+        if (loaded) continue;
+        const FString& path = *reinterpret_cast<const FString*>(type + a.ref + 0x10);
+        if (!path.Data || path.Num <= 1) continue;
+        std::string narrow;  // asset paths are ASCII
+        for (int i = 0; i < path.Num - 1; ++i) narrow += char(path.Data[i] & 0x7F);
+        loaded = LoadAsset(narrow.c_str());
+        if (loaded) AddToRoot(loaded);
+        dg::Log("zombies: loaded %s -> %s", narrow.c_str(), loaded ? "ok" : "FAILED");
+    }
+    return *reinterpret_cast<UObject**>(out + 0x100) && *reinterpret_cast<UObject**>(out + 0x130);
+}
 constexpr float kTeleportDistance = 800.f;    // a puppet farther than 8 m from where it should be jumps there
 constexpr float kArriveDistance = 25.f;
 
@@ -156,7 +179,20 @@ bool Spawn(const std::string& faction, const FVector& at, float yaw, bool chase,
         const uint8_t* t = types.d + size_t(i) * kSpawnTypeSize;
         if (t[kSpawnType_Faction] == want && *reinterpret_cast<UObject* const*>(t + kSpawnType_LoadedPawn)) { type = t; break; }
     }
-    if (!type) return fail("this faction is not loaded here (the generator has no pawn class for it)");
+    // Listed but not loaded here (a Breaker at Marion Forks): its classes are loaded now, into a copy.
+    static std::map<int, std::vector<uint8_t>> loadedTypes;
+    if (!type) {
+        auto it = loadedTypes.find(want);
+        if (it == loadedTypes.end())
+            for (int i = 0; i < types.n && it == loadedTypes.end(); ++i) {
+                const uint8_t* t = types.d + size_t(i) * kSpawnTypeSize;
+                if (t[kSpawnType_Faction] != want) continue;
+                std::vector<uint8_t> copy(kSpawnTypeSize);
+                if (LoadType(t, copy.data())) it = loadedTypes.emplace(want, std::move(copy)).first;
+            }
+        if (it != loadedTypes.end()) type = it->second.data();
+    }
+    if (!type) return fail("this faction is not listed here, or its pawn class does not load");
     UObject* fn = Fn(gen, "SpawnForArcadeMode"); if (!fn) return fail("no SpawnForArcadeMode");
     alignas(16) uint8_t buf[0x600] = {};
     auto off = [&](const char* name) { UObject* p = FindProperty(fn, name); return p ? Field<int32_t>(p, off::UProperty_Offset) : -1; };
@@ -289,7 +325,8 @@ void BePuppet(Zed& z) {
     Drive(z.pawn, z.pos, z.yaw);
 }
 void BeOwned(Zed& z) {
-    Release(z.pawn); SetBrain(z.pawn, true); z.brain = 1; z.seenHealth = -1;
+    Release(z.pawn); SetBrain(z.pawn, true); z.brain = 1;
+    policy::WatchDamage(z.pawn);  // OnDamage: whether this player's hits come last (the killer)
     // The last health the previous owner reported; none (or nonsense): a fresh one.
     const float full = Prop<float>(z.pawn, "MaxHealth", 200.f);
     SetProp<float>(z.pawn, "Health", z.health > 0 && z.health <= full ? z.health : full);
@@ -524,7 +561,7 @@ void OnMessage(net::Msg op, const uint8_t* data, size_t size) {
     if (zop == net::ZombieOp::Damage) {
         const float damage = r.F32();
         const uint16_t attacker = r.U16();
-        if (r.ok() && z.brain == 1 && IsValid(z.pawn)) { ApplyDamage(z.pawn, damage); z.lastHitBy = attacker; z.seenHealth = Health(z.pawn); }
+        if (r.ok() && z.brain == 1 && IsValid(z.pawn)) { ApplyDamage(z.pawn, damage); z.lastHitBy = attacker; }
         return;
     }
     if (zop == net::ZombieOp::Died) {
@@ -534,6 +571,16 @@ void OnMessage(net::Msg op, const uint8_t* data, size_t size) {
         return;
     }
     if (zop == net::ZombieOp::Remove) { if (IsValid(z.pawn)) Despawn(z.pawn); zeds.erase(it); }
+}
+
+void OnDamage(UObject* actor, float damage, bool byUs, UObject* causer) {
+    for (auto& [id, z] : zeds) {
+        if (z.pawn != actor || z.brain != 1) continue;
+        if (byUs) z.lastHitBy = myId;
+        static int told = 0;
+        if (told++ < 20) dg::Log("zombies: zombie %u hurt %.0f by %s (%s)", unsigned(id), damage, byUs ? "us" : "something else", IsValid(causer) ? GetName(causer->Class).c_str() : "-");
+        return;
+    }
 }
 
 // Where a zombie stands at that point: on the ground under it (a zone's points are its centre's height; on a

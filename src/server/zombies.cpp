@@ -183,11 +183,11 @@ void Server::OnZombieDied(Player& p, const uint8_t* data, size_t size) {
     auto it = zombies_.find(id);
     if (it == zombies_.end() || it->second.owner != p.id || it->second.dead) return;
     Zombie& z = it->second;
-    // The owner's own shots are not reported (its game hurt the zombie directly): its game tells whether
-    // its own hit came last. Another player counts only if its hit reached the server; with no attacker
-    // known the owner killed it.
+    // The owner's own shots are not reported (its game hurt the zombie directly): its game tells whether its
+    // own hit came last (killer = the owner). Otherwise the last player whose hit reached the server, or
+    // nobody (a fall, another freaker). Older clients do not tell: with no attacker known, the owner.
     if (r.ok() && killer == p.id) z.lastAttacker = p.id;
-    if (z.lastAttacker == 0xFFFF) z.lastAttacker = p.id;
+    if (!r.ok() && z.lastAttacker == 0xFFFF) z.lastAttacker = p.id;
     z.dead = true; z.diedAt = Now(); z.health = 0;
     net::Writer w; w.Op(net::Msg::Zombie); w.U16(id); w.U8(uint8_t(net::ZombieOp::Died)); w.U16(z.lastAttacker); Send(nullptr, w, true);
     Log("Zombie %u (%s) died; killer %u", unsigned(id), z.type.c_str(), unsigned(z.lastAttacker));
