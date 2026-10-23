@@ -278,7 +278,9 @@ void LaunchGame(const std::string& connect, const std::string& password, bool re
         SetEnvironmentVariableW(L"DGMP_PASSWORD", password.empty() ? nullptr : Wide(password).c_str());
         SetEnvironmentVariableW(L"DGMP_LANG", g_english ? L"en" : L"ru");  // the game reports it to the server
         const auto game = g_root / L"runtime" / L"BendGame" / L"Binaries" / L"Win64" / L"DaysGone.exe";
-        std::wstring command = L"\"" + game.wstring() + L"\" -windowed -ResX=1600 -ResY=900 -NoSplash -NoMovies";
+        // No window mode or resolution on the command line: it would override the game's own settings
+        // (its graphics menu, profiles/editor/.../GameUserSettings.ini) on every launch.
+        std::wstring command = L"\"" + game.wstring() + L"\" -NoSplash -NoMovies";
         STARTUPINFOW si{sizeof(si)}; PROCESS_INFORMATION pi{};
         const bool ok = CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, game.parent_path().c_str(), &si, &pi);
         // The password must not linger in the launcher's environment.
