@@ -111,6 +111,7 @@ public:
         std::function<void(const std::string& json)> playerList;               // the Tab panel's list (answer to SendListRequest)
         std::function<void(bool on, uint8_t key, const std::string& label, float range)> playerMenu;  // "[key] label" at an aimed player
         std::function<void(uint16_t id, const std::string& text, float seconds)> ask;                  // a yes/no question (text "": withdrawn)
+        std::function<void(uint8_t flags)> controls;                                                   // net::ControlFlags the mode took
         std::function<void(bool downed)> deathMode;                                                    // lethal hits lay the player down (Msg::Downed)
         std::function<void(bool on, float bleedout, float giveUpIn, const std::string& anim)> downedState;  // you lie wounded / are up again
         std::function<void(uint16_t id, bool on)> playerDowned;                                        // that player lies wounded

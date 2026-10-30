@@ -397,6 +397,7 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.scriptData) on.scriptData(path, part, parts, bytes);
         break;
     }
+    case Msg::Controls: { const uint8_t f = r.U8(); if (r.ok() && on.controls) on.controls(f); break; }
     case Msg::DeathMode: { const bool d = r.U8() != 0; if (r.ok() && on.deathMode) on.deathMode(d); break; }
     case Msg::DownedState: {
         const bool d = r.U8() != 0; const float bleed = r.F32(), giveUp = r.F32(); const auto anim = r.Str(512);

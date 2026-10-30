@@ -149,6 +149,7 @@ enum class Msg : uint8_t {
     DeathMode = 135,  // u8 downed: lethal hits make the player fall (Msg::Downed) instead of dying at once
     DownedState = 136, // u8 on, f32 bleedout (s left), f32 giveUpIn (s), str anim: you lie wounded (on 0: you are up again, or die next)
     PlayerDowned = 137, // u16 id, u8 on: that player lies wounded (others may help it: the player menu aims lower)
+    Controls = 138,   // u8 ControlFlags: what of the game the mode takes from the player (setControls; 0: all back)
     PlayerList = 132, // str json: the Tab panel {voice, max, columns = [..], rows = [{id, name, ping, key, admin, bot, cells = [..]}]}
     Marker = 80,      // u16 id, u8 op (1 add/update: f32 x,y,z, u8 category, u8 style, u8 route, str icon, str title, str description; 2 remove)
 };
@@ -212,6 +213,7 @@ struct PlayerState {
     float bx = 0, by = 0, bz = 0, bqx = 0, bqy = 0, bqz = 0, bqw = 1;
     double time = 0;    // sender clock, seconds
 };
+enum ControlFlags : uint8_t { ControlNoWeapons = 1, ControlNoActions = 2 };
 enum class DownedAction : uint8_t { GiveUp = 1, CallHelp = 2, Hit = 3 };
 enum BlipFlags : uint8_t { BlipMap = 1, BlipRadar = 2, BlipEdge = 4 };
 enum AnimFlags : uint8_t { AnimLoop = 1, AnimFreeze = 2, AnimStopOnMove = 4 };

@@ -702,6 +702,20 @@ struct Api {
         Srv(L).SetDownedTimes(p, bleed, give);
         return 0;
     }
+    // player:setControls({move = false, weapons = false, actions = false}): take these from the player (true or
+    // nil: give back); player:setControls() gives everything back. Tied hands, a cutscene, a checkpoint.
+    static int PSetControls(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        uint8_t flags = 0; bool move = true;
+        if (lua_istable(L, 2)) {
+            auto off = [&](const char* k) { lua_getfield(L, 2, k); const bool o = lua_isboolean(L, -1) && !lua_toboolean(L, -1); lua_pop(L, 1); return o; };
+            if (off("weapons")) flags |= net::ControlNoWeapons;
+            if (off("actions")) flags |= net::ControlNoActions;
+            move = !off("move");
+        }
+        Srv(L).SetControls(p, flags); Srv(L).Freeze(&p, !move);
+        return 0;
+    }
     static int PFinish(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).KillDowned(p, "code"); return 0; }
     static int PCloseDialog(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
@@ -2038,7 +2052,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
                                 {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
                                 {"voiceChannels", &Api::PVoiceChannels}, {"setVoiceRange", &Api::PSetVoiceRange}, {"voiceRange", &Api::PVoiceRange},
-                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"revive", &Api::PRevive}, {"setDowned", &Api::PSetDowned}, {"finishDowned", &Api::PFinish}, {"ask", &Api::PAsk}, {"cancelAsk", &Api::PCancelAsk}, {"isAsked", &Api::PIsAsked}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
+                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"revive", &Api::PRevive}, {"setControls", &Api::PSetControls}, {"setDowned", &Api::PSetDowned}, {"finishDowned", &Api::PFinish}, {"ask", &Api::PAsk}, {"cancelAsk", &Api::PCancelAsk}, {"isAsked", &Api::PIsAsked}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
                                 {"giveCarry", &Api::PGiveCarry}, {"dropCarry", &Api::PDropCarry}, {"giveMoney", &Api::PGiveMoney}, {"setMoney", &Api::PSetMoney}, {nullptr, nullptr}};
     luaL_newlib(L_, methods); lua_setfield(L_, -2, "methods");
     lua_pop(L_, 1);

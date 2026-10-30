@@ -163,15 +163,16 @@ on("playerQuit", function(p)
     end
     R.cleanup(p, "quit"); R.sessions[p.id] = nil; R.commit()
 end)
+-- Inside an instance (a duel: another virtual world) a death costs nothing: the instance handles it.
 on("playerDeath", function(p)
-    local s = R.session(p); if not s then return end
+    local s = R.session(p); if not s or p.world ~= 0 then return end
     s.dead = true; s.account.pos = nil; s.menu = (s.menu or 0) + 1
     s.duty = false; s.taskText = nil
     p:setVoiceMuted(true); p:setUniform(nil)
     R.cleanup(p, "death"); R.commit()
 end)
 on("playerRespawn", function(p)
-    local s = R.session(p); if not s then return end
+    local s = R.session(p); if not s or p.world ~= 0 then return end
     local a, pt = s.account, R.points.revive
     local fee = math.min(a.money, C.respawnFee)
     a.money = a.money - fee; R.state.camp.treasury = R.state.camp.treasury + fee

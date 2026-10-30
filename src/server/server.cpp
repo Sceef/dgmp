@@ -1975,6 +1975,11 @@ const Server::SkinChoice* Server::FindSkin(const std::string& kind, const std::s
     for (auto& c : SkinList(kind)) if (c.id == id) return &c;
     return nullptr;
 }
+void Server::SetControls(Player& p, uint8_t flags) {
+    p.controls = flags;
+    if (!p.peer || p.bot) return;
+    net::Writer w; w.Op(net::Msg::Controls); w.U8(flags); SendTo(p.peer, w, true);
+}
 void Server::Freeze(Player* p, bool on) {
     if (!p || p->bot) return;
     net::Writer w; w.Op(net::Msg::Freeze); w.U8(on); Send(p, w, true);
@@ -2622,7 +2627,7 @@ bool Server::ReloadMode() {
     // Voice channels, ranges and mutes are the mode's: the new code sets them again.
     voiceRange_ = cfg_.voiceRange; voiceOn_ = cfg_.voice; scoreColumns_.clear();
     SetPlayerMenu({});
-    for (auto& [id, p] : players_) { CancelAsk(*p); if (p->downed) Revive(*p, 30); }
+    for (auto& [id, p] : players_) { CancelAsk(*p); if (p->downed) Revive(*p, 30); if (p->controls) SetControls(*p, 0); }
     SetDeathMode({});
     for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; p->scoreCells.clear(); SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
     ids.clear();

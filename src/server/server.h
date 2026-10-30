@@ -390,6 +390,7 @@ struct Player {
     std::vector<std::string> scoreCells;           // its row's cells in the Tab panel (player:setScoreboard)
     double listAt = 0;                             // it asked for the player list then (ListRequest rate limit)
     uint16_t askId = 0; double askUntil = 0;      // the yes/no question on its screen (player:ask; 0: none)
+    uint8_t controls = 0;                          // setControls: net::ControlFlags taken away (movement: Freeze)
     bool downed = false;                           // lies wounded (setDeathMode "downed"): bleeds out at downedUntil
     double downedUntil = 0, giveUpAt = 0, helpAt = 0;
     uint16_t downedBy = 0xFFFF;                    // who brought it down (the killer if it dies of it)
@@ -614,6 +615,7 @@ public:
     void SetDeathMode(DeathMode mode);
     const DeathMode& deathMode() const { return deathMode_; }
     void Revive(Player& p, float percent);
+    void SetControls(Player& p, uint8_t flags);
     void SetDownedTimes(Player& p, float bleedout, float giveUp);  // seconds from now; < 0: unchanged
     void KillDowned(Player& p, const char* why);  // "bleedout", "giveup", "finish", "code"
     void OnVoiceIgnore(Player& p, net::Reader& r);

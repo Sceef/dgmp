@@ -78,6 +78,8 @@ void SetCarryRollBlock(bool on);
 void SetSpectatorInputBlock(bool on);
 // Lying wounded (multiplayer death mode "downed"): none of the game's actions (fire, aim, roll, interact...).
 void SetDownedInputBlock(bool on);
+// The mode took the weapons (1: no firing, aiming, melee) or every game action (2) from the player (setControls).
+void SetModeControls(uint8_t flags);
 void Observe(ue::UObject* object);
 // Shows the game's own tutorial popup (title, text, optional Texture2D asset path) for a mode/server hint.
 // Empty title = survival-tip line at the bottom, closed automatically after `seconds` (default 5).

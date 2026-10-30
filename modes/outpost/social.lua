@@ -7,6 +7,7 @@ local interact=require("interact")
 local squad=require("squad")
 local trade=require("trade")
 local medic=require("medic")
+local instance=require("instance")
 
 -- A lethal hit lays the player down: a medic on duty revives it (a medkit), else it bleeds out or gives up
 -- (to the clinic, as before). Finishing off a wounded player kills it.
@@ -144,6 +145,38 @@ interact.add({ id = "frisk_ask", order = 52,
     when = function(p, t) return both(p, t) and duty(p, "guard") and t.anim ~= "dcn_surrender" and not t.downed end,
     consent = { ru = "Охранник %s просит показать вещи", en = "Guard %s asks to see your belongings" },
     onUse = frisk })
+
+-- Guards on duty may tie someone whose hands are up (or who is down and then revived): it cannot walk, shoot
+-- or use anything until untied. Anyone may untie (the tied one is asked).
+local tied = {}
+local function tie(p, t)
+    tied[t.id] = p.id
+    t:setControls({ move = false, weapons = false, actions = false })
+    t:playAnim("prisoner", { loop = true, freeze = true, stopOnMove = false })
+    R.msg(t, L("Вас связал ", "You were tied up by ") .. p.name, false); R.msg(p, t.name .. L(" связан.", " is tied up."))
+    R.commit("tie", p, t.name)
+end
+local function untie(p, t)
+    tied[t.id] = nil
+    t:setControls(); t:stopAnim()
+    R.msg(t, L("Вас развязал ", "You were untied by ") .. p.name); if p ~= t then R.msg(p, t.name .. L(" развязан.", " is untied.")) end
+end
+interact.add({ id = "tie", order = 53,
+    label = { ru = "Связать", en = "Tie up" },
+    when = function(p, t) return both(p, t) and duty(p, "guard") and not tied[t.id] and t.anim == "dcn_surrender" end,
+    onUse = tie })
+interact.add({ id = "untie", order = 54,
+    label = { ru = "Развязать", en = "Untie" },
+    when = function(p, t) return both(p, t) and tied[t.id] ~= nil end,
+    consent = function(p, t) return L.resolve(L("%s хочет вас развязать", "%s wants to untie you"), t) end,
+    onUse = untie })
+on("playerQuit", function(p) tied[p.id] = nil end)
+on("playerDeath", function(p) if tied[p.id] then tied[p.id] = nil; p:setControls() end end)
+
+-- Duels: in a world of their own, with the duel's pistol; nothing of the camp's is used up or lost.
+instance.enableDuels({ rounds = 3, timeLimit = 300,
+    loadout = { weapons = { kWeaponID_M9 = 60 } },
+    allowed = function(p, t) return both(p, t) and not p.carrying and not t.carrying end })
 
 -- The Tab panel: profession and duty.
 setScoreboard({ columns = { "Профессия / Role" } })

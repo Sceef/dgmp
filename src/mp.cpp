@@ -1628,7 +1628,7 @@ void HookClient() {
         playeranim::Reset();
         blips::Reset();
         sounds::Reset();
-        voice::Reset(); players::Reset(); downed = Downed{}; downedPlayers.clear(); policy::SetDownedInputBlock(false);
+        voice::Reset(); players::Reset(); downed = Downed{}; downedPlayers.clear(); policy::SetDownedInputBlock(false); policy::SetModeControls(0);
         webui::Reset();
         clientlua::Reset();
         traps::Reset();
@@ -1698,6 +1698,7 @@ void HookClient() {
     client.on.playerList = [](const std::string& json) { players::OnList(json); };
     client.on.playerMenu = [](bool on, uint8_t key, const std::string& label, float range) { mpui::OnPlayerMenu(on, key, label, range); };
     client.on.ask = [](uint16_t id, const std::string& text, float seconds) { mpui::OnAsk(id, text, seconds); };
+    client.on.controls = [](uint8_t f) { policy::SetModeControls(f); dg::Log("MP controls taken: %u", f); };
     client.on.deathMode = [](bool d) { downed.mode = d; dg::Log("MP death mode: %s", d ? "downed" : "instant"); };
     client.on.downedState = [](bool on, float bleed, float giveUp, const std::string& anim) {
         const double now = GetTickCount64() / 1000.0;

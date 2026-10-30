@@ -251,7 +251,7 @@ end)
 local LOADOUT_SETTLE=5
 local function keepLoadout(p)
     local s,a=R.session(p),R.acc(p); local inv=p:inventory()
-    if not a or not inv or not next(inv) or now()-(s.joined or 0)<LOADOUT_SETTLE then return false end
+    if not a or not inv or not next(inv) or now()-(s.joined or 0)<LOADOUT_SETTLE or p.world~=0 then return false end  -- (a duel's weapons are not its own)
     local copy={}; for key,n in pairs(inv) do if n>0 then copy[key]=n end end
     a.loadout=copy
     return true

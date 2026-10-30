@@ -44,6 +44,10 @@ function setPlayerMenu(m) playerMenu=m end
 function setScoreboard() end
 local deathMode
 function setDeathMode(m,o) deathMode={mode=m,opts=o} end
+local worldsGiven=0
+function newWorld() worldsGiven=worldsGiven+1; return 1000+worldsGiven end
+local freed={}
+function freeWorld(w) freed[w]=true end
 function cancelTimer(n) if timers[n] then timers[n].cancelled=true end end
 function after(ms,f) timers[#timers+1]={ms=ms,f=f,once=true}; return #timers end
 function createMarker() return nextId() end
@@ -67,6 +71,12 @@ local methods={}
 for _,name in ipairs({"setUniform","takeBike","hud","tip","hint","setVoiceMuted","objectiveMeter","playAnim","stopAnim","markVehicle","customize","closeItemWindow","setScoreboard","leaveVoiceChannel","joinVoiceChannel"}) do methods[name]=noop end
 function methods:voiceChannels() local t={}; if self.channel then t[self.channel]="radio" end; return t end
 function methods:ask(text,opts,fn) if self.pendingAsk then return false end; self.pendingAsk={text=text,fn=fn}; return true end
+function methods:takeWeapons() self.given={} end
+function methods:giveItem() end
+function methods:freeze(on) self.frozen=on end
+function methods:setControls(c) self.controls=c end
+function methods:setPvp(v) self.pvpSet=v end
+function methods:setHealth(v) self.health=v end
 function methods:revive(hp) self.downed=false; self.revivedWith=hp end
 function methods:setDowned(o) self.downedTimes=o end
 function methods:cancelAsk() self.pendingAsk=nil end
@@ -391,6 +401,20 @@ emit("playerInteract",doc,hurt)
 check(pick(doc,"Поднять раненого"),"the medic sees Revive on the wounded")
 tick(8)
 check(not hurt.downed and hurt.revivedWith==35 and not da.bag.medkit,"reviving takes a medkit and puts the wounded up")
+-- A duel: its own world and pistol, best of three, then everything back.
+local d1,d2=player(11,"DuelA",false),player(12,"DuelB",false)
+for _,pp in ipairs({d1,d2}) do R.acc(pp).intro=true; at(pp,"office"); pp.inv={kWeaponID_1887=1,kAmmoID_Shotgun=12} end
+local moneyBefore=R.acc(d2).money
+emit("playerInteract",d1,d2)
+check(pick(d1,"Вызвать на дуэль"),"menu offers a duel")
+d2:answer(true)
+check(d1.world>=1000 and d1.world==d2.world and d1.given[1]=="kWeaponID_M9","the duel has its own world and weapons")
+tick(4)
+check(not d1.frozen and not d2.frozen,"the countdown lets them fight")
+for round=1,2 do emit("playerDeath",d2); emit("playerRespawn",d2); tick(5) end
+check(d1.world==0 and d2.world==0 and d2.restored and d2.restored.kWeaponID_1887==1,"after the duel both are back with their own things")
+check(R.acc(d2).money==moneyBefore and not R.session(d2).dead,"a duel death costs nothing")
+check(next(freed)~=nil,"the duel's world is given back")
 emit("stop")
 check(stored["outpost:v1"].accounts[key].money==355,"stop saves state")
 print("Outpost: "..count.." checks passed")
