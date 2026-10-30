@@ -611,7 +611,7 @@ public:
     void CancelAsk(Player& p);
     // Death mode (setDeathMode): "downed" — a lethal hit lays the player down; it bleeds out, gives up, is
     // finished off or revived (player:revive).
-    struct DeathMode { bool downed = false; float bleedout = 300, giveUpAfter = 30; bool finish = true; std::string anim; };
+    struct DeathMode { bool downed = false; float bleedout = 300, giveUpAfter = 30; bool finish = true, voice = true, chat = true; std::string anim; };
     void SetDeathMode(DeathMode mode);
     const DeathMode& deathMode() const { return deathMode_; }
     void Revive(Player& p, float percent);

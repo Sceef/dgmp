@@ -1747,7 +1747,10 @@ void HookClient() {
     client.on.voice = [](uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size) { voice::OnFrame(id, route, codec, gain, range, frame, size); };
     client.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) { voice::OnSetup(flags, radio, call); };
     client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
-    client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) { playeranim::OnPlay(path, flags, rate); };
+    client.on.playAnim = [](const std::string& path, uint8_t flags, float rate) {
+        if (downed.on || downed.pending) return;  // lying wounded: the mode's animations (sit, wave...) do not get it up
+        playeranim::OnPlay(path, flags, rate);
+    };
     client.on.objectMove = [](uint16_t id, const float to[6], float seconds, float elapsed) { objects::OnMove(id, to, seconds, elapsed); };
     client.on.setWorld = [](int world) { myWorld = world; mpui::SetWorld(world); vehicles::SetWorld(world); carry::SetWorld(world); objects::SetWorld(world); blips::SetWorld(world); traps::SetWorld(world); dg::Log("MP: virtual world %d", world); };
     client.on.vehicle = [](uint16_t id, const net::Client::Events::VehicleInfo* info) { vehicles::OnVehicle(id, info); };
@@ -2372,7 +2375,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         bool forced = false;  // the server's kill: no falling down first
         const float floor = BarFloor(pawn, maxHp);
         if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? BarHealth(std::max(1.f, wantedHealth), maxHp, floor) : 0.f; forced = wantedHealth == 0; wantedHealth = -1; }
-        const float dead = std::max(1.5f, floor + 0.5f), lying = BarHealth(1, maxHp, floor);  // the bar empty / just above it
+        const float dead = std::max(1.5f, floor + 0.25f), lying = floor + 0.4f;  // the bar empty (it shows 0 while lying, above `dead`)
         bool lethal = policy::TakeLethalHit() || traps::TakeBledOut();  // (a bear trap does not let the game kill)
         // Death mode "downed": fall instead of dying; hits on the fallen go to the server (finished off or not).
         const bool fallen = downed.on || downed.pending;
@@ -2391,7 +2394,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         // An old server never answers: after 5 s it is an ordinary death.
         if (downed.pending && now - downed.fellAt > 5) { downed = Downed{downed.mode}; playeranim::OnPlay("", 0, 1); policy::SetDownedInputBlock(false); forced = true; hp = 0; }
         if (forced && (downed.on || downed.pending)) { downed = Downed{downed.mode}; playeranim::OnPlay("", 0, 1); policy::SetDownedInputBlock(false); }
-        if (!deathPhase && (hp <= dead || lethal)) {
+        if (!deathPhase && !downed.on && !downed.pending && (hp <= dead || lethal)) {
             deathPhase = 1; deathAt = now;
             traps::OnLocalDeath(pawn);  // a bear trap holding the body lets go of it
             // Off any vehicle: the respawn is a fast travel, and the game's travel with a rider who died
@@ -2435,7 +2438,14 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
             if (downed.holdSince) hold = float(std::min(1.0, (now - downed.holdSince) / 3.0));
             if (hold >= 1) { downed.holdSince = 0; client.SendDownedAct(net::DownedAction::GiveUp); }
             policy::SetDownedInputBlock(true);
+            // The game's hit reaction (the hit that laid it down, or a later one) stops the lying animation:
+            // it starts again; walking stays off apart from it.
+            static double replayAt = 0;
+            if (!downed.anim.empty() && !playeranim::IsPlaying(downed.anim) && now >= replayAt) { replayAt = now + 0.3; playeranim::OnPlay(downed.anim, net::AnimLoop | net::AnimFreeze, 1); }
         }
+        static bool movesOff = false;
+        const bool still = downed.on || downed.pending;
+        if (still != movesOff && IsValid(controller)) { movesOff = still; BoolArg(controller, "SetIgnoreMoveInput", "bNewMoveInput", still); }
         mpui::SetDownedHud(lying, float(downed.until - now), float(std::max(0.0, downed.giveUpAt - now)), hold, now - downed.helpAt < 10);
     }
     UpdateSpectator(pawn);
@@ -2452,7 +2462,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         const bool playing = gameplay && !pauseMenu && !policy::RewardPanelOpen();
         const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning() && !traps::Caught();  // (in a bear trap F is the game's escape)
         voiceAllowed = playing && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen();
-        scriptKeys = canAct; scriptHud = playing && !spec.on;
+        scriptKeys = canAct && !downed.on && !downed.pending; scriptHud = playing && !spec.on;
         {
             // The aim for the interaction prompts: the camera's place and forward direction, sight tests from it.
             mpui::View view;

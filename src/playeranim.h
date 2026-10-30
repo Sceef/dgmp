@@ -11,6 +11,7 @@ namespace playeranim {
 
 void OnPlay(const std::string& path, uint8_t flags, float rate);  // path "": stop (net::AnimFlags)
 void Reset();                                                      // disconnected
+bool IsPlaying(const std::string& path);                             // this animation plays now (or is about to)
 // Every frame while connected. `canAct`: the player plays (no menu, chat, dialog or death).
 void Update(ue::UObject* pawn, ue::UObject* controller, net::Client& client, bool canAct, bool dead);
 

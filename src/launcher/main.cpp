@@ -105,13 +105,22 @@ void Status(const std::string& text, bool busy = false, bool error = false) {
 }
 
 // ---------------- settings ----------------
+// Favorites a fresh install starts with (address, name).
+const std::pair<const char*, const char*> kDefaultFavorites[] = {{"179.66.187.53:7777", "Rubezh | DGMP RP"}};
 fs::path SettingsFile() { return g_root / L"profiles" / L"launcher.json"; }
 void LoadSettings() {
     std::ifstream in(SettingsFile(), std::ios::binary);
     std::stringstream ss; ss << in.rdbuf();
     json::Value v;
     if (json::Value::Parse(ss.str(), v) && v.isObject()) g_settings = v;
-    if (!g_settings["favorites"].isArray()) g_settings.set("favorites", json::Value::Array());
+    // A new player (no favorites saved yet) starts with the project's public test server in favorites;
+    // removing it sticks (an empty list is saved).
+    if (!g_settings["favorites"].isArray()) {
+        json::Value list = json::Value::Array();
+        for (const auto& [address, name] : kDefaultFavorites)
+            list.push(json::Value::Object().set("address", address).set("name", name));
+        g_settings.set("favorites", std::move(list));
+    }
     if (!g_settings["recent"].isArray()) g_settings.set("recent", json::Value::Array());
     if (!g_settings["host"].isObject()) g_settings.set("host", json::Value::Object());
     g_english = g_settings.str("lang") != "ru";

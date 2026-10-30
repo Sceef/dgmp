@@ -763,6 +763,8 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
 void Server::OnChat(Player& p, const std::string& text) {
     if (text.empty()) return;
     if (RconChat(p, text)) return;
+    // Lying wounded, where the death mode takes the chat away (chat = false): neither talk nor commands.
+    if (p.downed && !deathMode_.chat && !p.admin) { Message(&p, kErrorColor, p.lang == "ru" ? "Вы тяжело ранены: чат недоступен" : "You are badly wounded: no chat"); return; }
     if (text[0] == '/') {
         const auto space = text.find(' ');
         const std::string name = text.substr(1, space == std::string::npos ? std::string::npos : space - 1);

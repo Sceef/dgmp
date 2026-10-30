@@ -452,7 +452,7 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
     std::set<uint8_t> want(keys.begin(), keys.end());
     for (int vk = 0; vk < 256; ++vk) {
         const bool now = focused && want.count(uint8_t(vk)) && (GetAsyncKeyState(vk) & 0x8000);
-        if (now && !down[vk] && actNow) {
+        if (now && !down[vk] && actNow && !downedHud.on) {  // (lying wounded: only Y / N, H and E of the wound)
             uint16_t use = 0; bool watchedKey, vehicle = false; int player = -1;
             { std::lock_guard g(lock); if (prompt.id && !prompt.carry && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; player = prompt.player; } watchedKey = watched.count(uint8_t(vk)) != 0 && !(prompt.carry && prompt.key == vk); }
             if (player >= 0) client.SendPlayerInteract(uint16_t(player));

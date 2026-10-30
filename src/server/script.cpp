@@ -685,6 +685,8 @@ struct Api {
                 lua_getfield(L, 2, "bleedout"); m.bleedout = float(std::clamp(luaL_optnumber(L, -1, 300), 5.0, 3600.0)); lua_pop(L, 1);
                 lua_getfield(L, 2, "giveUpAfter"); m.giveUpAfter = float(std::clamp(luaL_optnumber(L, -1, 30), 0.0, 3600.0)); lua_pop(L, 1);
                 lua_getfield(L, 2, "finish"); m.finish = lua_isnil(L, -1) || lua_toboolean(L, -1); lua_pop(L, 1);
+                lua_getfield(L, 2, "voice"); m.voice = lua_isnil(L, -1) || lua_toboolean(L, -1); lua_pop(L, 1);
+                lua_getfield(L, 2, "chat"); m.chat = lua_isnil(L, -1) || lua_toboolean(L, -1); lua_pop(L, 1);
                 lua_getfield(L, 2, "anim");
                 if (lua_isstring(L, -1)) { m.anim = Srv(L).ResolveAnim(lua_tostring(L, -1)); if (m.anim.empty()) luaL_error(L, "setDeathMode: unknown animation '%s'", lua_tostring(L, -1)); }
                 lua_pop(L, 1);

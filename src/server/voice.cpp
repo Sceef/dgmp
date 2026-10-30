@@ -127,7 +127,7 @@ void Server::OnVoice(Player& from, const uint8_t* payload, size_t size) {
     if (from.voiceTokens < double(size)) { ++voiceDropped_; return; }
     from.voiceTokens -= double(size);
     from.voiceBytesIn += size;
-    if (from.voiceMuted) return;
+    if (from.voiceMuted || (from.downed && !deathMode_.voice)) return;
     if (!from.voiceUntil[key]) {
         // A new talk: the mode may refuse it (voice event returning false) until it ends.
         const uint16_t id = from.id;

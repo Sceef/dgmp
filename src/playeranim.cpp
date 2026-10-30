@@ -42,6 +42,8 @@ void OnPlay(const std::string& path, uint8_t flags, float rate) { want = {true, 
 
 void Reset() { want = Want{}; now = Playing{}; }
 
+bool IsPlaying(const std::string& path) { return (want.pending && want.path == path) || (now.on && now.path == path); }
+
 void Update(UObject* pawn, UObject* controller, net::Client& client, bool canAct, bool dead) {
     if (dead) { if (now.on) Stop(controller, &client, 0); want.pending = false; return; }
     if (want.pending && IsValid(pawn)) {
