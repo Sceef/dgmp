@@ -396,6 +396,11 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.scriptData) on.scriptData(path, part, parts, bytes);
         break;
     }
+    case Msg::PlayerList: {
+        const auto json = r.Str();
+        if (r.ok() && on.playerList) on.playerList(json);
+        break;
+    }
     case Msg::ItemWindow: {
         const uint16_t id = r.U16(); const auto json = r.Str(kItemWindowMax);
         if (r.ok() && on.itemWindow) on.itemWindow(id, json);
@@ -641,6 +646,17 @@ void Client::SendScriptMessage(const std::string& name, const std::string& json)
 void Client::SendItemAction(uint16_t window, const std::string& json) {
     if (status_ != Status::Connected || json.size() > kItemActionMax) return;
     Writer w; w.Op(Msg::ItemAction); w.U16(window); w.Str(json);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendListRequest() {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::ListRequest);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendVoiceIgnore(const std::vector<uint16_t>& ids) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::VoiceIgnore); w.U8(uint8_t(std::min<size_t>(ids.size(), 255)));
+    for (size_t i = 0; i < ids.size() && i < 255; ++i) w.U16(ids[i]);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendScriptError(const std::string& text) {

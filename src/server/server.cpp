@@ -80,7 +80,7 @@ void Server::Log(const char* fmt, ...) {
 bool Server::Start(const Config& cfg, const std::filesystem::path& root) {
     cfg_ = cfg; root_ = root;
     cfg_.maxPlayers = std::clamp(cfg_.maxPlayers, 1, net::kMaxPlayersLimit);
-    voiceRange_ = cfg_.voiceRange;
+    voiceRange_ = cfg_.voiceRange; voiceOn_ = cfg_.voice;
     std::filesystem::create_directories(root_ / "logs");
     log_ = OpenAppend(root_ / "logs" / "server.log");
     if (enet_initialize() != 0) { Log("ENet initialisation failed"); return false; }
@@ -193,6 +193,7 @@ void Server::RemovePlayer(Player* p, uint8_t reason) {
         ZombiesPlayerGone(id);
         net::Writer w; w.Op(net::Msg::PlayerQuit); w.U16(id); w.U8(reason);
         players_.erase(id);
+        for (auto& [other, q] : players_) { q->voiceIgnored.erase(id); q->voiceHeard.erase(id); }  // the id goes to the next one to join
         Send(nullptr, w, true);
     } else players_.erase(id);
 }
@@ -277,6 +278,10 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         script_->DialogResponse(*p, id, ok, index, answer);
         break;
     }
+    case net::Msg::ListRequest:
+        if (Now() - p->listAt >= 0.5) { p->listAt = Now(); SendPlayerList(*p); }
+        break;
+    case net::Msg::VoiceIgnore: OnVoiceIgnore(*p, r); break;
     case net::Msg::Use: {
         const uint16_t id = r.U16();
         auto it = interactions_.find(id);
@@ -2465,8 +2470,8 @@ bool Server::ReloadMode() {
     for (auto& [id, p] : players_) if (p->ready && p->peer) { Objective(p.get(), 4, 0, 0, "", ""); ObjectiveMeter(p.get(), false, "", 0); CloseDialog(p.get()); SetHud(p.get(), "", ""); }
     for (auto& [id, p] : players_) { p->pvp = -1; p->zones.clear(); p->zoneHud.clear(); p->money = 0; }
     // Voice channels, ranges and mutes are the mode's: the new code sets them again.
-    voiceRange_ = cfg_.voiceRange;
-    for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
+    voiceRange_ = cfg_.voiceRange; voiceOn_ = cfg_.voice; scoreColumns_.clear();
+    for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; p->scoreCells.clear(); SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
     ids.clear();
     for (auto& [id, z] : zombies_) ids.push_back(id);
     for (auto id : ids) RemoveZombie(id);
@@ -2548,7 +2553,8 @@ void Server::HandleConsole(const std::string& raw) {
         for (auto q : Players()) if ((sid && (q->steamId == sid || q->claimedSteamId == sid)) || (!b.ip.empty() && q->ip == b.ip)) { BanPlayer(q, reason, mins, by); return; }
         AddBan(b);
     } else if (cmd == "voice") {
-        VoiceStats();
+        if (rest == "on" || rest == "off") { SetVoiceEnabled(rest == "on"); Log("Voice chat %s", rest == "on" ? "on" : "off"); }
+        else VoiceStats();
     } else if (cmd == "hitstats") {  // to tune MaxHitDamage: the largest damage seen per weapon class
         if (hitStats_.empty()) Log("No hits yet");
         for (auto& [w, st] : hitStats_) Log("  %-48s max %.1f  (%d hits)", w.c_str(), st.max, st.count);

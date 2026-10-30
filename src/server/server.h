@@ -380,6 +380,9 @@ struct Player {
     double voiceUntil[2] = {0, 0};                 // talking with the talk / radio key until then (0: silent)
     bool voiceBlocked[2] = {false, false};         // the mode refused this talk (voice event returned false)
     std::map<uint16_t, double> voiceHeard;         // speakers it hears now -> their last frame (VoiceListeners)
+    std::set<uint16_t> voiceIgnored;               // players it muted for itself (VoiceIgnore): not sent to it
+    std::vector<std::string> scoreCells;           // its row's cells in the Tab panel (player:setScoreboard)
+    double listAt = 0;                             // it asked for the player list then (ListRequest rate limit)
     uint64_t voiceBytesIn = 0;                     // since it joined
 };
 
@@ -583,6 +586,11 @@ public:
     float VoiceRange(const Player& p) const { return p.voiceRange >= 0 ? p.voiceRange : voiceRange_; }
     float DefaultVoiceRange() const { return voiceRange_; }
     void SetVoiceMuted(Player& p, bool muted);
+    void SetVoiceEnabled(bool on);                 // voice chat on the server at all (Voice= at start; setVoiceEnabled)
+    bool VoiceEnabled() const { return voiceOn_; }
+    void SetScoreColumns(std::vector<std::string> columns) { scoreColumns_ = std::move(columns); }
+    void SendPlayerList(Player& p);                // the Tab panel's list (ListRequest)
+    void OnVoiceIgnore(Player& p, net::Reader& r);
     bool JoinVoiceChannel(Player& p, const std::string& name, VoiceJoin how);  // false: a bad name or too many
     void LeaveVoiceChannel(Player& p, const std::string& name);              // "": all of them
     static const char* Talking(const Player& p);   // "talk", "radio" or null
@@ -687,6 +695,8 @@ private:
     void SendVoiceSetup(Player& p);
     void VoiceStats();                             // console: voice
     float voiceRange_ = 2500;
+    bool voiceOn_ = true;
+    std::vector<std::string> scoreColumns_;        // the mode's columns in the Tab panel (setScoreboard)
     double voiceBudget_ = 0, voiceBudgetAt_ = 0;   // VoiceBandwidth
     uint64_t voiceBytesOut_ = 0, voiceDropped_ = 0;
     void TickBots(float dt);

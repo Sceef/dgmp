@@ -292,7 +292,13 @@ struct HudState { bool talking = false, radio = false, muted = false, off = fals
 std::mutex hudLock;
 HudState hud;
 std::map<uint16_t, double> heardAt;  // game thread
+std::map<uint16_t, std::pair<bool, int>> playerAudio;  // game thread: muted here, volume % (the Tab panel)
 }  // namespace
+
+void SetPlayerAudio(uint16_t id, bool muted, int volume) {
+    if (!muted && volume == 100) playerAudio.erase(id); else playerAudio[id] = {muted, std::clamp(volume, 0, 200)};
+}
+void ClearPlayerAudio() { playerAudio.clear(); }
 
 void OnSetup(uint8_t flags, const std::string& radio, const std::string& call) {
     setupFlags = flags; radioName = radio; callName = call;
@@ -302,6 +308,10 @@ void OnSetup(uint8_t flags, const std::string& radio, const std::string& call) {
 
 void OnFrame(uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size) {
     if (codec != net::VoiceCodec::Steam || !steamVoice.Ready() || !AudioReady()) return;
+    if (auto a = playerAudio.find(id); a != playerAudio.end()) {
+        if (a->second.first) return;  // muted here (the server stops sending it too)
+        gain = gain * a->second.second / 100;
+    }
     uint32_t written = 0;
     const int r = steamVoice.decompress(steamVoice.user(), frame, uint32_t(size), pcm.data(), uint32_t(pcm.size() * sizeof(int16_t)), &written, kRate);
     if (r != kVoiceOK || !written) return;

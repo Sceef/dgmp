@@ -75,6 +75,7 @@ public:
     // A player started (on) or stopped talking with the talk / radio key (how "talk" / "radio"): false at
     // the start when a handler refused it (nobody hears this talk).
     bool Voice(Player& p, bool on, const char* how);
+    void VoiceIgnore(Player& p, Player& target, bool on);  // voiceIgnore: p muted target for itself (on) or no longer
     void SaveStorage();  // flushes the mode's persistent storage (also done every few seconds)
     bool ChangedOnDisk() const;
 

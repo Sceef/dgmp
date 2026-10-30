@@ -14,6 +14,7 @@
 #include "blips.h"
 #include "sounds.h"
 #include "voice.h"
+#include "players.h"
 #include "images.h"
 #include "webui.h"
 #include "clientlua.h"
@@ -1615,7 +1616,7 @@ void HookClient() {
         playeranim::Reset();
         blips::Reset();
         sounds::Reset();
-        voice::Reset();
+        voice::Reset(); players::Reset();
         webui::Reset();
         clientlua::Reset();
         traps::Reset();
@@ -1681,6 +1682,7 @@ void HookClient() {
     client.on.spectate = [](bool on, const std::vector<uint16_t>& only) { spec.want = on; spec.only = only; };
     client.on.dialog = [](const net::Client::Events::DialogInfo& d) { mpui::OnDialog(d); };
     client.on.itemWindow = [](uint16_t id, const std::string& json) { mpui::OnItemWindow(id, json); };
+    client.on.playerList = [](const std::string& json) { players::OnList(json); };
     client.on.trap = [](const uint8_t* data, size_t size) { traps::OnMessage(data, size); };
     client.on.hud = [](const std::string& id, const std::string& json) { mpui::OnHud(id, json); };
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
@@ -2228,7 +2230,7 @@ bool Init() {
     policy::SetDamageWatcher(&OnGhostDamage);
     policy::DisableMenuPause();
     overlay::SetHud(&DrawHudLayer);
-    overlay::SetDraw([] { mpui::DrawWindows(); voice::DrawWindow(); });  // the mode's dialogs, the character creator, voice settings
+    overlay::SetDraw([] { mpui::DrawWindows(); voice::DrawWindow(); players::Draw(); });  // the mode's dialogs, the character creator, voice settings
     webui::Install();                      // the mode's HTML pages
     if (!net::ParseAddress(target, host, port) || !net::ValidNick(nick)) {
         dg::Log("MP: invalid launch parameters (address '%s', nick '%s')", target.c_str(), nick.c_str());
@@ -2471,6 +2473,8 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         FRotator camRot{};
         if (IsValid(controller)) if (UObject* mgr = Field<UObject*>(controller, off::PC_CameraManager); IsValid(mgr)) camRot = Field<FRotator>(mgr, off::CamMgr_POV_Location + 12);
         voice::Update(client, voiceAllowed, cam, camRot);
+        overlay::SetTabOwned(phase == Phase::Joined);
+        players::Update(client, gameplay && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen() && !spec.on);
     }
     UpdateNpcs(now, {s.x, s.y, s.z}, cam);
     // The mode's icons in the world: on screen where they are in front of the camera and near enough.

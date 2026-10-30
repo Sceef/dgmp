@@ -1769,6 +1769,30 @@ struct Api {
         if (how) lua_pushstring(L, how); else lua_pushboolean(L, false);
         return 1;
     }
+    static int SetVoiceEnabled(lua_State* L) { Srv(L).SetVoiceEnabled(lua_toboolean(L, 1)); return 0; }
+    static int VoiceEnabled(lua_State* L) { lua_pushboolean(L, Srv(L).VoiceEnabled()); return 1; }
+    // Cells of the Tab panel: strings (numbers become text), at most 8, 64 bytes each.
+    static std::vector<std::string> Cells(lua_State* L, int idx) {
+        std::vector<std::string> out;
+        if (!lua_istable(L, idx)) return out;
+        for (lua_Integer i = 1; i <= 8; ++i) {
+            lua_rawgeti(L, idx, i);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            size_t n = 0; const char* s = luaL_tolstring(L, -1, &n);
+            out.emplace_back(s, std::min<size_t>(n, 64));
+            lua_pop(L, 2);
+        }
+        return out;
+    }
+    // setScoreboard({columns = {"Фракция", "Уровень"}}): the mode's columns in the Tab panel; nil: none
+    static int SetScoreboard(lua_State* L) {
+        std::vector<std::string> columns;
+        if (lua_istable(L, 1)) { lua_getfield(L, 1, "columns"); columns = Cells(L, lua_gettop(L)); lua_pop(L, 1); }
+        Srv(L).SetScoreColumns(std::move(columns));
+        return 0;
+    }
+    // player:setScoreboard({"Полиция", 5}): its row's cells under those columns; nil: empty
+    static int PSetScoreboard(lua_State* L) { CheckPlayer(L, 1).scoreCells = Cells(L, 2); return 0; }
     static int SetVoiceRangeAll(lua_State* L) { Srv(L).SetVoiceRange(nullptr, float(luaL_checknumber(L, 1)) * 100.f); return 0; }
     static int VoiceRangeAll(lua_State* L) { lua_pushnumber(L, Srv(L).DefaultVoiceRange() / 100.0); return 1; }
     // voiceChannelPlayers(name) -> the players in that channel
@@ -1935,7 +1959,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
                                 {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
                                 {"voiceChannels", &Api::PVoiceChannels}, {"setVoiceRange", &Api::PSetVoiceRange}, {"voiceRange", &Api::PVoiceRange},
-                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
+                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
                                 {"giveCarry", &Api::PGiveCarry}, {"dropCarry", &Api::PDropCarry}, {"giveMoney", &Api::PGiveMoney}, {"setMoney", &Api::PSetMoney}, {nullptr, nullptr}};
     luaL_newlib(L_, methods); lua_setfield(L_, -2, "methods");
     lua_pop(L_, 1);
@@ -1948,7 +1972,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
                                 {"playSound", &Api::PlaySoundAll},
-                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
+                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"setVoiceEnabled", &Api::SetVoiceEnabled}, {"voiceEnabled", &Api::VoiceEnabled}, {"setScoreboard", &Api::SetScoreboard}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
                                 {"getDoor", &Api::GetDoor}, {"doors", &Api::DoorsList}, {"setDoor", &Api::SetDoor}, {"getVehicle", &Api::GetVehicleByKey}, {"loot", &Api::LootList},
                                 {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
                                 {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
@@ -2206,6 +2230,12 @@ bool Script::Voice(Player& p, bool on, const char* how) {
     int result = 0;
     Fire("voice", 3, &result);
     return !(on && (result & 1));
+}
+
+void Script::VoiceIgnore(Player& p, Player& target, bool on) {
+    if (!L_) return;
+    Api::PushPlayer(L_, p); Api::PushPlayer(L_, target); lua_pushboolean(L_, on);
+    Fire("voiceIgnore", 3, nullptr);
 }
 
 int Script::DoorUse(Player& p, const std::string& door, const char* side) {

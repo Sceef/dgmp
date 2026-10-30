@@ -10,7 +10,7 @@
 
 namespace net {
 
-constexpr uint16_t kProtocolVersion = 10;
+constexpr uint16_t kProtocolVersion = 11;
 constexpr uint16_t kDefaultPort = 7777;
 constexpr int kLanPortSpan = 10;        // LAN discovery probes kDefaultPort .. kDefaultPort+span-1
 constexpr int kChannels = 4;
@@ -61,6 +61,8 @@ enum class Msg : uint8_t {
     ScriptRequest = 42, // str path: send me this file of the mode's client scripts (ScriptList: not in my cache)
     ScriptMessage = 43, // str name, str json: the mode's client script sent a message (send) to the server's Lua (clientMessage)
     ScriptError = 44,   // str text: a client script failed (the server logs it for the mode's author)
+    ListRequest = 46,   // (empty): send me the player list now (the Tab panel is open; asked about once a second)
+    VoiceIgnore = 47,   // u8 n, n x u16 playerId: the players this one muted for itself (their voices are not sent to it)
     ItemAction = 45,    // u16 windowId, str json: the player did something in the mode's item window ({type = "move" | "action" | "close", ...})
     Shot = 20,        // str weapon class, f32 x,y,z: this player fired (relayed to the players nearby as PlayerShot)
     AnimEnd = 19,     // u8 reason (0 it ended, 1 the player moved): the animation the mode played (PlayAnim) is over
@@ -138,6 +140,7 @@ enum class Msg : uint8_t {
                       // Owner (u16 owner), Damage (f32 damage, u16 attacker; to the owner), Died (u16 killer, 0xFFFF none), Remove
     ZombieMoves = 131, // u8 n, n x ZombieState: zombies other clients own, for their puppets here (unreliable)
     VoiceSetup = 112, // u8 VoiceFlags, str radio, str call: voice chat on this server and the channels you talk to (names for the HUD)
+    PlayerList = 132, // str json: the Tab panel {voice, max, columns = [..], rows = [{id, name, ping, key, admin, bot, cells = [..]}]}
     Marker = 80,      // u16 id, u8 op (1 add/update: f32 x,y,z, u8 category, u8 style, u8 route, str icon, str title, str description; 2 remove)
 };
 

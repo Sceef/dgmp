@@ -7,6 +7,7 @@
 // VoiceBandwidth bytes a second of voice from the whole server.
 #include "server.h"
 #include "script.h"
+#include "../shared/json.h"
 #include <enet/enet.h>
 #include <algorithm>
 #include <cmath>
@@ -50,9 +51,60 @@ void Server::LeaveVoiceChannel(Player& p, const std::string& name) {
     SendVoiceSetup(p);
 }
 
+void Server::SetVoiceEnabled(bool on) {
+    if (voiceOn_ == on) return;
+    voiceOn_ = on;
+    for (auto& [id, p] : players_) SendVoiceSetup(*p);
+}
+
+// The Tab panel: everyone on the server with its ping, whether the server knows its Steam account
+// (key: "s:<SteamID>" or "n:<nick>", what the client keeps its own mutes under) and the mode's cells.
+void Server::SendPlayerList(Player& to) {
+    if (!to.peer) return;
+    json::Value list = json::Value::Object();
+    list.set("voice", voiceOn_).set("max", cfg_.maxPlayers);
+    json::Value columns = json::Value::Array();
+    for (auto& c : scoreColumns_) columns.push(c);
+    list.set("columns", std::move(columns));
+    json::Value rows = json::Value::Array();
+    for (auto& [id, p] : players_) {
+        if (!p->ready) continue;
+        json::Value row = json::Value::Object();
+        row.set("id", unsigned(id)).set("name", p->nick).set("ping", p->peer ? unsigned(p->peer->roundTripTime) : 0u)
+           .set("key", p->steamId ? "s:" + std::to_string(p->steamId) : "n:" + p->nick).set("admin", p->admin).set("bot", p->bot);
+        json::Value cells = json::Value::Array();
+        for (auto& c : p->scoreCells) cells.push(c);
+        row.set("cells", std::move(cells));
+        rows.push(std::move(row));
+    }
+    list.set("rows", std::move(rows));
+    net::Writer w; w.Op(net::Msg::PlayerList); w.Str(list.dump());
+    SendTo(to.peer, w, true);
+}
+
+// The players it muted for itself: their voices are no longer sent to it (no traffic, no VoiceListeners
+// place taken). The mode hears each change (voiceIgnore), e.g. to count complaints about a spammer.
+void Server::OnVoiceIgnore(Player& p, net::Reader& r) {
+    const int n = r.U8();
+    std::set<uint16_t> now;
+    for (int i = 0; i < n && r.ok(); ++i) { const uint16_t id = r.U16(); if (id != p.id) now.insert(id); }
+    if (!r.ok()) return;
+    const uint16_t self = p.id;
+    std::vector<std::pair<uint16_t, bool>> changes;
+    for (auto id : now) if (!p.voiceIgnored.count(id)) changes.push_back({id, true});
+    for (auto id : p.voiceIgnored) if (!now.count(id)) changes.push_back({id, false});
+    p.voiceIgnored = std::move(now);
+    for (auto id : p.voiceIgnored) p.voiceHeard.erase(id);
+    for (auto& [id, on] : changes) {
+        Player* me = Find(self); Player* target = Find(id);
+        if (!me) return;  // a handler kicked it
+        if (target) script_->VoiceIgnore(*me, *target, on);
+    }
+}
+
 void Server::SendVoiceSetup(Player& p) {
     if (!p.peer || !p.ready) return;
-    uint8_t flags = cfg_.voice ? net::VoiceOn : 0;
+    uint8_t flags = voiceOn_ ? net::VoiceOn : 0;
     if (p.voiceMuted) flags |= net::VoiceMuted;
     std::string radio, call;
     for (auto& [name, how] : p.voiceChannels) {
@@ -64,7 +116,7 @@ void Server::SendVoiceSetup(Player& p) {
 }
 
 void Server::OnVoice(Player& from, const uint8_t* payload, size_t size) {
-    if (!cfg_.voice || size < 4 || size - 3 > net::kVoiceFrameMax) return;
+    if (!voiceOn_ || size < 4 || size - 3 > net::kVoiceFrameMax) return;
     const int key = payload[0];
     if (key > 1 || payload[1] != uint8_t(net::VoiceCodec::Steam)) return;
     const double now = Now();
@@ -94,13 +146,13 @@ void Server::OnVoice(Player& from, const uint8_t* payload, size_t size) {
         if (how == VoiceJoin::Listen || (how == VoiceJoin::Radio && key != int(net::VoiceKey::Radio))) continue;
         const auto route = how == VoiceJoin::Call ? net::VoiceRoute::Call : net::VoiceRoute::Radio;
         for (auto& [id, l] : players_)
-            if (l.get() != &from && l->ready && l->peer && l->voiceChannels.count(name) && !heard(l.get())) to.push_back({l.get(), route});
+            if (l.get() != &from && l->ready && l->peer && l->voiceChannels.count(name) && !heard(l.get()) && !l->voiceIgnored.count(from.id)) to.push_back({l.get(), route});
     }
     const float range = VoiceRange(from);
     if (range > 0) {
         const float range2 = range * range;
         for (auto& [id, l] : players_) {
-            if (l.get() == &from || !l->ready || !l->peer || Apart(*l, from) || heard(l.get())) continue;
+            if (l.get() == &from || !l->ready || !l->peer || Apart(*l, from) || heard(l.get()) || l->voiceIgnored.count(from.id)) continue;
             const float dx = l->state.x - from.state.x, dy = l->state.y - from.state.y, dz = l->state.z - from.state.z;
             if (dx * dx + dy * dy + dz * dz <= range2) to.push_back({l.get(), net::VoiceRoute::Near});
         }
@@ -149,7 +201,7 @@ void Server::TickVoice() {
 
 void Server::VoiceStats() {
     Log("Voice %s, range %.0f m, VoiceRate %d B/s, VoiceListeners %d, VoiceBandwidth %d B/s; sent %llu KB, dropped %llu frames",
-        cfg_.voice ? "on" : "off", voiceRange_ / 100.f, cfg_.voiceRate, cfg_.voiceListeners, cfg_.voiceBandwidth,
+        voiceOn_ ? "on" : "off", voiceRange_ / 100.f, cfg_.voiceRate, cfg_.voiceListeners, cfg_.voiceBandwidth,
         static_cast<unsigned long long>(voiceBytesOut_ / 1024), static_cast<unsigned long long>(voiceDropped_));
     for (auto& [id, p] : players_) {
         if (!p->ready || p->bot) continue;

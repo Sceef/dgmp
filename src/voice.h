@@ -15,6 +15,9 @@ void OnSetup(uint8_t flags, const std::string& radio, const std::string& call); 
 void OnFrame(uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size);  // gain: the speaker's microphone %
 // Game thread, every frame while connected. canTalk false (chat or a dialog open, a menu) lets the keys go.
 void Update(net::Client& client, bool canTalk, const ue::FVector& camPos, const ue::FRotator& camRot);
+// The Tab panel: a player muted here (its frames are dropped) or played at `volume` % (game thread).
+void SetPlayerAudio(uint16_t id, bool muted, int volume);
+void ClearPlayerAudio();
 bool Talking(uint16_t id);  // that player's voice is heard right now (the mark at its health bar)
 void DrawHud();             // render thread (overlay HUD layer): the microphone mark, who talks on the radio
 // The settings window (chat command /voice, handled here, never sent): microphone and voices volume, a
