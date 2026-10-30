@@ -120,7 +120,8 @@ Interactive Entertainment; DGMP не связан с ними, файлы игр
 """).encode("utf-8")
 
     for source, destination in (
-        ("LICENSE", "licenses/DGMP-GPL-3.0.txt"),  # DGMP itself; the source code: https://github.com/Sceef/dgmp
+        ("LICENSE", "LICENSE"),  # DGMP itself (GPL 3.0), at the top as release sites expect; the source: https://github.com/Sceef/dgmp
+        ("LICENSE", "licenses/DGMP-GPL-3.0.txt"),
         ("third_party/enet/LICENSE", "licenses/ENet.txt"),
         ("third_party/imgui/LICENSE.txt", "licenses/Dear-ImGui.txt"),
         ("third_party/imguizmo/LICENSE", "licenses/ImGuizmo.txt"),
