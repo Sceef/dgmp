@@ -1866,6 +1866,26 @@ void SetMovementNone(UObject* pawn, bool none) {
     if (auto f = IsValid(move) ? Fn(move, "SetMovementMode") : nullptr) { Params p(f); p.Set<uint8_t>("NewMovementMode", none ? 0 : 1); Call(move, "SetMovementMode", &p); }
 }
 float WrapDeg(float a) { a = std::fmod(a + 180.f, 360.f); if (a < 0) a += 360.f; return a - 180.f; }
+// A camera at `at` looking at `from`, but not through the ground or a wall: in front of what is between.
+FVector ClearView(UObject* context, const FVector& from, FVector at) {
+    static UObject* kismet = nullptr; static UObject* statics = nullptr;
+    if (!IsValid(kismet)) kismet = FindObject("/Script/Engine.Default__KismetSystemLibrary");
+    if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
+    auto trace = kismet ? Fn(kismet, "LineTraceSingle_NEW") : nullptr; auto brk = statics ? Fn(statics, "BreakHitResult") : nullptr;
+    if (!trace || !brk || !IsValid(context)) return at;
+    Params t(trace); t.Set("WorldContextObject", context); t.Set("Start", from); t.Set("End", at);
+    t.Set<uint8_t>("TraceChannel", 0); t.SetBool("bTraceComplex", false); t.SetBool("bIgnoreSelf", true);
+    Call(kismet, "LineTraceSingle_NEW", &t);
+    auto hitProp = FindProperty(trace, "OutHit"), inProp = FindProperty(brk, "Hit");
+    if (!t.GetBool("ReturnValue") || !hitProp || !inProp) return at;
+    Params b(brk);
+    std::memcpy(static_cast<uint8_t*>(b.Data()) + Field<int>(inProp, off::UProperty_Offset), static_cast<uint8_t*>(t.Data()) + Field<int>(hitProp, off::UProperty_Offset), 136);
+    Call(statics, "BreakHitResult", &b);
+    const FVector hitAt = b.Get<FVector>("Location");
+    const float dx = from.X - hitAt.X, dy = from.Y - hitAt.Y, dz = from.Z - hitAt.Z, l = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (l > 1.f) { const float k = std::min(60.f, l) / l; at = {hitAt.X + dx * k, hitAt.Y + dy * k, hitAt.Z + dz * k}; }
+    return at;
+}
 // In a helicopter: the body hidden inside it, the view from a camera round it (the mouse turns it).
 void UpdateHeliView(UObject* pawn) {
     static UObject* cam = nullptr; static bool on = false;
@@ -1888,26 +1908,7 @@ void UpdateHeliView(UObject* pawn) {
     const float rad = 0.0174532925f, cp = std::cos(r.Pitch * rad);
     const FVector c = C2WPos(root);
     const FVector from{c.X, c.Y, c.Z + 250.f};
-    FVector at{c.X - std::cos(r.Yaw * rad) * cp * 1800.f, c.Y - std::sin(r.Yaw * rad) * cp * 1800.f, c.Z + 250.f - std::sin(r.Pitch * rad) * 1800.f};
-    // Not through the ground or a wall: in front of what is between it and the helicopter.
-    static UObject* kismet = nullptr; static UObject* statics = nullptr;
-    if (!IsValid(kismet)) kismet = FindObject("/Script/Engine.Default__KismetSystemLibrary");
-    if (!IsValid(statics)) statics = FindObject("/Script/Engine.Default__GameplayStatics");
-    auto trace = kismet ? Fn(kismet, "LineTraceSingle_NEW") : nullptr; auto brk = statics ? Fn(statics, "BreakHitResult") : nullptr;
-    if (trace && brk) {
-        Params t(trace); t.Set("WorldContextObject", heli); t.Set("Start", from); t.Set("End", at);
-        t.Set<uint8_t>("TraceChannel", 0); t.SetBool("bTraceComplex", false); t.SetBool("bIgnoreSelf", true);
-        Call(kismet, "LineTraceSingle_NEW", &t);
-        auto hitProp = FindProperty(trace, "OutHit"), inProp = FindProperty(brk, "Hit");
-        if (t.GetBool("ReturnValue") && hitProp && inProp) {
-            Params b(brk);
-            std::memcpy(static_cast<uint8_t*>(b.Data()) + Field<int>(inProp, off::UProperty_Offset), static_cast<uint8_t*>(t.Data()) + Field<int>(hitProp, off::UProperty_Offset), 136);
-            Call(statics, "BreakHitResult", &b);
-            const FVector hitAt = b.Get<FVector>("Location");
-            const float dx = from.X - hitAt.X, dy = from.Y - hitAt.Y, dz = from.Z - hitAt.Z, l = std::sqrt(dx * dx + dy * dy + dz * dz);
-            if (l > 1.f) { const float k = std::min(60.f, l) / l; at = {hitAt.X + dx * k, hitAt.Y + dy * k, hitAt.Z + dz * k}; }
-        }
-    }
+    const FVector at = ClearView(heli, from, {c.X - std::cos(r.Yaw * rad) * cp * 1800.f, c.Y - std::sin(r.Yaw * rad) * cp * 1800.f, c.Z + 250.f - std::sin(r.Pitch * rad) * 1800.f});
     SetActorTransform(cam, at, RotatorToQuat(r));
 }
 void UpdateSpectator(UObject* pawn) {
@@ -1921,6 +1922,10 @@ void UpdateSpectator(UObject* pawn) {
         spec.cam = SpawnCamera(C2WPos(Field<UObject*>(pawn, off::Actor_RootComponent)));
         ViewThrough(spec.cam);
         spec.lastControl = ControlRotation(); spec.target = 0xFFFF; spec.on = true; spectatorHidden = true;
+        // Its hidden body does nothing: no attacks, weapons, interactions (their sounds were heard).
+        policy::SetSpectatorInputBlock(true);
+        if (auto f = Fn(pawn, "SetCanMeleeAttack")) { Params p(f); p.SetBool(GetName(FirstParam(f)).c_str(), false); Call(pawn, "SetCanMeleeAttack", &p); }
+        SetBoolProp(pawn, "CanDoMelee", false);
         dg::Log("MP spectator on");
     } else if (!spec.want && spec.on) {
         ViewThrough(IsValid(spec.previousView) ? spec.previousView : pawn);
@@ -1929,6 +1934,9 @@ void UpdateSpectator(UObject* pawn) {
         BoolArg(pawn, "SetActorEnableCollision", "bNewActorEnableCollision", true);
         BoolArg(worldController, "SetIgnoreMoveInput", "bNewMoveInput", false);
         HideLocalBody(pawn, false);
+        policy::SetSpectatorInputBlock(false);
+        if (auto f = Fn(pawn, "SetCanMeleeAttack")) { Params p(f); p.SetBool(GetName(FirstParam(f)).c_str(), true); Call(pawn, "SetCanMeleeAttack", &p); }
+        SetBoolProp(pawn, "CanDoMelee", true);
         spec.on = false; spectatorHidden = false;
         { std::lock_guard g(plateLock); spectatorCaption.clear(); }
         dg::Log("MP spectator off");
@@ -1964,8 +1972,12 @@ void UpdateSpectator(UObject* pawn) {
     { std::lock_guard g(plateLock); spectatorCaption = caption; }
     const float rad = 0.0174532925f, cp = std::cos(spec.rot.Pitch * rad), sp = std::sin(spec.rot.Pitch * rad), cy = std::cos(spec.rot.Yaw * rad), sy = std::sin(spec.rot.Yaw * rad);
     const float dist = 550.f;
-    const FVector eye{spec.point.X - cp * cy * dist, spec.point.Y - cp * sy * dist, spec.point.Z - sp * dist};
+    const FVector eye = ClearView(pawn, spec.point, {spec.point.X - cp * cy * dist, spec.point.Y - cp * sy * dist, spec.point.Z - sp * dist});  // not under the ground
     SetActorTransform(spec.cam, eye, RotatorToQuat(spec.rot));
+    // A weapon it drew, the game showing the body again: hidden again. It hangs under the ground: it must
+    // not start walking (it fell and died there).
+    static double nextHide = 0;
+    if (const double t = GetTickCount64() / 1000.0; t >= nextHide) { nextHide = t + 0.5; HideLocalBody(pawn, true); SetMovementNone(pawn, true); }
     // The hidden body waits under the watched player: the world around it streams in.
     if (auto f = Fn(pawn, "K2_SetActorLocation")) { Params p(f); p.Set("NewLocation", FVector{spec.point.X, spec.point.Y, spec.point.Z - 400.f}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true); Call(pawn, "K2_SetActorLocation", &p); }
 }

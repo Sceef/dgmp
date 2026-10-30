@@ -70,6 +70,9 @@ void SetObserver(void(*observer)(ue::UObject* object,const std::string& name));
 void SetCarryInputBlock(bool on);
 // No dodge roll (a carried item the game would drop in one, kept by the box's roll = "keep").
 void SetCarryRollBlock(bool on);
+// Spectating (mp.cpp): the player's input actions (attack, aim, weapons, interact, crouch...) do nothing;
+// the mouse look still turns the spectator's camera.
+void SetSpectatorInputBlock(bool on);
 void Observe(ue::UObject* object);
 // Shows the game's own tutorial popup (title, text, optional Texture2D asset path) for a mode/server hint.
 // Empty title = survival-tip line at the bottom, closed automatically after `seconds` (default 5).

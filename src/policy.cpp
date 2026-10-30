@@ -41,6 +41,7 @@ bool playerDied=false;  // TakeDeath
 double deathLogUntil=0;
 bool blockDeathReload=false,deathReloadBlocked=false;
 bool carryInputBlock=false, carryRollBlock=false;  // SetCarryInputBlock, SetCarryRollBlock
+bool spectatorInputBlock=false;  // SetSpectatorInputBlock
 // Input actions of the controller that holster the item in the hands (InpActEvt_<prefix>...).
 bool HolstersCarriedItem(const std::string& name) {
     if(name.rfind("InpActEvt_",0)!=0) return false;
@@ -139,6 +140,7 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
     if(devmenu::IsOpen() && (object==localPawn || object==abilityController) && (name.rfind("InpActEvt_",0)==0 || name.rfind("InpAxisEvt_",0)==0)) return;
     if(carryInputBlock && object==abilityController && HolstersCarriedItem(name)) return;
     if(carryRollBlock && object==abilityController && name.rfind("InpActEvt_Player_Roll",0)==0) return;
+    if(spectatorInputBlock && (object==localPawn || object==abilityController) && name.rfind("InpActEvt_",0)==0) return;
     // Server quest rewards: the storylines shortcut on the reward panel does nothing (see UpdateRewardPanel).
     if(object==rewardsPanel && GetTickCount64()/1000.0<rewardWatchUntil) {
         if(name=="OnSelect1Pressed" || name.rfind("BndEvt__MenuInteract_Triangle",0)==0) return;
@@ -948,6 +950,7 @@ void SetRouteOwned(bool owned) { routeOwned=owned; }
 void SetQuestHud(bool active) { questHud=active; }
 void SetObserver(void(*fn)(UObject*,const std::string&)) { observer=fn; }
 void SetCarryInputBlock(bool on) { carryInputBlock=on; }
+void SetSpectatorInputBlock(bool on) { spectatorInputBlock=on; }
 void SetCarryRollBlock(bool on) { carryRollBlock=on; }
 // Hooks of objects that are gone (their slot was freed or reused): the copied vtable is no longer used.
 void PruneHooks() {
