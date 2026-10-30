@@ -200,6 +200,8 @@ build\dgmp-probe.exe join 127.0.0.1 TestBot --seconds 30 --say "/help"
 
 ## Настройки клиента — `DGMP.ini`
 
+Файл личный и в репозиторий не входит: при сборке из исходников скопируйте `DGMP.ini.example` в `DGMP.ini` (и `editor.ini.example` в `editor.ini`), пакет клиента кладёт свой. Мут и громкость игроков из списка Tab хранятся там же, в `[Players]`.
+
 - `[DGMP]` — `AutoLoad`, `AutoFly`, `FlySpeed`, `SuppressStory` (отключить сюжетные задания), `SuppressAI` (убрать штатных NPC и фриков).
 - `[World] RevealMap=1` — открыть всю карту без тумана.
 - `[Map]` — какие штатные метки показывать на карте.

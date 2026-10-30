@@ -15,17 +15,10 @@ Fuel=1
 UserWaypoint=1
 OtherNativeMarkers=0
 
-[Spawn]
-Enabled=1
-X=-85462.812500
-Y=-301759.781250
-Z=-5179.703613
-Yaw=1.170308
-
 [Voice]
 OpenMic=0
 TalkKey=N
 RadioKey=K
 Volume=100
-MicVolume=176
+MicVolume=100
 Microphone=1

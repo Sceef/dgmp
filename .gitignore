@@ -12,3 +12,21 @@
 /dev/
 /data/*/
 /cache/
+# Personal and runtime state (written by the game, the editor and the server; see *.example)
+/DGMP.ini
+/editor.ini
+/quest_preview.json
+/maps/markers.jsonl
+/data/bans.json
+/data/names.json
+/data/skins.json
+/saves-baseline.json
+/coop-baseline.json
+# Editor backups, temporary files, crash dumps, local tool settings
+**/.autosave/
+*.bak
+*.tmp
+*.dmp
+.claude/
+/*.exe
+/*.pdb

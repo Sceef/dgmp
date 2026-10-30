@@ -6,20 +6,20 @@ const bridge = (() => {
   let handler = () => {};
   const sample = {
     "127.0.0.1:7777": { name: "Фарвелл Фрирум", mode: "Freeroam", players: 3, maxPlayers: 16, password: false, ping: 4, compatible: true },
-    "95.31.4.18:7777": { name: "[RU] Орда — выживание", mode: "Horde", players: 15, maxPlayers: 16, password: true, ping: 48, compatible: true },
+    "203.0.113.18:7777": { name: "[RU] Орда — выживание", mode: "Horde", players: 15, maxPlayers: 16, password: true, ping: 48, compatible: true },
   };
   const later = (m, ms = 250) => setTimeout(() => handler(m), ms);
   return {
     listen: (fn) => (handler = fn),
     send: (m) => {
       if (m.cmd === "init") later({ type: "state", nick: "Sceef", lang: storedLang(), version: "0.6.0", protocol: 1, gameFound: true, serverAvailable: true,
-        favorites: [{ address: "127.0.0.1:7777", name: "Фарвелл Фрирум" }, { address: "95.31.4.18:7777", name: "[RU] Орда — выживание" }, { address: "10.0.0.5:7777", name: "Старый сервер" }],
+        favorites: [{ address: "127.0.0.1:7777", name: "Фарвелл Фрирум" }, { address: "203.0.113.18:7777", name: "[RU] Орда — выживание" }, { address: "10.0.0.5:7777", name: "Старый сервер" }],
         recent: [{ address: "127.0.0.1:7777", name: "Фарвелл Фрирум" }], host: { name: "Мой сервер", mode: "freeroam", port: 7777, maxPlayers: 16 },
         modes: [{ id: "freeroam", name: "Freeroam", description: "Свободная езда, чат, телепорты, время и погода." }],
         addresses: [{ ip: "192.168.1.20", adapter: "Ethernet" }] }, 50);
       if (m.cmd === "query") later({ type: "query", tag: m.tag, results: m.addresses.map((a) => sample[a] ? { address: a, ...sample[a] } : { address: a, ping: -1 }) }, 400);
       if (m.cmd === "lan") later({ type: "lan", results: [{ address: "192.168.1.20:7777", ...sample["127.0.0.1:7777"] }] }, 600);
-      if (m.cmd === "internet") later({ type: "internet", results: [{ address: "95.31.4.18:7777", ...sample["95.31.4.18:7777"] }] }, 700);
+      if (m.cmd === "internet") later({ type: "internet", results: [{ address: "203.0.113.18:7777", ...sample["203.0.113.18:7777"] }] }, 700);
       if (m.cmd === "setNick") later({ type: "nickResult", ok: true, nick: m.nick }, 10);
       if (m.cmd === "connect") later({ type: "status", text: t("mock.launch"), busy: true });
     },

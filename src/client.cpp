@@ -358,6 +358,7 @@ void SavePoint(bool spawn) {
         WritePrivateProfileStringW(L"Spawn",L"Enabled",L"1",Ini().c_str());
         note=L"Spawn saved (F8 to return)";
     } else {
+        std::error_code made; fs::create_directories(fs::path(profile::Root())/L"maps",made);  // (not in the repository: the player's own)
         std::ofstream file(fs::path(profile::Root())/L"maps"/L"markers.jsonl",std::ios::app);
         file.precision(9);
         file << "{\"type\":\"marker\",\"x\":" << pos.X << ",\"y\":" << pos.Y << ",\"z\":" << pos.Z << ",\"yaw\":" << view.Yaw << "}\n";
