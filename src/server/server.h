@@ -78,6 +78,7 @@ struct Marker {
     std::string title, description;   // map tooltip
     uint16_t only = 0xFFFF;           // player id it is shown to; 0xFFFF = everyone
     double onlyJoinedAt = 0;          // identity of that player
+    int32_t world = -1;               // virtual world it is in (-1: every)
 };
 
 // A spot where players press a key to do something (enter a house, talk to a shopkeeper).
@@ -161,6 +162,7 @@ struct Loot {
     double respawn = 300;
     uint16_t itemId = 0;                             // the world item while it lies there (0: taken)
     double backAt = 0;
+    int32_t world = -1;                              // virtual world it lies in (-1: every)
 };
 
 // An icon of the mode on the big map and the radar (createBlip): the game's map icons (MAP_*).
@@ -295,6 +297,7 @@ struct WorldItem {
     float x = 0, y = 0, z = 0, yaw = 0;
     uint16_t only = 0xFFFF;           // player id it is shown to; 0xFFFF = everyone
     double onlyJoinedAt = 0;
+    int32_t world = -1;               // virtual world it lies in (-1: every)
 };
 
 struct Player {
@@ -308,6 +311,9 @@ struct Player {
     float botPhase = 0;
     double botDeadUntil = 0;                       // a shot bot lies dead until then
     bool spectating = false;
+    int32_t watching = INT32_MIN;                  // spectate(..., {world}): the virtual world it watches meanwhile (INT32_MIN: its own)
+    // The virtual world it sees: its own, or the one it watches as a spectator.
+    int32_t ViewWorld() const { return spectating && watching != INT32_MIN ? watching : world; }
     std::string skin;                              // the look the player made itself (character creator), kept by nick
     std::string uniform;                           // worn over the skin (a job's clothes); empty: the skin shows
     std::vector<std::string> offered;              // looks the open skin picker shows (empty: the full creator)
@@ -440,8 +446,9 @@ public:
     void Customize(Player* p, bool cancel, const std::string& title, const std::string& families,
                    const std::vector<const SkinChoice*>& choices = {}, bool uniform = false,
                    const Spot& place = {}, bool back = true);
-    // Spectator: the player is hidden and watches others (`only`: these players; empty: anyone).
-    void Spectate(Player* p, bool on, const std::vector<uint16_t>& only);
+    // Spectator: the player is hidden and watches others (`only`: these players; empty: anyone). `world`:
+    // it watches that virtual world meanwhile (sees its players and things, stays in its own).
+    void Spectate(Player* p, bool on, const std::vector<uint16_t>& only, int32_t world = INT32_MIN);
     void HurtBot(Player* bot, float amount, Player* attacker);  // bots have no game: the server keeps their health
     void Item(Player* p, net::ItemAction action, const std::string& key, int amount);
     void Bike(Player* p, net::BikeAction action, float x = 0, float y = 0, float z = 0, float yaw = 0);
@@ -464,10 +471,18 @@ public:
     uint16_t AddInteraction(Interaction i);
     bool RemoveInteraction(uint16_t id);
     void WatchKey(uint8_t key, bool on);
+    // Into another virtual world, with the vehicle it drives and whoever rides it (a passenger alone gets off).
     void SetWorld(Player* p, int32_t world);
+    // Virtual worlds the mode takes for a while (a race): newWorld() hands out free ones from kFirstFreeWorld
+    // up; freeWorld gives one back and sends whoever is still in it to world 0.
+    static constexpr int32_t kFirstFreeWorld = 1000;
+    int32_t NewWorld();
+    void FreeWorld(int32_t world);
     // Players that do not see, touch or hurt each other: other virtual worlds, or one of them is at the
     // skin choosing place (two choosing there would stand inside each other).
     static bool Apart(const Player& a, const Player& b) { return a.world != b.world || a.inWardrobe || b.inWardrobe; }
+    // Whether `viewer` sees `other` (its body, shots, death): as Apart, but a spectator sees the world it watches.
+    static bool Sees(const Player& viewer, const Player& other) { return viewer.ViewWorld() == other.world && !viewer.inWardrobe && !other.inWardrobe; }
     // Vehicles (docs/API.md "Vehicles").
     uint16_t AddVehicle(Vehicle v);
     bool UpdateVehicle(const Vehicle& v);  // position, owner, lock, fuel... (a driven one keeps its driver)
@@ -675,6 +690,12 @@ private:
     void UpdateZoneHud(Player* p);
     std::map<uint16_t, Marker> markers_;
     std::map<uint16_t, WorldItem> items_;
+    // Who gets a marker / mode item: its player (or everyone) in its virtual world (a spectator: the watched one).
+    static bool Shows(const Marker& m, const Player& p) { return (m.only == 0xFFFF || m.only == p.id) && (m.world < 0 || m.world == p.ViewWorld()); }
+    static bool Shows(const WorldItem& i, const Player& p) { return (i.only == 0xFFFF || i.only == p.id) && (i.world < 0 || i.world == p.ViewWorld()); }
+    // The world it sees changed (setWorld, spectating another one): its client's world, markers and items.
+    void ViewChanged(Player* p, int32_t before);
+    std::set<int32_t> worldsTaken_;                // handed out by NewWorld (until FreeWorld or a mode reload)
     std::map<uint16_t, Interaction> interactions_;
     uint16_t nextInteraction_ = 1, nextDialog_ = 1, nextItemWindow_ = 1;
     std::set<uint8_t> watchedKeys_;
@@ -692,7 +713,7 @@ private:
     void LoadLoot(const json::Value& world);
     void TickLoot();
     bool UseDoor(Player& p, uint16_t interaction);   // true: it was a door's
-    void LootTaken(uint16_t worldItem);
+    void LootTaken(const Player& p, uint16_t worldItem);
     uint16_t nextBlip_ = 1;
     void SendBlip(Player* to, const Blip& b);       // to null: every player it is for
     uint16_t nextObject_ = 1;

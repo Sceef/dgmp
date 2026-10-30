@@ -153,6 +153,7 @@ struct Api {
         if (std::strcmp(key, "lang") == 0) { lua_pushstring(L, p ? p->lang.c_str() : "en"); return 1; }
         if (std::strcmp(key, "health") == 0) { lua_pushinteger(L, p ? p->state.health : 0); return 1; }
         if (std::strcmp(key, "spectating") == 0) { lua_pushboolean(L, p && p->spectating); return 1; }
+        if (std::strcmp(key, "watching") == 0) { if (p && p->spectating && p->watching != INT32_MIN) lua_pushinteger(L, p->watching); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "world") == 0) { lua_pushinteger(L, p ? p->world : 0); return 1; }
         if (std::strcmp(key, "vehicle") == 0) { if (p && (p->vehicle || p->passengerOf)) lua_pushinteger(L, p->vehicle ? p->vehicle : p->passengerOf); else lua_pushnil(L); return 1; }
         if (std::strcmp(key, "money") == 0) { lua_pushinteger(L, p ? lua_Integer(p->money) : 0); return 1; }
@@ -413,10 +414,15 @@ struct Api {
         Srv(L).Bike(&p, net::BikeAction::Mount, x, y, z, yaw);
         return 0;
     }
-    // spectate(on [, {players or ids}])
+    // spectate(on [, {players or ids} [, {world = n}]]): world: watch that virtual world meanwhile
     static int PSpectate(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
         const bool on = lua_isnone(L, 2) || lua_toboolean(L, 2);
+        int32_t world = INT32_MIN;
+        if (lua_istable(L, 4)) {
+            if (lua_getfield(L, 4, "world") != LUA_TNIL) world = int32_t(luaL_checkinteger(L, -1));
+            lua_pop(L, 1);
+        }
         std::vector<uint16_t> only;
         if (lua_istable(L, 3)) {
             const auto n = lua_rawlen(L, 3);
@@ -427,7 +433,7 @@ struct Api {
                 lua_pop(L, 1);
             }
         }
-        Srv(L).Spectate(&p, on, only);
+        Srv(L).Spectate(&p, on, only, world);
         return 0;
     }
     // Skins (docs/API.md): player.skin / player.uniform; setSkin / setUniform take an id of the mode's
@@ -960,6 +966,9 @@ struct Api {
         return 1;
     }
     static int PSetWorld(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).SetWorld(&p, int32_t(luaL_checkinteger(L, 2))); return 0; }
+    // newWorld() -> a free virtual world (1000 and up) for a while; freeWorld(n): back, everyone in it to world 0
+    static int NewWorld(lua_State* L) { lua_pushinteger(L, Srv(L).NewWorld()); return 1; }
+    static int FreeWorld(lua_State* L) { Srv(L).FreeWorld(int32_t(luaL_checkinteger(L, 1))); return 0; }
     // ---------------------------------------------------------------- vehicles
     // Fields of createVehicle / setVehicle from the table at idx (only those present).
     static void VehicleFields(lua_State* L, int idx, Vehicle& v) {
@@ -1374,6 +1383,7 @@ struct Api {
         lua_getfield(L, 1, "player");
         if (!lua_isnil(L, -1)) m.only = CheckPlayer(L, -1).id;
         lua_pop(L, 1);
+        lua_getfield(L, 1, "world"); if (!lua_isnil(L, -1)) m.world = int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
         const uint16_t id = Srv(L).AddMarker(m);
         // onEnter / onLeave callbacks of this marker live in the registry until it is removed.
         lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.markers");
@@ -1396,6 +1406,7 @@ struct Api {
         lua_getfield(L, 1, "z"); item.z = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
         lua_getfield(L, 1, "yaw"); item.yaw = float(luaL_optnumber(L, -1, 0)); lua_pop(L, 1);
         lua_getfield(L, 1, "player"); if (!lua_isnil(L, -1)) item.only = CheckPlayer(L, -1).id; lua_pop(L, 1);
+        lua_getfield(L, 1, "world"); if (!lua_isnil(L, -1)) item.world = int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
         lua_pushinteger(L, Srv(L).AddWorldItem(item)); return 1;
     }
     // ---------------------------------------------------------------- boxes to carry
@@ -1915,7 +1926,7 @@ bool Script::Load(const std::string& modeId) {
     const luaL_Reg globals[] = {{"print", &Api::Log}, {"log", &Api::Log}, {"on", &Api::On}, {"command", &Api::Command}, {"players", &Api::Players},
                                 {"getPlayer", &Api::GetPlayer}, {"broadcast", &Api::Broadcast}, {"setTime", &Api::SetTime}, {"setWeather", &Api::SetWeather},
                                 {"hint", &Api::HintAll}, {"now", &Api::Now}, {"createInteraction", &Api::CreateInteraction}, {"createActor", &Api::CreateActor}, {"createZombie", &Api::CreateZombie}, {"removeZombie", &Api::RemoveZombie}, {"setZombieOwner", &Api::SetZombieOwner}, {"getZombie", &Api::GetZombie}, {"zombies", &Api::ZombiesList}, {"createZombieZone", &Api::CreateZombieZone}, {"setZombieZone", &Api::SetZombieZoneLua}, {"removeZombieZone", &Api::RemoveZombieZone}, {"getZombieZone", &Api::GetZombieZone}, {"zombieZones", &Api::ZombieZonesList}, {"createHorde", &Api::CreateHordeLua}, {"createTrap", &Api::CreateTrapLua}, {"removeTrap", &Api::RemoveTrapLua}, {"getTrap", &Api::GetTrapLua}, {"traps", &Api::TrapsList}, {"fireTrap", &Api::FireTrapLua}, {"explode", &Api::ExplodeLua}, {"removeHorde", &Api::RemoveHordeLua}, {"getHorde", &Api::GetHordeLua}, {"createIcon", &Api::CreateIcon}, {"setIcon", &Api::SetIcon}, {"removeIcon", &Api::RemoveIcon}, {"createVehicle", &Api::CreateVehicle}, {"driveVehicle", &Api::DriveVehicle}, {"stopVehicle", &Api::StopVehicle}, {"setVehicle", &Api::SetVehicle}, {"removeVehicle", &Api::RemoveVehicle}, {"vehicleInfo", &Api::VehicleInfo}, {"vehicles", &Api::VehiclesList}, {"getActor", &Api::GetActor}, {"worldActors", &Api::WorldActors}, {"setActor", &Api::SetActor}, {"removeActor", &Api::RemoveActor}, {"removeInteraction", &Api::RemoveInteraction}, {"bindKey", &Api::BindKey}, {"unbindKey", &Api::UnbindKey}, {"skinList", &Api::SkinList}, {"after", &Api::After}, {"every", &Api::Every}, {"cancelTimer", &Api::CancelTimer},
-                                {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256}, {"passwordHash", &Api::PasswordHashLua}, {"passwordCheck", &Api::PasswordCheckLua},
+                                {"setNametags", &Api::SetNametags}, {"worldLogic", &Api::WorldLogic}, {"setCollisions", &Api::SetCollisions}, {"objective", &Api::ObjectiveAll}, {"createMarker", &Api::CreateMarker}, {"removeMarker", &Api::RemoveMarker}, {"spawnItem", &Api::SpawnItem}, {"despawnItem", &Api::DespawnItem}, {"newWorld", &Api::NewWorld}, {"freeWorld", &Api::FreeWorld}, {"looks", &Api::Looks}, {"tip", &Api::TipAll}, {"sha256", &Api::Sha256}, {"passwordHash", &Api::PasswordHashLua}, {"passwordCheck", &Api::PasswordCheckLua},
                                 {"setPvp", &Api::SetPvp}, {"pvp", &Api::GetPvp}, {"setPvpRule", &Api::SetPvpRule}, {"canDamage", &Api::CanDamage}, {"zones", &Api::Zones}, {"getZone", &Api::GetZone},
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
@@ -2191,6 +2202,10 @@ int Script::DoorUse(Player& p, const std::string& door, const char* side) {
 void Script::AnimEnd(Player& p, const char* reason) {
     if (!L_) return;
     Api::PushPlayer(L_, p); lua_pushstring(L_, reason); Fire("animEnd", 2);
+}
+void Script::PlayerWorld(Player& p, int32_t world, int32_t old) {
+    if (!L_) return;
+    Api::PushPlayer(L_, p); lua_pushinteger(L_, world); lua_pushinteger(L_, old); Fire("playerWorld", 3);
 }
 
 void Script::VehicleExit(Player& p, uint16_t vehicle) {

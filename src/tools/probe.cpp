@@ -112,6 +112,12 @@ int main() {
         c.on.message = [](uint32_t rgba, const std::string& t) { std::printf("[#%06X] %s\n", rgba >> 8, t.c_str()); };
         c.on.setTime = [](float h, bool p) { std::printf("* time %.2f%s\n", h, p ? " (paused)" : ""); };
         c.on.setWeather = [](int w) { std::printf("* weather %d\n", w); };
+        c.on.setWorld = [](int world) { std::printf("* WORLD %d\n", world); };
+        c.on.spectate = [](bool on, const std::vector<uint16_t>& only) { std::printf("* SPECTATE %s (%zu players)\n", on ? "on" : "off", only.size()); };
+        c.on.corpse = [](uint16_t id) { std::printf("* CORPSE of %u\n", id); };
+        c.on.worldItem = [](uint16_t id, const std::string* item, int count, float x, float y, float z, float) {
+            if (!item) std::printf("* WORLD ITEM %u removed\n", id); else std::printf("* WORLD ITEM %u %s x%d at %.0f %.0f %.0f\n", id, item->c_str(), count, x, y, z);
+        };
         c.on.teleport = [&](float x, float y, float z, float yaw) { px = x; py = y; pz = z; std::printf("* teleport %.0f %.0f %.0f yaw %.0f\n", x, y, z, yaw); };
         c.on.hint = [](const std::string& t, const std::string& x, const std::string& img, bool p, float) { std::printf("* HINT [%s] %s (image=%s pause=%d)\n", t.c_str(), x.c_str(), img.c_str(), p); };
         c.on.pose = [&](uint16_t, const uint8_t*, size_t size) { if (++posesIn == 1) std::printf("* first pose received: %zu bytes\n", size); };
@@ -342,7 +348,8 @@ int main() {
                 for (auto& [key, v] : voiceIn) std::printf("  voice from %u route %d: %d frames, %zu bytes\n", key.first, key.second, v.first, v.second);
                 voiceIn.clear();
                 for (auto& [id, p] : c.players())
-                    std::printf("  - %s (id %u) at %.0f %.0f %.0f, %.1fs ago, ping %d\n", p.nick.c_str(), id, p.state.x, p.state.y, p.state.z, p.stateTime > 0 ? now - p.stateTime : -1.0, c.pingMs());
+                    std::printf("  - %s (id %u) at %.0f %.0f %.0f, %.1fs ago, ping %d%s\n", p.nick.c_str(), id, p.state.x, p.state.y, p.state.z, p.stateTime > 0 ? now - p.stateTime : -1.0, c.pingMs(),
+                                (p.state.flags & net::StateOtherWorld) ? " [other world]" : (p.state.flags & net::StateHidden) ? " [hidden]" : "");
             }
             if (seconds > 0 && now - start > seconds) done = true;
             std::fflush(stdout);

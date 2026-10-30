@@ -238,7 +238,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
             if (p->carrying) LoseCarry(*p, p->state.x, p->state.y, p->state.z - 90.f, p->state.yaw, "death");
             // Everyone else leaves a body where they see the player (the player leaves its own).
             net::Writer w; w.Op(net::Msg::Corpse); w.U16(p->id);
-            for (auto& [id, other] : players_) if (other.get() != p && other->ready && other->peer) SendTo(other->peer, w, true);
+            for (auto& [id, other] : players_) if (other.get() != p && other->ready && other->peer && Sees(*other, *p)) SendTo(other->peer, w, true);
             // Killed by a player: the last one who hurt it in the 15 seconds before.
             Player* killer = p->lastHitAt > 0 && now - p->lastHitAt < 15 ? Find(p->lastAttacker) : nullptr;
             p->lastAttacker = 0xFFFF; p->lastHitAt = 0;
@@ -257,7 +257,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         }
         if (e.type == uint8_t(net::GameEventType::Pickup)) PickedUp(*p, e);
         script_->GameEvent(*p, e);
-        if (e.type == uint8_t(net::GameEventType::Pickup) && StartsWith(e.id, "dgmp_item_")) LootTaken(static_cast<uint16_t>(std::atoi(e.id.c_str() + 10)));
+        if (e.type == uint8_t(net::GameEventType::Pickup) && StartsWith(e.id, "dgmp_item_")) LootTaken(*p, static_cast<uint16_t>(std::atoi(e.id.c_str() + 10)));
         break;
     }
     case net::Msg::DialogResponse: {
@@ -397,7 +397,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         if (++p->shotCount > 20) break;
         net::Writer w; w.Op(net::Msg::PlayerShot); w.U16(p->id); w.Str(cls); w.F32(x); w.F32(y); w.F32(z);
         for (auto& [id, other] : players_) {
-            if (other.get() == p || !other->ready || !other->peer || Apart(*other, *p)) continue;
+            if (other.get() == p || !other->ready || !other->peer || !Sees(*other, *p)) continue;
             const float dx = other->state.x - x, dy = other->state.y - y, dz = other->state.z - z;
             if (dx * dx + dy * dy + dz * dz <= 30000.f * 30000.f) enet_peer_send(other->peer, net::kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
         }
@@ -667,8 +667,8 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     }
     { net::Writer t; t.Op(net::Msg::Settings); t.U8(static_cast<uint8_t>(cfg_.nametags)); t.U8(cfg_.collisions); SendTo(peer, t, true); }
     SendVoiceSetup(*p);
-    for (auto& [mid, m] : markers_) if (m.only == 0xFFFF) SendMarker(peer, m);
-    for (auto& [iid, item] : items_) if (item.only == 0xFFFF) SendWorldItem(peer, item);
+    for (auto& [mid, m] : markers_) if (m.only == 0xFFFF && Shows(m, *p)) SendMarker(peer, m);
+    for (auto& [iid, item] : items_) if (item.only == 0xFFFF && Shows(item, *p)) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
     for (auto& [aid, a] : actors_) SendActor(peer, a);
     for (auto& [zid, z] : zombies_) SendZombie(p, z);
@@ -735,7 +735,7 @@ void Server::BroadcastStates() {
         for (auto& [oid, p] : players_) {
             if (p.get() == target.get() || !p->ready) continue;
             net::PlayerState s = p->state;
-            if (Apart(*p, *target)) s.flags |= net::StateHidden | net::StateOtherWorld;
+            if (!Sees(*target, *p)) s.flags |= net::StateHidden | net::StateOtherWorld;
             w.U16(p->id); w.State(s); ++count;
         }
         if (!count) continue;
@@ -756,7 +756,7 @@ void Server::RelayPose(Player& from, const uint8_t* payload, size_t size) {
     net::Writer w; w.Op(net::Msg::PlayerPose); w.U16(from.id); w.Raw(payload, size);
     constexpr float range2 = net::kPoseRelayRange * net::kPoseRelayRange;
     for (auto& [id, p] : players_) {
-        if (p.get() == &from || !p->ready || !p->peer || Apart(*p, from)) continue;
+        if (p.get() == &from || !p->ready || !p->peer || !Sees(*p, from)) continue;
         const float dx = p->state.x - from.state.x, dy = p->state.y - from.state.y, dz = p->state.z - from.state.z;
         if (dx * dx + dy * dy + dz * dz > range2) continue;
         enet_peer_send(p->peer, net::kChanPose, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT));
@@ -771,8 +771,13 @@ void Server::SendMarker(ENetPeer* peer, const Marker& m) {
 uint16_t Server::AddMarker(Marker m) {
     if (!m.id) { while (markers_.count(nextMarker_) || !nextMarker_) ++nextMarker_; m.id = nextMarker_++; }
     if (m.only != 0xFFFF) if (auto p = Find(m.only)) m.onlyJoinedAt = p->joinedAt;
+    // Changed: whoever saw it and no longer does (another world now) drops it.
+    if (auto old = markers_.find(m.id); old != markers_.end()) {
+        net::Writer r; r.Op(net::Msg::Marker); r.U16(m.id); r.U8(2);
+        for (auto& [id, p] : players_) if (p->ready && p->peer && Shows(old->second, *p) && !Shows(m, *p)) SendTo(p->peer, r, true);
+    }
     markers_[m.id] = m;
-    for (auto& [id, p] : players_) if (p->ready && p->peer && (m.only == 0xFFFF || m.only == id)) SendMarker(p->peer, m);
+    for (auto& [id, p] : players_) if (p->ready && p->peer && Shows(m, *p)) SendMarker(p->peer, m);
     return m.id;
 }
 bool Server::RemoveMarker(uint16_t id) {
@@ -854,7 +859,7 @@ uint16_t Server::AddWorldItem(WorldItem item) {
     item.id = nextItem_++;
     if (item.only != 0xFFFF) if (auto p = Find(item.only)) item.onlyJoinedAt = p->joinedAt;
     items_[item.id] = item;
-    for (auto& [id, p] : players_) if (p->ready && p->peer && (item.only == 0xFFFF || item.only == id)) SendWorldItem(p->peer, item);
+    for (auto& [id, p] : players_) if (p->ready && p->peer && Shows(item, *p)) SendWorldItem(p->peer, item);
     return item.id;
 }
 bool Server::RemoveWorldItem(uint16_t id) {
@@ -877,7 +882,7 @@ void Server::TickMarkers() {
         for (auto p : Players()) {
             if (m.only != 0xFFFF && p->id != m.only) continue;
             const float dx = p->state.x - m.x, dy = p->state.y - m.y, dz = p->state.z - m.z;
-            const bool inside = dx * dx + dy * dy + dz * dz <= m.radius * m.radius;
+            const bool inside = (m.world < 0 || m.world == p->world) && dx * dx + dy * dy + dz * dz <= m.radius * m.radius;  // another world: out
             auto& list = p->insideMarkers;
             const bool was = std::find(list.begin(), list.end(), mid) != list.end();
             if (inside == was) continue;
@@ -1053,9 +1058,12 @@ void Server::TickBots(float dt) {
 }
 
 // ---------------- API ----------------
-void Server::Spectate(Player* p, bool on, const std::vector<uint16_t>& only) {
+void Server::Spectate(Player* p, bool on, const std::vector<uint16_t>& only, int32_t world) {
     if (!p || p->bot) return;
+    const int32_t before = p->ViewWorld();
     p->spectating = on;
+    p->watching = on ? world : INT32_MIN;
+    if (p->ViewWorld() != before) ViewChanged(p, before);  // the watched world's players and things first
     net::Writer w; w.Op(net::Msg::Spectate); w.U8(on); w.U8(uint8_t(std::min<size_t>(only.size(), 255)));
     for (size_t i = 0; i < only.size() && i < 255; ++i) w.U16(only[i]);
     Send(p, w, true);
@@ -1465,9 +1473,62 @@ bool Server::RemoveIcon(uint16_t id) {
 }
 void Server::SetWorld(Player* p, int32_t world) {
     if (!p || p->world == world) return;
+    const int32_t old = p->world, before = p->ViewWorld();
     p->world = world;
-    if (p->bot) return;
-    net::Writer w; w.Op(net::Msg::SetWorld); w.I32(world); Send(p, w, true);
+    // The vehicle it drives comes along, and whoever rides behind; a passenger alone gets off.
+    if (Vehicle* v = p->vehicle ? FindVehicle(p->vehicle) : nullptr; v && v->driver == p->id) {
+        if (v->world != world) { v->world = world; SendVehicle(nullptr, *v); }
+        if (Player* q = Find(v->passenger)) SetWorld(q, world);
+    } else if (Vehicle* ride = p->passengerOf ? FindVehicle(p->passengerOf) : nullptr; ride && ride->world != world) {
+        EjectFromVehicle(p);
+    }
+    // So does a box in its hands (one that lies in every world stays so).
+    if (const Carry* c = p->carrying ? FindCarry(p->carrying) : nullptr; c && c->world >= 0 && c->world != world) {
+        Carry n = *c; n.world = world; UpdateCarry(n);
+    }
+    ViewChanged(p, before);
+    script_->PlayerWorld(*p, world, old);
+}
+void Server::ViewChanged(Player* p, int32_t before) {
+    if (!p || p->bot || !p->peer) return;
+    const int32_t now = p->ViewWorld();
+    net::Writer w; w.Op(net::Msg::SetWorld); w.I32(now); Send(p, w, true);
+    if (now == before) return;
+    // Markers and mode items of one world only: the old world's go, the new one's come.
+    for (auto& [mid, m] : markers_) {
+        if (m.world < 0 || (m.only != 0xFFFF && m.only != p->id)) continue;
+        if (m.world == now) SendMarker(p->peer, m);
+        else if (m.world == before) { net::Writer r; r.Op(net::Msg::Marker); r.U16(mid); r.U8(2); Send(p, r, true); }
+    }
+    for (auto& [iid, item] : items_) {
+        if (item.world < 0 || (item.only != 0xFFFF && item.only != p->id)) continue;
+        if (item.world == now) {
+            const auto took = itemTakers_.find(iid);
+            if (took == itemTakers_.end() || !took->second.count(p->id)) SendWorldItem(p->peer, item);  // not one it took already
+        } else if (item.world == before) { net::Writer r; r.Op(net::Msg::WorldItem); r.U16(iid); r.U8(2); Send(p, r, true); }
+    }
+}
+int32_t Server::NewWorld() {
+    for (int32_t w = kFirstFreeWorld;; ++w) {
+        if (worldsTaken_.count(w)) continue;
+        bool used = false;
+        for (auto& [id, p] : players_) used = used || p->world == w;
+        if (used) continue;
+        worldsTaken_.insert(w);
+        return w;
+    }
+}
+void Server::FreeWorld(int32_t world) {
+    worldsTaken_.erase(world);
+    if (world == 0) return;
+    // Nobody is left behind in it (the number goes to whoever asks next); its watchers see their own again.
+    std::vector<uint16_t> in, watching;
+    for (auto& [id, p] : players_) {
+        if (p->world == world) in.push_back(id);
+        else if (p->spectating && p->watching == world) watching.push_back(id);
+    }
+    for (auto id : in) if (Player* p = Find(id)) SetWorld(p, 0);
+    for (auto id : watching) if (Player* p = Find(id); p && p->watching == world) { const int32_t before = p->ViewWorld(); p->watching = INT32_MIN; ViewChanged(p, before); }
 }
 void Server::SendActor(ENetPeer* peer, const Actor& a) {
     net::Writer w; w.Op(net::Msg::Actor); w.U16(a.id); w.U8(1);
@@ -1722,7 +1783,7 @@ void Server::HurtBot(Player* bot, float amount, Player* attacker) {
     bot->state.health = 0;
     bot->botDeadUntil = Now() + 4;
     net::Writer w; w.Op(net::Msg::Corpse); w.U16(bot->id);
-    for (auto& [id, other] : players_) if (other->ready && other->peer) SendTo(other->peer, w, true);
+    for (auto& [id, other] : players_) if (other->ready && other->peer && Sees(*other, *bot)) SendTo(other->peer, w, true);
     bot->inventoryAtDeath.clear();
     script_->PlayerDeath(*bot, attacker);
     Log("%s was killed by %s", bot->nick.c_str(), attacker ? attacker->nick.c_str() : "?");
@@ -1732,7 +1793,7 @@ void Server::PlaySound(Player* to, const std::string& path, const float* at, flo
     w.F32(at ? at[0] : 0); w.F32(at ? at[1] : 0); w.F32(at ? at[2] : 0); w.F32(volume); w.F32(pitch);
     for (auto& [id, p] : players_) {
         if (!p->ready || !p->peer || (to && p.get() != to)) continue;
-        if (world >= 0 && p->world != world) continue;
+        if (world >= 0 && p->ViewWorld() != world) continue;
         if (at && range > 0) {
             const float dx = p->state.x - at[0], dy = p->state.y - at[1], dz = p->state.z - at[2];
             if (dx * dx + dy * dy + dz * dz > range * range) continue;
@@ -1893,7 +1954,8 @@ void Server::PickedUp(Player& p, const GameEvent& e) {
     if (StartsWith(e.id, "dgmp_item_")) {
         const auto id = static_cast<uint16_t>(std::atoi(e.id.c_str() + 10));
         auto it = items_.find(id);
-        if (it != items_.end() && Lower(it->second.key) == k && within(it->second.x, it->second.y, it->second.z, 10) && itemTakers_[id].insert(p.id).second) {
+        if (it != items_.end() && Lower(it->second.key) == k && (it->second.world < 0 || it->second.world == p.world) &&
+            within(it->second.x, it->second.y, it->second.z, 10) && itemTakers_[id].insert(p.id).second) {
             p.granted[k] += std::max(1, it->second.count); p.itemGrace[k] = now + 6;
         }
         return;
@@ -2142,15 +2204,17 @@ void Server::LoadLoot(const json::Value& world) {
         l.count = std::max(1, e["count"].asInt(1));
         l.x = float(e["x"].asNumber()); l.y = float(e["y"].asNumber()); l.z = float(e["z"].asNumber()); l.yaw = float(e["yaw"].asNumber());
         l.respawn = std::max(0.0, e["respawn"].asNumber(300));
+        l.world = e["world"].isNumber() ? int32_t(e["world"].asNumber()) : -1;
         if (l.item.empty()) continue;
-        WorldItem w; w.key = l.item; w.count = l.count; w.x = l.x; w.y = l.y; w.z = l.z; w.yaw = l.yaw;
+        WorldItem w; w.key = l.item; w.count = l.count; w.x = l.x; w.y = l.y; w.z = l.z; w.yaw = l.yaw; w.world = l.world;
         l.itemId = AddWorldItem(w);
         loot_.push_back(l);
     }
     if (!loot_.empty()) Log("Mode loot: %zu", loot_.size());
 }
-void Server::LootTaken(uint16_t worldItem) {
+void Server::LootTaken(const Player& p, uint16_t worldItem) {
     for (auto& l : loot_) if (l.itemId == worldItem) {
+        if (l.world >= 0 && l.world != p.world) return;  // not there in its world
         RemoveWorldItem(worldItem);
         l.itemId = 0; l.backAt = l.respawn > 0 ? Now() + l.respawn : 0;  // 0: once only
         return;
@@ -2160,7 +2224,7 @@ void Server::TickLoot() {
     const double now = Now();
     for (auto& l : loot_) {
         if (l.itemId || !l.backAt || now < l.backAt) continue;
-        WorldItem w; w.key = l.item; w.count = l.count; w.x = l.x; w.y = l.y; w.z = l.z; w.yaw = l.yaw;
+        WorldItem w; w.key = l.item; w.count = l.count; w.x = l.x; w.y = l.y; w.z = l.z; w.yaw = l.yaw; w.world = l.world;
         l.itemId = AddWorldItem(w); l.backAt = 0;
     }
 }
@@ -2349,7 +2413,12 @@ bool Server::ReloadMode() {
     ids.clear();
     for (auto& [id, a] : actors_) ids.push_back(id);
     for (auto id : ids) RemoveActor(id);
-    for (auto& [id, p] : players_) SetWorld(p.get(), 0);
+    worldsTaken_.clear();
+    for (auto& [id, p] : players_) {
+        const int32_t before = p->ViewWorld();
+        p->watching = INT32_MIN;
+        if (p->world != 0) SetWorld(p.get(), 0); else if (before != 0) ViewChanged(p.get(), before);
+    }
     ids.clear();
     for (auto& [id, v] : vehicles_) ids.push_back(id);
     for (auto id : ids) RemoveVehicle(id);

@@ -68,6 +68,7 @@ public:
     // A player (or zombie) set a trap off: its onTrigger and the "trap" handlers; false: one of them said no.
     bool TrapTriggered(uint16_t trap, Player* player, uint16_t zombie);
     void AnimEnd(Player& p, const char* reason);
+    void PlayerWorld(Player& p, int32_t world, int32_t old);  // playerWorld: it went into another virtual world
     // [F] at a door of the mode: 0 no say (its lock decides), 1 refused, 2 allowed even when locked.
     int DoorUse(Player& p, const std::string& door, const char* side);
     void PlayerShot(Player& p, const std::string& weaponClass, float x, float y, float z);  // playerShot (at most twice a second per player)  // the animation of playAnim is over: "done", "moved"
