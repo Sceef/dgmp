@@ -1453,6 +1453,18 @@ void HideLocalBody(UObject* pawn, bool hidden) {
         for (int i = 0; i < arr.num && arr.data; ++i) if (IsValid(arr.data[i])) SetHidden(arr.data[i], hidden);
     }
 }
+// Hides again only what shows (a weapon it drew): the player's pawn counts its hides, every hide needs
+// its own unhide, so hiding the hidden again would leave it invisible after HideLocalBody(false).
+void KeepLocalBodyHidden(UObject* pawn) {
+    if (!IsValid(pawn)) return;
+    if (!GetBoolProp(pawn, "bHidden")) SetHidden(pawn, true);
+    if (auto f = Fn(pawn, "GetAttachedActors")) {
+        Params p(f); Call(pawn, "GetAttachedActors", &p);
+        struct Arr { UObject** data; int32_t num, max; };
+        const auto arr = p.Get<Arr>("OutActors");
+        for (int i = 0; i < arr.num && arr.data; ++i) if (IsValid(arr.data[i]) && !GetBoolProp(arr.data[i], "bHidden")) SetHidden(arr.data[i], true);
+    }
+}
 
 void UpdateMarkers(double now, const FVector& player) {
     static double nextShow = 0;
@@ -1977,7 +1989,7 @@ void UpdateSpectator(UObject* pawn) {
     // A weapon it drew, the game showing the body again: hidden again. It hangs under the ground: it must
     // not start walking (it fell and died there).
     static double nextHide = 0;
-    if (const double t = GetTickCount64() / 1000.0; t >= nextHide) { nextHide = t + 0.5; HideLocalBody(pawn, true); SetMovementNone(pawn, true); }
+    if (const double t = GetTickCount64() / 1000.0; t >= nextHide) { nextHide = t + 0.5; KeepLocalBodyHidden(pawn); SetMovementNone(pawn, true); }
     // The hidden body waits under the watched player: the world around it streams in.
     if (auto f = Fn(pawn, "K2_SetActorLocation")) { Params p(f); p.Set("NewLocation", FVector{spec.point.X, spec.point.Y, spec.point.Z - 400.f}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true); Call(pawn, "K2_SetActorLocation", &p); }
 }
