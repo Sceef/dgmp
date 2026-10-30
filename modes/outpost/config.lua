@@ -5,7 +5,7 @@ return {
     startMoney = 450, maxMoney = 10000000, bagWeight = 30,
     paydaySeconds = 900, payday = 60, needsSeconds = 180,
     jobSeconds = 12, jobCooldown = 90, missionSeconds = 1200,
-    bikePrice = 350, treatmentPrice = 35, respawnFee = 50,
+    bikePrice = 350, treatmentPrice = 35, respawnFee = 50, tutorialAllowance = 80,
     -- Fallback matches the reviewed Iron Mike layout; editor world.json takes precedence.
     points = {
         spawn = { x = -4825.37744, y = -89710.0703, z = -1944.09045, yaw = -50.0427628 },
@@ -28,7 +28,10 @@ return {
         scrap = { name = L("Детали","Parts"), weight = 1, price = 20, stock = "parts" },
         fuel = { name = L("Канистра","Fuel can"), weight = 5, price = 40, stock = "fuel" },
         radio = { name = L("Рация","Radio"), weight = 1, price = 80, stock = "parts" },
+        -- Quest item: from an expedition, for the clinic (not sold, given away or traded).
+        nero_meds = { name = L("Медикаменты NERO","NERO medical supplies"), weight = 2, price = 0, stock = "medicine", quest = true },
     },
+    questItems = { "nero_meds" },
     itemOrder = { "food", "water", "medkit", "scrap", "fuel", "radio" },
     roles = {
         resident = { name = L("Житель","Resident"), uniform = false },

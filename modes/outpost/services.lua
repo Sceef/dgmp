@@ -73,6 +73,7 @@ function S.armory(p)
         R.commit("weapon",q,it.key)
         q:giveWeapon(it.key,it.ammo,{replace=true})
         R.msg(q,L("Выдано: ","Received: ")..it.name)
+        require("jobs").tutorialAdvance(q,"pistol","expedition")
     end,"shop")
 end
 local function nearbyBike(p)
@@ -114,7 +115,9 @@ function S.bag(p,stash)
     local a=R.acc(p)
     local function pane(bag,id,title)
         local items={}
-        for _,key in ipairs(C.itemOrder) do
+        local keys={}; for _,key in ipairs(C.itemOrder) do keys[#keys+1]=key end
+        for _,key in ipairs(C.questItems or {}) do keys[#keys+1]=key end
+        for _,key in ipairs(keys) do
             if (bag[key] or 0)>0 then
                 items[#items+1]={id=key,name=C.items[key].name,count=bag[key],text=C.items[key].weight..L(" кг/шт."," kg each"),
                     actions=id=="bag" and {{id="use",label=L("Использовать","Use")}} or {}}
@@ -140,7 +143,11 @@ function S.bag(p,stash)
     end)
 end
 function S.clinic(p)
-    R.menu(p,L("Медпункт","Clinic"),{L("Лечение · $","Treatment · $")..C.treatmentPrice,L("Отправить вызов медика","Call a medic")},function(q,i)
+    local jobs=require("jobs")
+    local rows={L("Лечение · $","Treatment · $")..C.treatmentPrice,L("Отправить вызов медика","Call a medic")}
+    if jobs.hasMeds(p) then rows[3]=L("Отдать медикаменты NERO","Hand over the NERO medical supplies") end
+    R.menu(p,L("Медпункт","Clinic"),rows,function(q,i)
+        if i==3 then return jobs.deliverMeds(q) end
         if i==2 then return S.call(q,"medic") end
         local a,c=R.acc(q),R.state.camp
         if q.health>=95 then return R.msg(q,L("Лечение не требуется.","No treatment needed.")) end
@@ -217,6 +224,7 @@ function S.garage(p)
             a.money=a.money-C.bikePrice; R.state.camp.treasury=R.state.camp.treasury+C.bikePrice
             a.bike=bike; R.commit("buyBike",q)
             R.msg(q,L("Мотоцикл куплен и выдан. Повторно получать его не нужно.","Motorcycle purchased and issued. You do not need to collect it again."))
+            require("jobs").tutorialAdvance(q,"bike","pistol")
         elseif act=="collect" then
             if id and vehicleInfo(id) then q:markVehicle(id); return R.msg(q,L("Мотоцикл уже выдан и отмечен на карте.","Your motorcycle is already out and marked on the map.")) end
             issueBike(q,a.bike)
@@ -251,7 +259,7 @@ end)
 local LOADOUT_SETTLE=5
 local function keepLoadout(p)
     local s,a=R.session(p),R.acc(p); local inv=p:inventory()
-    if not a or not inv or not next(inv) or now()-(s.joined or 0)<LOADOUT_SETTLE or p.world~=0 then return false end  -- (a duel's weapons are not its own)
+    if not a or not inv or not next(inv) or now()-(s.joined or 0)<LOADOUT_SETTLE or require("instance").of(p) then return false end  -- (a duel's weapons are not its own)
     local copy={}; for key,n in pairs(inv) do if n>0 then copy[key]=n end end
     a.loadout=copy
     return true
@@ -357,7 +365,7 @@ end)
 R.command("donate",function(p,_,id)
     if not R.at(p,"warehouse") then return end
     local it=C.items[id]
-    if not it or id=="radio" then return R.msg(p,L("/donate food|water|medkit|scrap|fuel — 1 шт.","/donate food|water|medkit|scrap|fuel — 1 item"),false) end
+    if not it or id=="radio" or it.quest then return R.msg(p,L("/donate food|water|medkit|scrap|fuel — 1 шт.","/donate food|water|medkit|scrap|fuel — 1 item"),false) end
     local a=R.acc(p); local ok,err=D.take(a.bag,id,1)
     if not ok then return R.msg(p,err,false) end
     R.state.camp[it.stock]=R.state.camp[it.stock]+1

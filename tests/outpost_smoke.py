@@ -191,19 +191,28 @@ try:
     client.wait("Мотоцикл выдан на месте выдачи",start)
     check("motorcycle parking and free reissue work on native transport")
     move("office")
-    command("/mission join", "Возьмите оружие")
     start=len(client.lines)
+    command("/mission join", "Возьмите оружие")
     move("expedition")
-    # Four freakers guard the NERO site; the search starts once they are dead.
+    # The run's own world at the site; four freakers guard it, then a crate of medical supplies is there.
+    client.wait(r"WORLD (\d{4,})",start)
     client.wait("уничтожьте фриков у точки: 0/4",start)
     raiders=sorted({m[1] for line in client.lines[start:] for m in [re.search(r"zombie (\d+) Swarmer at",line)] if m})
     assert len(raiders)==4, raiders
     for z in raiders: client.send("!zdie "+z)
     client.wait("район зачищен",start)
-    client.wait("Медикаменты найдены", timeout=18)
-    move("warehouse")
+    crate=client.wait(r"INTERACTION (\d+) .*Забрать медикаменты NERO",start)
+    if "expedition_meds" in POINTS:  # the crate stands on its own editor point
+        client.send("!at " + xyz("expedition_meds")); time.sleep(.6)
+    client.send("!use "+crate[1])
+    client.wait("Медикаменты NERO в рюкзаке",start)
+    check("expedition in its own world: freakers, then the medical supplies as a quest item")
+    move("clinic")
+    client.wait(r"WORLD 0",start)
+    clinic=client.wait(r"INTERACTION (\d+) .*Медпункт")
+    dialog("!use "+clinic[1], "Медпункт", 2)
     client.wait("Экспедиция: медикаменты доставлены")
-    check("expedition search, return and reward")
+    check("expedition delivery at the clinic and reward")
     command("/director evac", "Эвакуация у района")
     command("/director clear", "Съёмочные объекты убраны")
     check("staged helicopter creation and cleanup")
@@ -234,9 +243,9 @@ try:
     state = json.loads((RUN / "data/outpost/storage.json").read_text(encoding="utf-8"))["outpost:v1"]
     account = state["accounts"]["guest:outpostqa"]
     assert account["bank"] == 100 and account["rep"] == 42 and account["bike"]
-    assert account["money"] == 1280, account["money"]
+    assert account["money"] == 1360, account["money"]
     assert "m_host_eric" in account["skin"]
-    # 1500 kit - 100 deposit + 65 delivery - 15 ration - 350 bike + 180 expedition.
+    # 1500 kit - 100 deposit + 65 delivery + 80 tutorial allowance - 15 ration - 350 bike + 180 expedition.
     check("disk snapshot preserves exact economy")
     check("appearance is persisted in the server character account")
     logs = (RUN / "logs/server.log").read_text(encoding="utf-8", errors="replace")

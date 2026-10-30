@@ -40,7 +40,10 @@ function R.msg(p, text, good) R.message(p,text, good == false and "#E07070" or "
 function R.session(p) return R.sessions[p.id] end
 function R.acc(p) local s = R.session(p); return s and s.account end
 function R.ready(p)
-    return p and p.valid and not p.bot and R.session(p) and not R.session(p).dead and p.world == 0
+    local s = p and p.valid and not p.bot and R.session(p)
+    if not s or s.dead then return false end
+    -- The shared world, or the world of its own job site (salvage, expedition: jobs.lua).
+    return p.world == 0 or (s.job and s.job.run and s.job.run.world == p.world) or false
 end
 function R.distance(p, point)
     local x, y, z = p:position()
@@ -113,7 +116,7 @@ end
 function R.mark(p, name, title)
     local s, point = R.session(p), R.points[name]
     if s.marker then removeMarker(s.marker); s.marker = nil end
-    if point then s.marker = createMarker({ x=point.x, y=point.y, z=point.z, world=0, player=p,
+    if point then s.marker = createMarker({ x=point.x, y=point.y, z=point.z, player=p,  -- (every world: job sites have their own)
         title=L.resolve(title or name,p), radius=5, track=false, route=true, category="task", style="basic" }) end
 end
 function R.task(p, text, point)
@@ -163,16 +166,17 @@ on("playerQuit", function(p)
     end
     R.cleanup(p, "quit"); R.sessions[p.id] = nil; R.commit()
 end)
--- Inside an instance (a duel: another virtual world) a death costs nothing: the instance handles it.
+-- Inside an instance (a duel) a death costs nothing: the instance handles it. (A job site's world is not one.)
+local instance = require("instance")
 on("playerDeath", function(p)
-    local s = R.session(p); if not s or p.world ~= 0 then return end
+    local s = R.session(p); if not s or instance.of(p) then return end
     s.dead = true; s.account.pos = nil; s.menu = (s.menu or 0) + 1
     s.duty = false; s.taskText = nil
     p:setVoiceMuted(true); p:setUniform(nil)
     R.cleanup(p, "death"); R.commit()
 end)
 on("playerRespawn", function(p)
-    local s = R.session(p); if not s or p.world ~= 0 then return end
+    local s = R.session(p); if not s or instance.of(p) then return end
     local a, pt = s.account, R.points.revive
     local fee = math.min(a.money, C.respawnFee)
     a.money = a.money - fee; R.state.camp.treasury = R.state.camp.treasury + fee

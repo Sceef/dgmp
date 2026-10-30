@@ -129,7 +129,9 @@ void Update(net::Client& client, bool canOpen) {
     const double now = Clock();
     self = client.localId();
     // Tab: open / close (the overlay takes it from the game while connected).
-    const bool tab = overlay::TakeTabPress();
+    bool tab = overlay::TakeTabPress();
+    // Tab with the voice settings open closes them (they were opened from the panel or with /voice).
+    if (tab && voice::SettingsOpen()) { voice::CloseSettings(); tab = false; }
     bool isOpen, voiceAsked, edited;
     {
         std::lock_guard g(lock);

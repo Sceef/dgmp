@@ -351,6 +351,8 @@ bool Talking(uint16_t id) {
 }
 
 void OpenSettings() { wantOpen = true; }
+bool SettingsOpen() { std::lock_guard g(panelLock); return panel.open || wantOpen; }
+void CloseSettings() { wantOpen = false; std::lock_guard g(panelLock); panel.open = false; panel.test = false; panel.rebinding = 0; }
 
 void Update(net::Client& client, bool canTalk, const FVector& camPos, const FRotator& camRot) {
     LoadSettings();
@@ -507,7 +509,8 @@ void DrawWindow() {
     Panel& w = panel;
     Settings& e = w.edit;
     const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    // At the right edge: the players panel (Tab) stays visible beside it.
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 24, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(1.f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Always);
     bool keep = true;
     ImGui::Begin(lang::Pick("Голосовой чат###dgmpvoice", "Voice chat###dgmpvoice"), &keep, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);

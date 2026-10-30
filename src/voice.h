@@ -23,6 +23,8 @@ void DrawHud();             // render thread (overlay HUD layer): the microphone
 // The settings window (chat command /voice, handled here, never sent): microphone and voices volume, a
 // microphone test (hear yourself, level meter), keys, always-on microphone. Saved to DGMP.ini [Voice].
 void OpenSettings();        // game thread
+bool SettingsOpen();        // the window is open (Tab closes it)
+void CloseSettings();
 void DrawWindow();          // render thread (overlay windows)
 void Reset();               // the connection is gone: silence, no recording
 
