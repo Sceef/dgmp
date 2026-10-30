@@ -603,6 +603,35 @@ void HideMapControls() {
     }
     state.hiddenControls=count;
 }
+// The map menu's "days gone" corner (DaysGonePanel: NumDaysGone, DaysText over GoneText) shows the
+// server instead in multiplayer: the number of players, the server's name and the mode. The menu's
+// own SetNumDaysGone rewrites it on every open, so ours goes back whenever its text is not ours.
+struct Banner { std::wstring number,top,bottom; } banner;
+bool bannerOn=false;
+std::map<UObject*,const void*> bannerTexts;  // text widget -> the FTextData we gave it
+void BannerText(UObject* widget,const std::wstring& value) {
+    if(!IsValid(widget)) return;
+    auto it=bannerTexts.find(widget);
+    const void* now=Read<const void*>(widget,"Text");
+    if(it!=bannerTexts.end() && it->second==now && now) return;
+    auto library=FindObject("/Script/Engine.Default__KismetTextLibrary");
+    auto conv=library?Fn(library,"Conv_StringToText"):nullptr; auto set=Fn(widget,"SetText");
+    if(!conv || !set) return;
+    const int32_t len=int32_t(value.size()+1);
+    Params c(conv); if(!c.Set("InString",FString{value.c_str(),len,len})) return;
+    Call(library,"Conv_StringToText",&c);
+    // The parameter frames are never destructed: the text's reference moves into the widget.
+    Params p(set); if(!p.Set("InText",c.Get<TextValue>("ReturnValue"))) return;
+    Call(widget,"SetText",&p);
+    bannerTexts[widget]=Read<const void*>(widget,"Text");
+}
+void UpdateMenuBanner() {
+    if(!bannerOn || !IsValid(mapWidget)) return;
+    for(auto it=bannerTexts.begin();it!=bannerTexts.end();) it=IsValid(it->first)?std::next(it):bannerTexts.erase(it);
+    BannerText(Read<UObject*>(mapWidget,"NumDaysGone"),banner.number);
+    BannerText(Read<UObject*>(mapWidget,"DaysText"),banner.top);
+    BannerText(Read<UObject*>(mapWidget,"GoneText"),banner.bottom);
+}
 void ApplyMenuPolicy() {
     if(!IsValid(menu)) return;
     if(state.mapEnum<0) state.mapEnum=ResolveMapEnum();
@@ -1052,6 +1081,10 @@ bool ShowNativeHint(UObject* controller,const std::wstring& title,const std::wst
     return true;
 }
 void SetRouteOwned(bool owned) { routeOwned=owned; }
+void SetMenuBanner(const std::wstring& number,const std::wstring& top,const std::wstring& bottom) {
+    bannerOn=!(number.empty() && top.empty() && bottom.empty());
+    if(banner.number!=number || banner.top!=top || banner.bottom!=bottom) { banner={number,top,bottom}; bannerTexts.clear(); }
+}
 void SetQuestHud(bool active) { questHud=active; }
 void SetObserver(void(*fn)(UObject*,const std::string&)) { observer=fn; }
 void SetCarryInputBlock(bool on) { carryInputBlock=on; }
@@ -1254,6 +1287,7 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
     }
     DismissTutorials(controller);
     UpdatePauseMenu(controller,gameMode);
+    UpdateMenuBanner();
     if(IsValid(menu)) state.menuActive=BoolCall(menu,"IsMenuActive") || GetBoolProp(menu,"bInExitTransition");
     // Opening the 3D menu from our post-tick command queue pauses the world before
     // its camera gets a native update. Keep both the opening and closing transition

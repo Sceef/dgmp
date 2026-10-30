@@ -2512,6 +2512,10 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
     if (now >= nextStatus) {
         nextStatus = now + 0.5;
         hud::SetStatus(W(serverName) + L"  ·  " + std::to_wstring(ghosts.size() + 1) + lang::Pick(L" игр.  ·  ",L" players  ·  ") + std::to_wstring(client.pingMs()) + lang::Pick(L" мс",L" ms"));
+        // The map menu's "days gone" corner: players here, the server and its mode.
+        std::wstring title = W(serverName);
+        if (title.size() > 40) title = title.substr(0, 39) + L"…";
+        policy::SetMenuBanner(std::to_wstring(ghosts.size() + 1), title, lang::Pick(L"игроков · ", L"players · ") + W(modeName));
     }
 }
 

@@ -35,6 +35,8 @@ void RadarOnly(ue::UObject* component,bool radarOnly);
 // While true the game's mission waypoint and its road route belong to a server marker: the story
 // suppression stops hiding them.
 void SetRouteOwned(bool owned);
+// Multiplayer: the map menu's "days gone" corner shows these instead (all empty: the game's own).
+void SetMenuBanner(const std::wstring& number,const std::wstring& top,const std::wstring& bottom);
 // While a server quest is shown, the objective HUD (panel, popups, meter) is not hidden or blocked.
 void SetQuestHud(bool active);
 // The completion/reward screens of a server quest pause the game and expect a game mission to
