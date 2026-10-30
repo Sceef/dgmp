@@ -253,13 +253,15 @@ void Update(UObject* pawn, uint16_t localId) {
         constexpr int kPawnHealth = 0x1FD4;  // (as src/mp.cpp)
         float& health = Field<float>(pawn, kPawnHealth);
         const float left = std::clamp(1.f - float(now - holder->heldSince) / std::max(1.f, holder->bleed), 0.f, 1.f);
-        const float expected = holder->heldHealth * left;
+        // Dead once the game's bar shows nothing: it shows the health above BendPawn.UnderArmorHealth (35 of 135),
+        // so at exactly 0 the player looked dead for seconds before it died. The bar runs out in `bleed` seconds.
+        constexpr int kPawnMaxHealth = 0x1FE4, kPawnUnderArmor = 0x1FD8;
+        const float maxHp = Field<float>(pawn, kPawnMaxHealth), under = Field<float>(pawn, kPawnUnderArmor);
+        const float empty = under > 0 && under < maxHp * 0.9f ? under : maxHp * 0.15f;
+        const float expected = empty + std::max(0.f, holder->heldHealth - empty) * left;
         if (health > expected) health = expected;
         bleedRed = 0.35f + 0.65f * (1.f - left);
-        // Dead once the game's bar shows nothing: it is empty at about 15 % of health (seen: ~20 of 135), so at
-        // exactly 0 the player looked dead for three seconds before it died.
-        constexpr int kPawnMaxHealth = 0x1FE4;
-        if ((expected <= 1.f || health <= Field<float>(pawn, kPawnMaxHealth) * 0.15f) && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
+        if ((left <= 0.f || health <= empty + 0.5f) && !bledOut) { health = 0; bledOut = true; dg::Log("traps: bled out in the bear trap"); }
     } else bleedRed = 0;
     for (auto& [id, t] : list) {
         const float dx = t.a.X - me.X, dy = t.a.Y - me.Y, d2 = dx * dx + dy * dy;

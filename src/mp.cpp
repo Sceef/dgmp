@@ -345,6 +345,15 @@ uint8_t collisions = 0;  // net::CollisionMask from the server
 
 bool localDead = false;  // the local player lies dead / waits for its respawn
 float wantedHealth = -1;  // the server set the health (percent; -1: nothing to do)
+// The game's health bar shows only the health above BendPawn.UnderArmorHealth (35 of 135): it is empty
+// there, and the game stops a big first hit on it. Empty bar = dead (or down); percents are of the bar.
+constexpr int kPawnUnderArmor = 0x1FD8;
+float BarFloor(ue::UObject* pawn, float maxHp) {
+    const float ua = IsValid(pawn) ? Field<float>(pawn, kPawnUnderArmor) : 0.f;
+    return ua > 0 && ua < maxHp * 0.9f ? ua : 0.f;
+}
+float BarPercent(float hp, float maxHp, float floor) { return std::clamp((hp - floor) / std::max(1.f, maxHp - floor), 0.f, 1.f) * 100.f; }
+float BarHealth(float percent, float maxHp, float floor) { return floor + (maxHp - floor) * std::clamp(percent, 0.f, 100.f) / 100.f; }
 // Death mode "downed" (docs/API.md "Ранение"): a lethal hit lays the player down instead; the server says how
 // long it may lie (DownedState) and ends it: revived (health back), or dead (SetHealth 0 next).
 struct Downed {
@@ -380,7 +389,7 @@ bool BuildState(net::PlayerState& s, UObject* controller) {
     s.mx = mp.X; s.my = mp.Y; s.mz = mp.Z; s.mqx = mq.X; s.mqy = mq.Y; s.mqz = mq.Z; s.mqw = mq.W;
     {   // BendPawn health / max health
         const float hp = Field<float>(L.pawn, 0x1FD4), maxHp = Field<float>(L.pawn, 0x1FE4);
-        s.health = uint8_t(maxHp > 0 ? std::clamp(int(std::lround(hp / maxHp * 100)), 0, 100) : 100);
+        s.health = uint8_t(maxHp > 0 ? std::clamp(int(std::lround(BarPercent(hp, maxHp, BarFloor(L.pawn, maxHp)))), 0, 100) : 100);
     }
     s.flags = net::StateHasMesh;
     const bool onBike = CallBool(L.pawn, "IsInVehicle") || (IsValid(L.ride) && CallBool(L.ride, "IsDriver"));
@@ -2361,11 +2370,13 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         const float maxHp = Field<float>(pawn, kPawnMaxHealth);
         // The server's setHealth / heal / kill: 0 goes the same way as a lethal hit.
         bool forced = false;  // the server's kill: no falling down first
-        if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? std::max(2.f, maxHp * wantedHealth / 100.f) : 0.f; forced = wantedHealth == 0; wantedHealth = -1; }
+        const float floor = BarFloor(pawn, maxHp);
+        if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? BarHealth(std::max(1.f, wantedHealth), maxHp, floor) : 0.f; forced = wantedHealth == 0; wantedHealth = -1; }
+        const float dead = std::max(1.5f, floor + 0.5f), lying = BarHealth(1, maxHp, floor);  // the bar empty / just above it
         bool lethal = policy::TakeLethalHit() || traps::TakeBledOut();  // (a bear trap does not let the game kill)
         // Death mode "downed": fall instead of dying; hits on the fallen go to the server (finished off or not).
         const bool fallen = downed.on || downed.pending;
-        if (!deathPhase && !forced && (hp <= 1.5f || lethal) && (downed.mode || fallen)) {
+        if (!deathPhase && !forced && ((fallen ? hp < lying - 0.5f : hp <= dead) || lethal) && (downed.mode || fallen)) {
             if (!fallen) {
                 downed.pending = true; downed.fellAt = now; downed.holdSince = 0; downed.anim = kDownedAnim;
                 if (CallBool(pawn, "IsInVehicle")) if (auto f = Fn(pawn, "TryExitVehicle")) { Params p(f); p.SetBool("bForce", true); Call(pawn, "TryExitVehicle", &p); }
@@ -2374,13 +2385,13 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
                 client.SendDowned();
                 dg::Log("MP downed (health %.1f of %.0f)", lastHp, maxHp);
             } else if (now - downed.hitAt > 0.5) { downed.hitAt = now; client.SendDownedAct(net::DownedAction::Hit); }
-            hp = std::max(hp, maxHp * 0.05f); lethal = false;
+            hp = std::max(hp, lying); lethal = false;
         }
-        if ((downed.on || downed.pending) && maxHp > 0) hp = std::max(hp, maxHp * 0.05f);
+        if ((downed.on || downed.pending) && maxHp > 0) hp = std::max(hp, lying);
         // An old server never answers: after 5 s it is an ordinary death.
         if (downed.pending && now - downed.fellAt > 5) { downed = Downed{downed.mode}; playeranim::OnPlay("", 0, 1); policy::SetDownedInputBlock(false); forced = true; hp = 0; }
         if (forced && (downed.on || downed.pending)) { downed = Downed{downed.mode}; playeranim::OnPlay("", 0, 1); policy::SetDownedInputBlock(false); }
-        if (!deathPhase && (hp <= 1.5f || lethal)) {
+        if (!deathPhase && (hp <= dead || lethal)) {
             deathPhase = 1; deathAt = now;
             traps::OnLocalDeath(pawn);  // a bear trap holding the body lets go of it
             // Off any vehicle: the respawn is a fast travel, and the game's travel with a rider who died
