@@ -875,7 +875,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if (!another || !afterUpdate || i >= 50) break;
         CloseHandle(g_instanceMutex); g_instanceMutex = nullptr; Sleep(100);
     }
-    if (!another) { std::error_code ec; fs::remove(g_root / L"DGMP.exe.old", ec); }  // the launcher an update replaced
+    // The launcher an update replaced: still closing right after the update, so tried for a few seconds.
+    if (!another && fs::exists(g_root / L"DGMP.exe.old"))
+        std::thread([] { for (int i = 0; i < 20; ++i) { std::error_code ec; if (fs::remove(g_root / L"DGMP.exe.old", ec) || !fs::exists(g_root / L"DGMP.exe.old")) break; Sleep(500); } }).detach();
     if (another) {
         if (HWND other = FindWindowW(L"DGMPLauncher", nullptr)) { ShowWindow(other, SW_RESTORE); SetForegroundWindow(other); }
         return 0;
