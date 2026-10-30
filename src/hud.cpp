@@ -8,6 +8,7 @@
 #include <cmath>
 #include <deque>
 #include <mutex>
+#include <vector>
 
 namespace hud {
 namespace {
@@ -175,6 +176,36 @@ void ShadowText(Gdiplus::Graphics& g, const std::wstring& s, Gdiplus::Font& f, G
     g.DrawString(s.c_str(), -1, &f, r, &fmt, &brush);
 }
 
+// A chat line with {RRGGBB} colour codes (as in dialogs and the HUD, SA-MP style): each part in its colour,
+// left to right; the line's own colour until the first code.
+void ColoredLine(Gdiplus::Graphics& g, const std::wstring& s, Gdiplus::Font& f, Gdiplus::RectF r, uint32_t rgb, BYTE alpha) {
+    auto hex = [](wchar_t c) { return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f') || (c >= L'A' && c <= L'F'); };
+    std::vector<std::pair<uint32_t, std::wstring>> parts{{rgb, L""}};
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == L'{' && i + 7 < s.size() && s[i + 7] == L'}' && hex(s[i + 1]) && hex(s[i + 2]) && hex(s[i + 3]) && hex(s[i + 4]) && hex(s[i + 5]) && hex(s[i + 6])) {
+            parts.push_back({uint32_t(wcstoul(s.substr(i + 1, 6).c_str(), nullptr, 16)), L""});
+            i += 7; continue;
+        }
+        parts.back().second += s[i];
+    }
+    if (parts.size() == 1) { ShadowText(g, s, f, r, Col(rgb, alpha)); return; }
+    Gdiplus::StringFormat tight(Gdiplus::StringFormat::GenericTypographic());
+    tight.SetFormatFlags(tight.GetFormatFlags() | Gdiplus::StringFormatFlagsMeasureTrailingSpaces | Gdiplus::StringFormatFlagsNoWrap);
+    Gdiplus::SolidBrush shadow(Gdiplus::Color(BYTE(alpha * 0.85f), 0, 0, 0));
+    float x = r.X;
+    for (auto& [color, text] : parts) {
+        if (text.empty()) continue;
+        if (x >= r.X + r.Width) break;
+        Gdiplus::RectF box; g.MeasureString(text.c_str(), int(text.size()), &f, Gdiplus::PointF(0, 0), &tight, &box);
+        Gdiplus::SolidBrush brush(Col(color, alpha));
+        g.SetClip(r);
+        g.DrawString(text.c_str(), int(text.size()), &f, Gdiplus::PointF(x + 1.5f, r.Y + 1.5f), &tight, &shadow);
+        g.DrawString(text.c_str(), int(text.size()), &f, Gdiplus::PointF(x, r.Y), &tight, &brush);
+        g.ResetClip();
+        x += box.Width;
+    }
+}
+
 void Render(int w, int h) {
     BITMAPINFO bi{}; bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB};
     void* bits = nullptr;
@@ -212,7 +243,7 @@ void Render(int w, int h) {
         for (auto l : recent) {
             const ULONGLONG age = now - l->at;
             const BYTE alpha = open || age < kFadeAfter ? 255 : BYTE(255 * (1.0 - double(age - kFadeAfter) / 1500.0));
-            ShadowText(g, l->text, chatFont, {left, ly, width, lineH}, Col(Rgb(l->rgba), alpha));
+            ColoredLine(g, l->text, chatFont, {left, ly, width, lineH}, Rgb(l->rgba), alpha);
             ly -= lineH;
         }
         if (open) {
