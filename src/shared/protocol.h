@@ -68,6 +68,7 @@ enum class Msg : uint8_t {
     CustomizeDone = 10, // u8 ok, str skin: the player closed the character creator (or picked one of the offered looks)
     Gear = 9,         // GearList payload: what the player carries (weapons in hand, on the back, holstered)
     Hit = 8,          // u16 victimId, f32 damage, u8 HitZone, str weapon: this player hit another one
+    Throw = 22,       // str mesh, f32 scale, f32 x,y,z, f32 vx,vy,vz: this player threw a rock (relayed nearby as PlayerThrow)
     Voice = 21,       // u8 VoiceKey, u8 VoiceCodec, u8 gain (%), bytes: a frame of the player's voice while a push-to-talk key is held (kChanVoice)
     GameEvent = 7,    // u8 GameEventType, str class, str detail, str id, f32 x, y, z: something the player did in the world
     // server -> client
@@ -122,6 +123,7 @@ enum class Msg : uint8_t {
     SetHealth = 105,  // f32 percent of the maximum (0: the player dies, as from any other cause)
     Sound = 109,      // str asset path, u8 3D (1: at x,y,z), f32 x,y,z, f32 volume, f32 pitch: play it (the mode's playSound)
     PlayerShot = 110, // u16 id, str weapon class, f32 x,y,z: that player fired there (its weapon's sound)
+    PlayerThrow = 113, // u16 id, str mesh, f32 scale, f32 x,y,z, f32 vx,vy,vz: that player threw it (a copy flies here)
     Blip = 108,       // u16 id, u8 op (1 add/update: f32 x,y,z, str icon (MAP_* name or path), u32 rgba, f32 scale, u8 BlipFlags, i32 world (-1 every); 2 remove)
     PlayAnim = 107,   // str animation path ("": stop), u8 AnimFlags, f32 rate: play it on the player (FullBody slot)
     Object = 106,     // u16 id, u8 op: 1 add/update (str asset, f32 x,y,z, f32 pitch,yaw,roll, f32 scale, i32 world (-1 every), u8 collision);

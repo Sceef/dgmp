@@ -4,6 +4,8 @@
 #include "log.h"
 #include "policy.h"
 #include "skins.h"
+#include "diagnostics.h"
+#include "mp.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -40,6 +42,7 @@ struct Copy {
     double lastFly = 0;
     int sequence = -1;                         // a helicopter's animation: 0 flying, 1 landing, 2 on the ground, 3 taking off
     bool repairHidden = false;      // the game's repair/fuel actor of an NPC's vehicle hidden
+    bool frozen = false;            // parked with a player's body against it: no physics until they step away
 };
 std::map<uint16_t, Copy> list;
 int world = 0;
@@ -79,6 +82,12 @@ UObject* ClassOf(const Model& m) {
     return c;
 }
 FVector Location(UObject* a) { FVector v{}; if (auto f = Fn(a, "K2_GetActorLocation")) { Params p(f); Call(a, "K2_GetActorLocation", &p); v = p.Get<FVector>("ReturnValue"); } return v; }
+// Lying on its side (rolled or pitched past 45 degrees).
+bool Fallen(UObject* a) {
+    auto f = Fn(a, "K2_GetActorRotation"); if (!f) return false;
+    Params p(f); Call(a, "K2_GetActorRotation", &p); const FRotator r = p.Get<FRotator>("ReturnValue");
+    return std::fabs(r.Roll) > 45.f || std::fabs(r.Pitch) > 45.f;
+}
 float Yaw(UObject* a) { float y = 0; if (auto f = Fn(a, "K2_GetActorRotation")) { Params p(f); Call(a, "K2_GetActorRotation", &p); y = p.Get<FRotator>("ReturnValue").Yaw; } return y; }
 UObject* Prop(UObject* o, const char* name) {
     for (auto c = o->Class; c; c = SuperOf(c)) if (auto p = FindProperty(c, name)) return p;
@@ -347,6 +356,15 @@ void Tune(UObject* vehicle, const Model& m) {
 }
 // Someone else drives it: it only follows them (no physics of its own, still in the way of others).
 // Off its stand too: a passenger gets on a parked bike beside it, not on it.
+void Physics(UObject* vehicle, bool on) {
+    if (UObject* mesh = Field<UObject*>(vehicle, off::Actor_RootComponent); IsValid(mesh)) if (auto f = Fn(mesh, "SetSimulatePhysics")) { Params p(f); p.SetBool("bSimulate", on); Call(mesh, "SetSimulatePhysics", &p); }
+}
+// A remote player's body stands within `range` of this spot (ground plan; the one who just got off a bike).
+bool BodyNear(const FVector& at, float range) {
+    for (const auto& b : mp::RemoteBodies())
+        if (b.alive && (b.pos.X - at.X) * (b.pos.X - at.X) + (b.pos.Y - at.Y) * (b.pos.Y - at.Y) < range * range && std::fabs(b.pos.Z - at.Z) < 250.f) return true;
+    return false;
+}
 void Follow(UObject* vehicle) {
     if (auto f = Fn(vehicle, "LowerKickstand")) { Params p(f); p.SetBool("bLower", false); Call(vehicle, "LowerKickstand", &p); }
     if (auto f = Fn(vehicle, "Park")) { Params p(f); p.SetBool("bPark", false); Call(vehicle, "Park", &p); }
@@ -355,18 +373,19 @@ void Follow(UObject* vehicle) {
 }
 UObject* Spawn(UObject* context, const net::VehicleState& s, const Model& m) {
     UObject* cls = ClassOf(m);
-    if (!cls || !Statics() || !IsValid(context)) return nullptr;
+    if (!cls || !Statics() || !IsValid(context)) { dg::Log("Vehicle spawn deferred: class=%s context=%s",cls?GetName(cls).c_str():"missing",IsValid(context)?"ready":"missing"); return nullptr; }
     FTransform t; t.Translation = {s.x, s.y, s.z + m.lift};
     const float h = s.yaw * 0.00872664626f; t.Rotation = {0, 0, std::sin(h), std::cos(h)};
     Params begin(Fn(Statics(), "BeginSpawningActorFromClass"));
     begin.Set("WorldContextObject", context); begin.Set("ActorClass", cls); begin.Set("SpawnTransform", t); begin.SetBool("bNoCollisionFail", true);
     Call(Statics(), "BeginSpawningActorFromClass", &begin);
     UObject* bike = begin.Get<UObject*>("ReturnValue");
-    if (!bike) return nullptr;
+    if (!bike) { dg::Log("Vehicle spawn failed: %s at %.0f %.0f %.0f",GetName(cls).c_str(),s.x,s.y,s.z); return nullptr; }
     Params finish(Fn(Statics(), "FinishSpawningActor")); finish.Set("Actor", bike); finish.Set("SpawnTransform", t);
     Call(Statics(), "FinishSpawningActor", &finish);
     if (*m.name) Tune(bike, m);
     Park(bike);
+    dg::Log("Vehicle spawned: %s at %.0f %.0f %.0f",FullName(bike).c_str(),s.x,s.y,s.z);
     return bike;
 }
 // The bike's own markers (map icon and radar): shown only when the server says so for this player.
@@ -455,14 +474,58 @@ UObject* Mounted(UObject* controller) {
     UObject* v = p.Get<UObject*>("ReturnValue");
     return IsValid(v) ? v : nullptr;
 }
+UObject* Assigned(UObject* pawn) {
+    if (auto f=IsValid(pawn)?Fn(pawn,"GetAssignedVehicle"):nullptr) {
+        Params p(f); Call(pawn,"GetAssignedVehicle",&p);
+        auto vehicle=p.Get<UObject*>("ReturnValue");
+        return IsValid(vehicle)?vehicle:nullptr;
+    }
+    return nullptr;
+}
+bool AssignForRiding(UObject* pawn,UObject* controller,UObject* bike) {
+    if (!IsValid(bike)) return false;
+    if (Assigned(pawn)==bike) return true;
+    // Entering a server-spawned bike does not assign it as the game's own bike. The native camera
+    // asks BendPawn::GetAssignedVehicle while IsInVehicle is true, without checking for null.
+    // Use the game's setter (which updates the pawn's weak reference); never write it by address.
+    if (auto f=IsValid(controller)?Fn(controller,"SetAssignedVehicle"):nullptr) {
+        Params p(f);
+        if (p.Set("InAssignedVehicle",bike)) Call(controller,"SetAssignedVehicle",&p);
+    }
+    const bool bound=Assigned(pawn)==bike;
+    dg::Log("Vehicle assignment %s: %s",bound?"ready":"failed",FullName(bike).c_str());
+    diagnostics::Event("vehicle assignment pawn=%p bike=%p assigned=%p success=%d",pawn,bike,Assigned(pawn),bound);
+    return bound;
+}
 void GetOff(UObject* pawn) {
     if (auto f = IsValid(pawn) ? Fn(pawn, "TryExitVehicle") : nullptr) { Params p(f); p.SetBool("bForce", true); Call(pawn, "TryExitVehicle", &p); }
+}
+// The player's ride component (BendPlayerRideVehicleComponent) and the vehicle it is on or getting on/off.
+UObject* RideOf(UObject* pawn) { UObject* p = Prop(pawn, "RideVehicleComponent"); UObject* c = p ? Field<UObject*>(pawn, Field<int>(p, off::UProperty_Offset)) : nullptr; return IsValid(c) ? c : nullptr; }
+UObject* RideVehicle(UObject* ride) { UObject* p = ride ? Prop(ride, "VehiclePawn") : nullptr; return p ? Resolve(Field<FWeakObjectPtr>(ride, Field<int>(p, off::UProperty_Offset))) : nullptr; }
+// Its rider state is native only (GetRiderState reads it). Getting off a vehicle that is destroyed half
+// way leaves it "exiting the seat" for good: the game then lets no weapon be drawn, no punch. Seen at
+// +0x230 (0 unseated, 1 entering, 2 seated, 3 exiting); written only after GetRiderState agrees.
+constexpr int kRide_RiderState = 0x230;
+uint8_t RiderState(UObject* ride) { auto f = ride ? Fn(ride, "GetRiderState") : nullptr; if (!f) return 0; Params p(f); Call(ride, "GetRiderState", &p); return p.Get<uint8_t>("ReturnValue"); }
+void UnstickRider(UObject* pawn, double now) {
+    static double since = 0;
+    UObject* ride = RideOf(pawn);
+    const uint8_t state = RiderState(ride);
+    if ((state != 1 && state != 3) || RideVehicle(ride)) { since = 0; return; }
+    if (!since) { since = now; return; }
+    if (now - since < 3) return;
+    since = 0;
+    if (Field<uint8_t>(ride, kRide_RiderState) != state) { dg::Log("Vehicles: rider stuck in state %u, but its field is not where expected", state); return; }
+    Field<uint8_t>(ride, kRide_RiderState) = 0;
+    dg::Log("Vehicles: rider stuck %s a vehicle that is gone: unseated", state == 1 ? "getting on" : "getting off");
 }
 float Dist2(const FVector& a, const FVector& b) { const float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z; return dx * dx + dy * dy + dz * dz; }
 }  // namespace
 
 void OnVehicle(uint16_t id, const net::Client::Events::VehicleInfo* info) {
     if (!info) {
+        diagnostics::Event("vehicle removed id=%u riding=%u boarding=%u",id,riding,boarding);
         auto it = list.find(id);
         if (it != list.end()) { DropDriver(it->second); Destroy(it->second.bike); list.erase(it); }
         if (riding == id) riding = 0;
@@ -514,6 +577,16 @@ void Update(double now, UObject* pawn, UObject* controller, net::Client& client)
     if (!IsValid(pawn)) return;
     const uint16_t me = client.localId();
     UObject* mounted = Mounted(controller);
+    if (mounted && IsServerBike(mounted)) AssignForRiding(pawn,controller,mounted);
+    UnstickRider(pawn, now);
+    // Getting on or off (no longer "mounted", still in the seat's animation): that vehicle stays.
+    UObject* inSeat = mounted;
+    if (!inSeat) if (UObject* v = RideVehicle(RideOf(pawn)); IsServerBike(v)) inSeat = v;
+    static double nextDiagnostic=0;
+    if (diagnostics::Enabled() && (riding || boarding) && now>=nextDiagnostic) {
+        nextDiagnostic=now+5;
+        diagnostics::Event("vehicle state riding=%u boarding=%u mounted=%p assigned=%p",riding,boarding,mounted,Assigned(pawn));
+    }
     const FVector at = Location(pawn);
     // The bikes: parked ones here for everyone, the ridden one only for its rider.
     for (auto& [id, c] : list) {
@@ -527,8 +600,8 @@ void Update(double now, UObject* pawn, UObject* controller, net::Client& client)
         if (c.driver && (!c.bike || !c.info.npc)) DropDriver(c);
         // Not this one any more (the mode changed the model; someone else's model is left by them: it
         // stands again from where the server says).
-        if (c.bike && c.bike != mounted && (c.model != c.info.model || (c.following && !others && !npc))) { DropDriver(c); DropBlip(c); Destroy(c.bike); c.following = false; }
-        if (!want) { if (c.bike && c.bike != mounted) { DropDriver(c); DropBlip(c); Destroy(c.bike); } continue; }
+        if (c.bike && c.bike != inSeat && (c.model != c.info.model || (c.following && !others && !npc))) { DropDriver(c); DropBlip(c); Destroy(c.bike); c.following = false; }
+        if (!want) { if (c.bike && c.bike != inSeat) { DropDriver(c); DropBlip(c); Destroy(c.bike); } continue; }
         if (!c.bike) {
             if (now < c.nextTry || Dist2(at, {c.info.state.x, c.info.state.y, c.info.state.z}) > 40000.f * 40000.f) continue;  // 400 m
             c.nextTry = now + 3;
@@ -538,7 +611,12 @@ void Update(double now, UObject* pawn, UObject* controller, net::Client& client)
             c.repairHidden = false;
             c.markers.clear(); c.scanned = false; c.marked = -1; c.blip = nullptr; c.repair = nullptr; c.nextAdvert = now + 1; c.advert = -1;
             if (!c.bike) continue;
+            // Left by someone who still stands against it: physics would push it out of their body,
+            // into the air. It waits where the server says until they step away.
+            c.frozen = c.info.driver == 0xFFFF && BodyNear({c.info.state.x, c.info.state.y, c.info.state.z}, 200.f);
+            if (c.frozen) Physics(c.bike, false);
         }
+        if (c.frozen && (c.info.driver != 0xFFFF || id == boarding || !BodyNear(Location(c.bike), 250.f))) { Physics(c.bike, true); Park(c.bike); c.frozen = false; }
         if (others) {
             if (!c.following) { Follow(c.bike); c.following = true; }  // moved by mp (DrivesModel)
         } else if (npc) {
@@ -553,7 +631,7 @@ void Update(double now, UObject* pawn, UObject* controller, net::Client& client)
                     if (auto f = Fn(r, "SetActorTickEnabled")) { Params p(f); p.SetBool("bEnabled", false); Call(r, "SetActorTickEnabled", &p); }
                 }
             }
-        } else if (c.info.driver == 0xFFFF && c.bike != mounted) {
+        } else if (c.info.driver == 0xFFFF && c.bike != inSeat) {
             // Moved by the server (the mode, or where someone else left it): only then, the bike may
             // settle, tip over or roll where it stands.
             const net::VehicleState& server = c.info.state;
@@ -582,7 +660,20 @@ void Update(double now, UObject* pawn, UObject* controller, net::Client& client)
             dg::Log("Vehicles: riding %u", riding);
         } else if (IsValid(bike) && now >= nextBoardTry) {
             nextBoardTry = now + 1.5;
+            // Fail closed before changing the riding state; the camera must never see a rider
+            // with an empty AssignedVehicle reference.
+            if (!AssignForRiding(pawn,controller,bike)) {
+                client.SendVehicle(net::Msg::VehicleExit,boarding,&it->second.info.state);
+                boarding=0; return;
+            }
             if (boardTries == 0) ApplyState(bike, it->second.info.state);  // its fuel and health
+            // A fallen bike: the game's own pick-up does not come with a forced boarding, so it is stood up
+            // where it lies first, a little above the ground, then got on.
+            if (boardTries == 0 && Fallen(bike)) {
+                net::VehicleState up = StateOf(bike); up.z += 40.f;
+                Place(bike, up); Park(bike);
+                dg::Log("Vehicles: %u was lying on its side, stood up", boarding);
+            }
             const FVector b = Location(bike);
             if (Dist2(at, b) > 1500.f * 1500.f) if (auto f = Fn(pawn, "K2_SetActorLocation")) {
                 Params p(f); p.Set("NewLocation", FVector{b.X + 150.f, b.Y, b.Z + 100.f}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true); Call(pawn, "K2_SetActorLocation", &p);

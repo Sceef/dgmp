@@ -22,6 +22,7 @@ struct State {
     unsigned int removedPauseControls=0,blockedPauseRequests=0;
     unsigned int blockedTutorials=0,dismissedTutorials=0;
     unsigned int nestObjectsHidden=0,storyBlockersDisabled=0,doorsUnlocked=0,zoneParametersCleared=0;
+    unsigned int nativeServicesDisabled=0,blockedNativeInteractions=0;
     uint32_t markerMask=(1u<<0)|(1u<<1)|(1u<<7);
 };
 void ConfigureMarkers(uint32_t mask);
@@ -79,7 +80,10 @@ void Observe(ue::UObject* object);
 bool ShowNativeHint(ue::UObject* controller,const std::wstring& title,const std::wstring& text,const std::string& image,bool pause,float seconds=0);
 void Update(ue::UObject* pawn,ue::UObject* controller,ue::UObject* gameMode,bool editor,bool reveal,bool mapOnly,bool suppressStory);
 State GetState();
-void OpenMap();
+// Read-only classification for runtime audits of native camp interaction removal.
+bool IsNativeCampService(ue::UObject* actor);
+bool OpenMap();
 void CloseMap();
+bool TakeEditorMapTeleport(ue::FVector& position);
 void TestEvent(const char* event);
 }

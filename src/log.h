@@ -3,9 +3,11 @@
 #include <cstdio>
 #include <share.h>
 #include <string>
+#include <mutex>
 #include <windows.h>
 
 namespace dg {
+inline std::recursive_mutex& LogMutex() { static std::recursive_mutex mutex; return mutex; }
 
 inline FILE*& LogFile()
 {
@@ -15,6 +17,7 @@ inline FILE*& LogFile()
 
 inline void LogOpen(const char* path)
 {
+    std::lock_guard guard(LogMutex());
     // Keep the previous session's log (e.g. DGMP.prev.log) so a crash can still be read after a relaunch.
     std::string previous(path);
     const auto dot = previous.rfind('.');
@@ -37,6 +40,7 @@ inline void Log(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
+    std::lock_guard guard(LogMutex());
     LastLine() = msg;
     FILE* f = LogFile();
     if (!f) return;

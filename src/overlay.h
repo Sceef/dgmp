@@ -8,6 +8,11 @@ namespace overlay {
 
 // Hooks the swap chain (any time, also before the game created its device). Safe to call more than once.
 bool Install();
+// Temporarily give all input to the native map, keeping the previous editor cursor mode.
+void SetNativeInput(bool on);
+bool NativeInput();
+void EnableEditorMapKey();
+bool TakeEditorMapKey();
 
 // Shown at all, and whether the mouse belongs to the UI (cursor mode, toggled with Tab while shown).
 void SetVisible(bool visible);

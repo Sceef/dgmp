@@ -666,6 +666,19 @@ struct Api {
     }
     // createInteraction{x=, y=, z=, radius=2 (m), text=, key="F", onUse=function(player, id) end} -> id
     // (F: E mounts the bike; multiplayer clients move the flashlight from F to L)
+    static void LocalizedField(lua_State* L,int idx,std::string& base,std::map<std::string,std::string>& variants) {
+        if(lua_isnil(L,idx)) return;
+        variants.clear();
+        if(lua_istable(L,idx)) {
+            idx=lua_absindex(L,idx);
+            for(const char* lang:{"en","ru"}) {
+                lua_getfield(L,idx,lang);
+                if(lua_isstring(L,-1)) variants[lang]=lua_tostring(L,-1);
+                lua_pop(L,1);
+            }
+            base=variants.count("en")?variants.at("en"):variants.count("ru")?variants.at("ru"):"";
+        } else base=luaL_checkstring(L,idx);
+    }
     static int CreateInteraction(lua_State* L) {
         luaL_checktype(L, 1, LUA_TTABLE);
         Interaction in;
@@ -673,7 +686,7 @@ struct Api {
         lua_getfield(L, 1, "y"); in.y = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
         lua_getfield(L, 1, "z"); in.z = float(luaL_checknumber(L, -1)); lua_pop(L, 1);
         lua_getfield(L, 1, "radius"); in.radius = float(luaL_optnumber(L, -1, 2) * 100.0); lua_pop(L, 1);
-        lua_getfield(L, 1, "text"); in.text = luaL_optstring(L, -1, ""); lua_pop(L, 1);
+        lua_getfield(L, 1, "text"); LocalizedField(L,-1,in.text,in.texts); lua_pop(L, 1);
         lua_getfield(L, 1, "key"); const std::string key = luaL_optstring(L, -1, "F"); lua_pop(L, 1);
         const int vk = KeyCode(key);
         if (vk < 0) luaL_error(L, "createInteraction: unknown key '%s' (A-Z, 0-9, F1-F12)", key.c_str());
@@ -722,7 +735,7 @@ struct Api {
             if (a.anim.empty()) luaL_error(L, "%s: unknown animation '%s' (data/anims.txt)", fn, want.c_str());
         }
         lua_pop(L, 1);
-        if (lua_getfield(L, idx, "name") != LUA_TNIL) a.name = luaL_checkstring(L, -1);
+        if (lua_getfield(L, idx, "name") != LUA_TNIL) LocalizedField(L,-1,a.name,a.names);
         lua_pop(L, 1);
         if (lua_getfield(L, idx, "solid") != LUA_TNIL) a.solid = lua_toboolean(L, -1);
         lua_pop(L, 1);
@@ -1231,6 +1244,10 @@ struct Api {
         num("x", b.x); num("y", b.y); num("z", b.z); num("scale", b.scale);
         flag("map", b.map); flag("radar", b.radar); flag("edge", b.edge);
         lua_getfield(L, idx, "icon"); if (lua_isstring(L, -1)) b.icon = lua_tostring(L, -1); lua_pop(L, 1);
+        if (lua_getfield(L, idx, "title") != LUA_TNIL) LocalizedField(L,-1,b.title,b.titles);
+        lua_pop(L, 1);
+        if (lua_getfield(L, idx, "description") != LUA_TNIL) LocalizedField(L,-1,b.description,b.descriptions);
+        lua_pop(L, 1);
         lua_getfield(L, idx, "world"); if (!lua_isnil(L, -1)) b.world = int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
         lua_getfield(L, idx, "color"); if (!lua_isnil(L, -1)) { b.color = ColorArg(L, lua_gettop(L), 0xFFFFFFFF); } lua_pop(L, 1);
         lua_getfield(L, idx, "player"); if (!lua_isnil(L, -1)) b.only = CheckPlayer(L, lua_gettop(L)).id; lua_pop(L, 1);

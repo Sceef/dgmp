@@ -1,6 +1,7 @@
 #include "blips.h"
 #include "policy.h"
 #include "log.h"
+#include <windows.h>
 #include <cstring>
 #include <map>
 
@@ -18,6 +19,23 @@ std::map<uint16_t, Blip> blips;
 int myWorld = 0;
 
 UObject* Statics() { static UObject* s = nullptr; if (!IsValid(s)) s = FindObject("/Script/Engine.Default__GameplayStatics"); return s; }
+
+// Construct FText through the engine, which owns its shared text data.
+void SetText(UObject* object, const char* field, const std::string& text) {
+    auto lib = FindObject("/Script/Engine.Default__KismetTextLibrary");
+    auto fn = lib ? Fn(lib,"Conv_StringToText") : nullptr;
+    if (!fn) return;
+    const int count=MultiByteToWideChar(CP_UTF8,0,text.data(),int(text.size()),nullptr,0);
+    std::wstring value(count,L'\0');
+    if (count) MultiByteToWideChar(CP_UTF8,0,text.data(),int(text.size()),value.data(),count);
+    Params p(fn); p.Set("InString",FString{value.c_str(),int32_t(value.size()+1),int32_t(value.size()+1)});
+    Call(lib,"Conv_StringToText",&p);
+    struct EngineText { uint8_t data[0x18]; };
+    for (auto cls=object->Class; cls; cls=SuperOf(cls)) if (auto prop=FindProperty(cls,field)) {
+        Field<EngineText>(object,Field<int>(prop,off::UProperty_Offset))=p.Get<EngineText>("ReturnValue");
+        break;
+    }
+}
 
 UObject* SpawnHolder(const FVector& at, UObject* context) {
     UObject* cls = FindClass("StaticMeshActor");
@@ -53,6 +71,10 @@ UObject* MakeMarker(UObject* holder, const net::Client::Events::BlipInfo& b) {
     else AddToRoot(icon);
     if (auto pr = prop("MapIcon")) *reinterpret_cast<UObject**>(pr) = icon;
     if (auto pr = prop("LocationType")) *pr = 0;   // takes colour and size
+    if (auto pr = prop("RollOverType")) *pr = 7;   // EMapRolloverType::Basic; default Objective shows a story mission card
+    SetBoolProp(m, "bUseSimpleMapInfoDisplay", true);
+    SetText(m,"DisplayName",b.title);
+    SetText(m,"DisplayDescription",b.description);
     if (auto pr = prop("DisplayRule")) *pr = 0;    // AlwaysVisible
     // Edge display on, or the radar never draws a Player-type location; how far it stays on the rim:
     // always (edge) or only just outside the radar.

@@ -204,6 +204,10 @@ void Client::Service(double now) {
         switch (e.type) {
         case ENET_EVENT_TYPE_CONNECT: {
             status_ = Status::Handshake;
+            // ENet throttles unreliable packets while the round trip grows, by dropping them: a pose is cut into a
+            // few fragments, and one dropped loses the whole pose. Over the internet (jitter) that left the remote
+            // bodies standing in their base pose. Never throttled down (deceleration 0).
+            enet_peer_throttle_configure(peer_, ENET_PEER_PACKET_THROTTLE_INTERVAL, ENET_PEER_PACKET_THROTTLE_ACCELERATION, 0);
             Writer w; w.Op(Msg::Hello); w.U16(kProtocolVersion); w.Str(nick_); w.Str(password_);
             char lang[16] = "en"; DWORD n = GetEnvironmentVariableA("DGMP_LANG", lang, sizeof(lang)); if (!n || n >= sizeof(lang)) strcpy_s(lang, "en");
             w.Str(lang);
@@ -448,6 +452,8 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
             b.x = r.F32(); b.y = r.F32(); b.z = r.F32(); b.icon = r.Str(256); b.color = r.U32(); b.scale = r.F32();
             const uint8_t flags = r.U8(); b.world = r.I32();
             b.map = flags & BlipMap; b.radar = flags & BlipRadar; b.edge = flags & BlipEdge;
+            // Optional suffix: older servers send icons without a rollover label.
+            if (r.left()) { b.title = r.Str(512); b.description = r.Str(2048); }
             if (r.ok() && on.blip) on.blip(id, &b);
         } else if (r.ok() && on.blip) on.blip(id, nullptr);
         break;
@@ -490,6 +496,12 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.voiceSetup) on.voiceSetup(flags, radio, call);
         break;
     }
+    case Msg::PlayerThrow: {
+        const uint16_t id = r.U16(); const auto mesh = r.Str(256); const float scale = r.F32();
+        const float x = r.F32(), y = r.F32(), z = r.F32(), vx = r.F32(), vy = r.F32(), vz = r.F32();
+        if (r.ok() && on.playerThrow) on.playerThrow(id, mesh, scale, x, y, z, vx, vy, vz);
+        break;
+    }
     case Msg::PlayerShot: {
         const uint16_t id = r.U16(); const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
         if (r.ok() && on.playerShot) on.playerShot(id, cls, x, y, z);
@@ -497,7 +509,12 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
     }
     case Msg::PlayAnim: { const auto path = r.Str(512); const uint8_t flags = r.U8(); const float rate = r.F32(); if (r.ok() && on.playAnim) on.playAnim(path, flags, rate); break; }
     case Msg::SetHealth: { const float percent = r.F32(); if (r.ok() && std::isfinite(percent) && on.setHealth) on.setHealth(percent); break; }
-    case Msg::Damage: { const auto from = r.U16(); const float amount = r.F32(); const auto zone = r.U8(); if (r.ok() && on.damage) on.damage(from, amount, HitZone(zone)); break; }
+    case Msg::Damage: {
+        const auto from = r.U16(); const float amount = r.F32(); const auto zone = r.U8();
+        const std::string weapon = r.left() ? r.Str(kItemKeyMax) : std::string();  // (older servers send none)
+        if (r.ok() && on.damage) on.damage(from, amount, HitZone(zone), weapon);
+        break;
+    }
     case Msg::WorldItem: {
         const auto id = r.U16(); const auto op = r.U8();
         if (!r.ok() || !on.worldItem) break;
@@ -629,6 +646,11 @@ void Client::SendItemAction(uint16_t window, const std::string& json) {
 void Client::SendScriptError(const std::string& text) {
     if (status_ != Status::Connected) return;
     Writer w; w.Op(Msg::ScriptError); w.Str(text.substr(0, kScriptErrorMax));
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendThrow(const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::Throw); w.Str(mesh.substr(0, 256)); w.F32(scale); w.F32(x); w.F32(y); w.F32(z); w.F32(vx); w.F32(vy); w.F32(vz);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendShot(const std::string& weaponClass, float x, float y, float z) {

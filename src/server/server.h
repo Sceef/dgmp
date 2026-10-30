@@ -1,5 +1,6 @@
 #pragma once
 #include "../shared/protocol.h"
+#include "../shared/polygon.h"
 #include "security.h"
 #include <atomic>
 #include <cstdarg>
@@ -88,6 +89,7 @@ struct Interaction {
     uint8_t key = 'F';                        // virtual key
     std::string text;                         // the prompt
     int32_t world = -1;                       // virtual world it is in (-1: every)
+    std::map<std::string,std::string> texts;
 };
 
 // A vehicle (bike) of the mode: anyone may ride it unless locked; the owner may also when locked.
@@ -170,6 +172,8 @@ struct Blip {
     uint16_t id = 0;
     float x = 0, y = 0, z = 0;
     std::string icon = "MAP_player_marker";
+    std::string title, description;
+    std::map<std::string,std::string> titles, descriptions;
     uint32_t color = 0xFFFFFFFF;              // RGBA tint
     float scale = 1;
     bool map = true, radar = true, edge = false;  // edge: on the radar's rim when it is farther away
@@ -247,6 +251,7 @@ struct Actor {
     std::string look, anim, name;             // look: asset path or "skin:"; anim: asset path
     bool solid = true;                        // players bump into it
     std::string key, group;                   // placed in the editor (world.json "actors"): its id and group
+    std::map<std::string,std::string> names;
 };
 
 // A region with its own rule for damage between players (world.json "zones" from the editor, or
@@ -256,6 +261,8 @@ struct Zone {
     std::string name;
     bool pvp = false;                         // type: false "pve", true "pvp"
     bool box = false;                         // shape: a circle (radius) or a box (half sizes, turned by yaw)
+    bool polygon = false;
+    std::vector<::polygon::Point> points;     // local metres, relative to x/y and rotated by yaw
     float x = 0, y = 0, z = 0, yaw = 0;       // the centre (z: on the ground)
     float radius = 2000, halfX = 2000, halfY = 2000;
     float height = 5000;                      // units above and below z
@@ -364,6 +371,7 @@ struct Player {
     std::string anim;                              // the animation the mode plays on it (asset path; "": none)
     double shotWindow = 0; int shotCount = 0;      // shots relayed this second (flood guard)
     double lastShotEvent = 0;                      // the mode heard playerShot then
+    double throwWindow = 0; int throwCount = 0;    // thrown rocks relayed in the last second
     // Voice chat (src/server/voice.cpp)
     bool voiceMuted = false;                       // setVoiceMuted: what it says goes nowhere
     float voiceRange = -1;                         // units it is heard within (-1: the server's)
@@ -635,6 +643,8 @@ private:
     struct HitStat { float max = 0; int count = 0; };
     std::map<std::string, HitStat> hitStats_;      // weapon class -> largest damage of an accepted hit (console: hitstats)
     Player* echo_ = nullptr;                       // also gets what Log prints (an admin's /rcon command)
+    bool botPose_ = false;                         // test (console botpose): bots move with the poses of the player
+    bool botStill_ = false;                        // test (console botstop): bots stand in a row next to the first player
     BanList bans_;
     NameBook names_;
     // Protected items: ledger updates for the server's own orders, the check of each snapshot.

@@ -3,6 +3,7 @@
 #include "lang.h"
 #include "log.h"
 #include "devmenu.h"
+#include "diagnostics.h"
 #include <windows.h>
 #include <array>
 #include <algorithm>
@@ -27,6 +28,8 @@ UObject* localPawn=nullptr;
 UObject* menu=nullptr;
 UObject* map=nullptr;
 UObject* mapWidget=nullptr;
+FVector editorMapDestination{};
+bool editorMapTeleport=false;
 UObject* clearFogTexture=nullptr;
 UObject* hudWidget=nullptr;
 UObject* worldVO=nullptr;
@@ -83,6 +86,7 @@ TextValue returnText{};
 bool returnTextReady=false;
 std::vector<const void*> returnLabels; // FTextData of every "return to game" text we made
 std::map<int,int> configuredObjects;
+std::map<int,int> nativeServices; // object index -> serial; excludes recycled UObject slots
 struct MarkerBaseline { int serial; bool waypoint; };
 std::map<int,MarkerBaseline> markerBaselines;
 UObject* abilityController=nullptr;
@@ -137,6 +141,44 @@ void __fastcall Event(UObject* object,UObject* function,void* parameters) {
     auto it=activeHooks.find(object);
     const EventFn original=it!=activeHooks.end()?it->second->original:reinterpret_cast<EventFn>(Base()+0x1AC2A20);
     const std::string name=GetName(function);
+    if(editorSession && object==mapWidget && state.menuActive && name=="OnMouseButtonDoubleClick" && parameters) {
+        original(object,function,parameters); // supplies the widget's native Handled reply
+        auto prop=FindProperty(function,"InMouseEvent");
+        auto input=FindObject("/Script/Engine.Default__KismetInputLibrary");
+        struct PointerEvent { uint8_t bytes[120]; };
+        struct Key { FName name; uint8_t rest[16]; };
+        if(prop && Field<int>(prop,off::UProperty_ElementSize)==sizeof(PointerEvent) && input && IsValid(map)) {
+            const auto& event=Field<PointerEvent>(parameters,Field<int>(prop,off::UProperty_Offset));
+            Params button(Fn(input,"PointerEvent_GetEffectingButton")); button.Set("Input",event);
+            if(Call(input,"PointerEvent_GetEffectingButton",&button) && NameOf(button.Get<Key>("ReturnValue").name)=="LeftMouseButton") {
+                Params screen(Fn(input,"PointerEvent_GetScreenSpacePosition")); screen.Set("Input",event);
+                if(Call(input,"PointerEvent_GetScreenSpacePosition",&screen)) {
+                    Params hover(Fn(map,"OnMouseHoverAbs")); hover.Set("InScreenLocation",screen.Get<FVector2D>("ReturnValue")); Call(map,"OnMouseHoverAbs",&hover);
+                    Params location(Fn(map,"GetCursorWorldLocation"));
+                    if(Call(map,"GetCursorWorldLocation",&location)) {
+                        const auto at=location.Get<FVector>("ReturnValue");
+                        const auto min=Read<FVector>(map,"ScrollBoundsMin"), max=Read<FVector>(map,"ScrollBoundsMax");
+                        if(std::isfinite(at.X) && std::isfinite(at.Y) && max.X>min.X && max.Y>min.Y && at.X>=min.X && at.X<=max.X && at.Y>=min.Y && at.Y<=max.Y) {
+                            editorMapDestination=at; editorMapTeleport=true;
+                            diagnostics::Event("map double-click destination=%.1f,%.1f,%.1f",at.X,at.Y,at.Z);
+                        } else dg::Log("Editor map teleport rejected: outside map bounds or non-finite");
+                    }
+                }
+            }
+        }
+        return;
+    }
+    if(storyOff) if(auto service=nativeServices.find(object->InternalIndex);service!=nativeServices.end() && service->second==SerialAt(object->InternalIndex)) {
+        // Hiding the merchant alone does not unregister its E prompt or queued input.
+        if(name=="BeginTheInteract" || name=="StartTheInteraction" || name=="OnInputSucceeded"
+            || name=="InputPressStarted" || name=="PreInputStartPress" || name=="DisplayTheSlateInteract"
+            || name=="EnableTheVisualAdvertise" || name=="EnableInteract" || name=="ActivateMerchant"
+            || name=="EnteredInteractRange" || name=="EnteredInteractRange_Bind" || name=="EnteredAdvertiseRange") {
+            ++state.blockedNativeInteractions;
+            if(state.blockedNativeInteractions<=8) dg::Log("Native camp interaction blocked: %s::%s",GetName(object).c_str(),name.c_str());
+            return;
+        }
+    }
     if(devmenu::IsOpen() && (object==localPawn || object==abilityController) && (name.rfind("InpActEvt_",0)==0 || name.rfind("InpAxisEvt_",0)==0)) return;
     if(carryInputBlock && object==abilityController && HolstersCarriedItem(name)) return;
     if(carryRollBlock && object==abilityController && name.rfind("InpActEvt_Player_Roll",0)==0) return;
@@ -314,6 +356,7 @@ int ResolveMapEnum() {
         Params p(fn); if(!p.Set("Menu",value)) return -1; Call(menu,"GetMenu",&p);
         auto widget=p.Get<UObject*>("UserWidget");
         if(IsValid(widget) && IsAByName(widget,"UI_MapMenuWidget3D_C")) {
+            mapWidget=widget;
             dg::Log("Resolved map menu enum=%u from GetMenu",value); return value;
         }
     } return -1;
@@ -503,6 +546,16 @@ bool GamePaused(UObject* context) {
     auto f=statics?Fn(statics,"IsGamePaused"):nullptr; if(!f) return false;
     Params p(f); p.Set("WorldContextObject",context); Call(statics,"IsGamePaused",&p); return p.GetBool("ReturnValue");
 }
+void ResumeMapWorld(UObject* context) {
+    if(!IsValid(context) || !GamePaused(context)) return;
+    auto statics=FindObject("/Script/Engine.Default__GameplayStatics");
+    if(auto f=IsValid(statics)?Fn(statics,"SetGamePaused"):nullptr) {
+        Params p(f); p.Set("WorldContextObject",context); p.SetBool("bPaused",false);
+        Call(statics,"SetGamePaused",&p);
+        static unsigned logged=0;
+        if(++logged<=12) dg::Log("Map: native pause released so the menu camera can update");
+    }
+}
 void UpdatePauseMenu(UObject* controller,UObject* gameMode) {
     // The game builds a new OptionsTopMenuWidget_C on every pause, and only some of them are
     // published in Pause_Controls_C.PauseMenuWidget (cleared again on close). Menus opened from
@@ -603,16 +656,19 @@ void BoolArg(UObject* object,const char* fn,const char* parameter,bool value) {
 std::map<UObject*,int> ownMarkers;  // component -> serial
 std::map<UObject*,int> deniedMarkers;  // component -> serial
 std::map<UObject*,int> radarOnlyMarkers;  // component -> serial
+bool IsUserWaypoint(UObject* component) {
+    if(!IsValid(map)) return false;
+    auto marker=Read<UObject*>(map,"UserWaypointMarker");
+    return IsValid(marker) && (component->Outer==marker || component==Read<UObject*>(marker,"MiniMapLocationComponent"));
+}
 bool MarkerAllowed(UObject* component) {
     if(auto it=ownMarkers.find(component);it!=ownMarkers.end() && it->second==SerialAt(component->InternalIndex)) return true;
     if(auto it=deniedMarkers.find(component);it!=deniedMarkers.end() && it->second==SerialAt(component->InternalIndex)) return false;
     const uint8_t type=Read<uint8_t>(component,"LocationType",255);
     if(type>=30 || !(markerMask.load()&(1u<<type))) return false;
     if(type==9 && storyOff && IsValid(map)) {
-        auto owner=component->Outer;
-        auto playerWaypoint=Read<UObject*>(map,"UserWaypointMarker");
         // Mission, fast travel and player waypoints share the same native category.
-        return IsValid(playerWaypoint) && (owner==playerWaypoint || component==Read<UObject*>(playerWaypoint,"MiniMapLocationComponent"));
+        return IsUserWaypoint(component) && !GetBoolProp(component,"bHidden");
     }
     return true;
 }
@@ -637,6 +693,11 @@ void SuppressPresentation() {
     cursor=end;
     for(auto o:objects) {
         if(miniClass && IsA(o,miniClass)) {
+            // The game owns activation of its reusable user pointer. Forcing visibility
+            // resurrects an unset pointer at the world origin (the snowy mountains).
+            // Keep native place/clear transitions, while the icon pass reads bHidden.
+            if(storyOff && Read<uint8_t>(o,"LocationType",255)==9 && IsUserWaypoint(o)
+                && (markerMask.load()&(1u<<9)) && !ownMarkers.count(o) && !deniedMarkers.count(o)) continue;
             const bool visible=MarkerAllowed(o);
             const int serial=SerialAt(o->InternalIndex);
             auto baseline=markerBaselines.find(o->InternalIndex);
@@ -829,12 +890,50 @@ void PauseNativeJobs(UObject* gameMode) {
     state.nativeMissionActive=GetBoolProp(mission,"IsMissionActive");
     BoolArg(jobs,"SetActorTickEnabled","bEnabled",false);
 }
+bool NativeService(UObject* actor) {
+    // Asset families include mechanics, bounty/food counters and gun lockers.
+    // Ordinary pickups, doors and DGMP interactions remain available.
+    for(auto cls=actor->Class;cls;cls=SuperOf(cls)) {
+        const auto path=FullName(cls);
+        if(Has(path,"/Game/Libraries/Blueprints/Interacts/Merchants/")
+            || Has(path,"/Game/Libraries/Blueprints/Interacts/JobGivers/")) return true;
+        const auto name=GetName(cls);
+        if(name=="BP_CollectibleInteract_C" || name=="BP_Interact_Sleep_C"
+            || name=="BP_Interact_Sleep_NERO_C" || name=="BP_BoozerLootCrate_C") return true;
+    }
+    return false;
+}
+void DisableNativeService(UObject* actor) {
+    const int serial=SerialAt(actor->InternalIndex);
+    const auto it=nativeServices.find(actor->InternalIndex);
+    if(it==nativeServices.end() || it->second!=serial) {
+        nativeServices[actor->InternalIndex]=serial;
+        Install(actor,true);
+        Call(actor,"DisableInteract");
+        Call(actor,"ReleaseTheSlateInteract");
+        Call(actor,"DisableTheVisualAdvertise");
+        ++state.nativeServicesDisabled;
+        dg::Log("Native service disabled: %s",FullName(actor).c_str());
+    }
+    // Reassert flags after streaming, mission resets and Blueprint timer callbacks.
+    SetBoolProp(actor,"NoInteract",true);
+    SetBoolProp(actor,"InteractCurrentlyEnabled",false);
+    SetBoolProp(actor,"NeverDisplayInteract",true);
+    SetBoolProp(actor,"NeverDisplayAdvertise",true);
+    SetBoolProp(actor,"EnableTickOnOverlap",false);
+    ActorOff(actor);
+    for(const char* key:{"AdvertisingWidget","CalloutWidget"}) {
+        auto component=Read<UObject*>(actor,key);
+        if(IsValid(component)) SceneVisible(component,false);
+    }
+}
 void CleanWorld() {
     if(!storyOff) return;
     const auto tutorialSimple=FindClass("BendTutorialSimpleData"),tutorialMulti=FindClass("BendTutorialMultiData");
     const auto nestClass=FindClass("BendNest"),pieceClass=FindClass("FreakerNestPieceBase_C"),spawnClass=FindClass("BendNestSpawnLocation");
     const auto meshClass=FindClass("StaticMeshComponent"),blockerClass=FindClass("BendSplineBlocker"),restrictedClass=FindClass("XpecRestrictArea");
     const auto barricadeClass=FindClass("BP_AmbushZoneBarricade_MASTER_C"),doorClass=FindClass("BendDoor"),zoneClass=FindClass("BendNestingZone");
+    const auto interactClass=FindClass("BendBasicInteract");
     auto material=Read<UObject*>(map,"MapMID");
     auto scalarFn=IsValid(material)?Fn(material,"SetScalarParameterValue"):nullptr;
     static int cursor=0;
@@ -845,6 +944,9 @@ void CleanWorld() {
     const int end=std::min(n,cursor+2048);
     for(int i=cursor;i<end;++i) {
         auto o=ObjectAt(i); if(!o || !IsValid(o)) continue;
+        if(interactClass && IsA(o,interactClass) && RuntimeObject(o) && NativeService(o)) {
+            objects.push_back(o); continue;
+        }
         if((tutorialSimple && IsA(o,tutorialSimple)) || (tutorialMulti && IsA(o,tutorialMulti))) { SetBoolProp(o,"bTutorialDisplayed",true); continue; }
         const bool zone=zoneClass && IsA(o,zoneClass) && !(o->ObjectFlags&0x10);
         if(zone || ((nestClass && IsA(o,nestClass)) || (pieceClass && IsA(o,pieceClass)) || (spawnClass && IsA(o,spawnClass)) || (meshClass && IsA(o,meshClass)) || (blockerClass && IsA(o,blockerClass)) || (restrictedClass && IsA(o,restrictedClass)) || (barricadeClass && IsA(o,barricadeClass)) || (doorClass && IsA(o,doorClass))))
@@ -852,7 +954,9 @@ void CleanWorld() {
     }
     cursor=end;
     for(auto o:objects) {
-        if(zoneClass && IsA(o,zoneClass)) {
+        if(interactClass && IsA(o,interactClass) && NativeService(o)) {
+            DisableNativeService(o);
+        } else if(zoneClass && IsA(o,zoneClass)) {
             if(scalarFn) { Params p(scalarFn); p.Set("ParameterName",o->Name); p.Set<float>("Value",0); Call(material,"SetScalarParameterValue",&p); ++state.zoneParametersCleared; }
         } else if((nestClass && IsA(o,nestClass)) || (pieceClass && IsA(o,pieceClass)) || (spawnClass && IsA(o,spawnClass))) {
             ActorOff(o); ++state.nestObjectsHidden;
@@ -898,6 +1002,7 @@ void EditorAbilities(UObject* controller) {
 }
 }
 State GetState() { return state; }
+bool IsNativeCampService(UObject* actor) { return IsValid(actor) && IsAByName(actor,"BendBasicInteract") && RuntimeObject(actor) && NativeService(actor); }
 void ConfigureMarkers(uint32_t mask) { markerMask.store(mask&0x3FFFFFFFu); }
 bool ShowNativeHint(UObject* controller,const std::wstring& title,const std::wstring& text,const std::string& image,bool pause,float seconds) {
     if(!IsValid(controller) || !IsValid(hudWidget)) return false;
@@ -1110,7 +1215,11 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
         ApplySavingPolicy(gameMode);
         if(!IsValid(menu)) { menu=Instance("BP_Menu3D_C"); state.mapEnum=-1; }
         if(!IsValid(map)) map=Instance("BP_Map3D_C");
-        if(!IsValid(mapWidget)) mapWidget=Instance("UI_MapMenuWidget3D_C");
+        if(IsValid(menu)) {
+            auto activeMap=Read<UObject*>(menu,"Menu_Base_Map");
+            if(IsValid(activeMap)) mapWidget=activeMap;
+        }
+        if(editorSession && IsValid(mapWidget)) Install(mapWidget,true);
         if(IsValid(menu)) { Install(menu); ApplyMenuPolicy(); }
         if(IsValid(map)) {
             const bool wasFog=GetBoolProp(map,"bDisableFog");
@@ -1145,16 +1254,31 @@ void Update(UObject* pawn,UObject* controller,UObject* gameMode,bool editor,bool
     }
     DismissTutorials(controller);
     UpdatePauseMenu(controller,gameMode);
-    if(IsValid(menu)) state.menuActive=BoolCall(menu,"IsMenuActive");
+    if(IsValid(menu)) state.menuActive=BoolCall(menu,"IsMenuActive") || GetBoolProp(menu,"bInExitTransition");
+    // Opening the 3D menu from our post-tick command queue pauses the world before
+    // its camera gets a native update. Keep both the opening and closing transition
+    // running; otherwise only the 2D labels show until RequestClose releases pause.
+    if(state.menuActive) ResumeMapWorld(gameMode);
     if(!onlyMap) state.mapOnly=false;
     if(state.menuActive) HideMapControls();
     if(IsValid(gameMode) && reveal) for(const char* key:{"CascadeLocked","BelknapLocked","LostLakeLocked","CraterLakeLocked"}) SetBoolProp(gameMode,key,false);
 }
-void OpenMap() {
-    if(!IsValid(menu) || state.mapEnum<0 || state.menuActive) return;
-    if(auto f=Fn(menu,"DisplayMenu")) { Params p(f); p.Set<uint8_t>("Menu",uint8_t(state.mapEnum)); p.SetBool("NoAnimation",true); Call(menu,"DisplayMenu",&p); }
+bool OpenMap() {
+    if(!IsValid(menu) || state.mapEnum<0) { dg::Log("Map open rejected: menu is not ready"); return false; }
+    if(state.menuActive) return true;
+    if(auto f=Fn(menu,"DisplayMenu")) {
+        Params p(f); p.Set<uint8_t>("Menu",uint8_t(state.mapEnum)); p.SetBool("NoAnimation",false);
+        const bool ok=Call(menu,"DisplayMenu",&p);
+        if(ok) ResumeMapWorld(localPawn);
+        diagnostics::Event("map open dispatched=%d paused=%d",ok,GamePaused(localPawn)); return ok;
+    }
+    return false;
 }
 void CloseMap() { if(IsValid(menu) && state.menuActive) Call(menu,"RequestClose"); }
+bool TakeEditorMapTeleport(FVector& position) {
+    if(!editorSession || !editorMapTeleport) return false;
+    editorMapTeleport=false; position=editorMapDestination; return true;
+}
 void TestEvent(const char* event) {
     if(!IsValid(localPawn)) return;
     UObject* f=nullptr;

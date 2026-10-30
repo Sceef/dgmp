@@ -74,9 +74,35 @@ void Play(const std::string& path, const FVector* at, float volume, float pitch)
     }
 }
 
+// The shooter's own fire sound of that gun (wpn_m9_fire_plr, wpn_ak47_fire_auto_plr) next to the NPC cue,
+// or "" when the game has none.
+std::string NearFireSound(const std::string& npcCue) {
+    const size_t slash = npcCue.rfind('/'), dot = npcCue.rfind('.');
+    if (slash == std::string::npos || dot == std::string::npos) return "";
+    std::string name = npcCue.substr(slash + 1, dot - slash - 1);  // cc_wpn_m9_npc
+    if (name.rfind("cc_wpn_", 0) != 0 || name.size() < 12 || name.compare(name.size() - 4, 4, "_npc") != 0) return "";
+    const std::string gun = name.substr(7, name.size() - 11), dir = npcCue.substr(0, slash + 1);
+    for (const char* kind : {"_fire_plr", "_fire_auto_plr"}) {
+        const std::string n = "wpn_" + gun + kind, path = dir + n + "." + n;
+        if (Asset(path)) return path;
+    }
+    return "";
+}
+
 void OnPlayerShot(uint16_t id, const std::string& weaponClass, const FVector& at) {
     const std::string cue = FireSound(weaponClass);
     if (cue.empty()) { dg::Log("Sounds: no fire sound for %s (player %u)", weaponClass.c_str(), id); return; }
+    // The NPC cues are made for enemies far off: a gun fired next to this player sounded distant. Within
+    // 25 m, the shooter's own sound of that gun, where it was fired.
+    FVector me{};
+    if (auto f = IsValid(localPawn) ? Fn(localPawn, "K2_GetActorLocation") : nullptr) { Params p(f); Call(localPawn, "K2_GetActorLocation", &p); me = p.Get<FVector>("ReturnValue"); }
+    const float dx = at.X - me.X, dy = at.Y - me.Y, dz = at.Z - me.Z;
+    if (dx * dx + dy * dy + dz * dz < 2500.f * 2500.f) {
+        static std::map<std::string, std::string> nearCues;
+        auto it = nearCues.find(cue);
+        if (it == nearCues.end()) it = nearCues.emplace(cue, NearFireSound(cue)).first;
+        if (!it->second.empty()) { Play(it->second, &at, 1.f, 1.f); return; }
+    }
     Play(cue, &at, 1.f, 1.f);
 }
 

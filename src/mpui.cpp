@@ -245,7 +245,7 @@ std::map<uint16_t, Spot> spots;
 std::set<uint8_t> watched;
 int world = 0;
 struct Prompt { uint16_t id = 0; uint8_t key = 0; std::string text; bool vehicle = false, carry = false; float progress = 0; } prompt;  // id 0: none
-struct CarryPrompt { std::string text; float progress = 0; } carryPrompt;  // text "": none
+struct CarryPrompt { std::string text; float progress = 0; bool inHands = false; } carryPrompt;
 struct VehiclePrompt { uint16_t id = 0; std::string text; } vehiclePrompt;
 bool owned = false;  // the overlay is shown for a dialog
 
@@ -329,7 +329,7 @@ void Reset() {
 bool DialogOpen() { std::lock_guard g(lock); return dialog.open || itemWin.open; }
 void SetWorld(int w) { std::lock_guard g(lock); world = w; }
 void SetIcons(std::vector<WorldIcon> list) { std::lock_guard g(lock); icons = std::move(list); }
-void SetCarryPrompt(const std::string& text, float progress) { std::lock_guard g(lock); carryPrompt = {text, progress}; }
+void SetCarryPrompt(const std::string& text, float progress, bool inHands) { std::lock_guard g(lock); carryPrompt = {text, progress, inHands}; }
 bool CarryPromptShown() { std::lock_guard g(lock); return prompt.carry; }
 void SetVehiclePrompt(uint16_t id, const std::string& text) { std::lock_guard g(lock); vehiclePrompt = {id, text}; }
 
@@ -355,6 +355,9 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
             }
             if (!prompt.id && vehiclePrompt.id) prompt = {vehiclePrompt.id, 'E', vehiclePrompt.text, true};
             if (!prompt.id && !carryPrompt.text.empty()) prompt = {0xFFFF, 'F', carryPrompt.text, false, true, carryPrompt.progress};
+            // Keep ownership during pickup/put-down acknowledgements too: a held F must not
+            // open the NPC dialog in the frame between the animation and the server reply.
+            if (carryPrompt.inHands) prompt = {0xFFFF, 'F', carryPrompt.text, false, true, carryPrompt.progress};
         }
         // Every key that may act is followed (also while it may not, so that a key still held
         // when a dialog closes is no new press).
@@ -379,7 +382,7 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
         const bool now = focused && want.count(uint8_t(vk)) && (GetAsyncKeyState(vk) & 0x8000);
         if (now && !down[vk] && actNow) {
             uint16_t use = 0; bool watchedKey, vehicle = false;
-            { std::lock_guard g(lock); if (prompt.id && !prompt.carry && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; } watchedKey = watched.count(uint8_t(vk)) != 0; }
+            { std::lock_guard g(lock); if (prompt.id && !prompt.carry && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; } watchedKey = watched.count(uint8_t(vk)) != 0 && !(prompt.carry && prompt.key == vk); }
             if (use && vehicle) client.SendVehicle(net::Msg::VehicleEnter, use);
             else if (use) client.SendUse(use);
             else if (watchedKey) client.SendKey(uint8_t(vk));

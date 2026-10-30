@@ -4,10 +4,14 @@
 #include "profile.h"
 #include "log.h"
 #include "shared/json.h"
+#include "shared/polygon.h"
 #include "worldedit.h"
 #include "environment.h"
 #include "skins.h"
 #include "carry.h"
+#include "editor_storage.h"
+#include "diagnostics.h"
+#include "policy.h"
 #include "../api/dgmp.h"
 #include "imgui.h"
 #include "ImGuizmo.h"
@@ -31,8 +35,25 @@ namespace {
 // ---------------------------------------------------------------- language (editor.ini: English by default)
 bool english = true;
 std::atomic<bool> invertLook{true};  // editor camera: vertical look inverted (editor.ini InvertY)
+editor_storage::Schedule autosave;
+editor_storage::Document worldDocument, skinDocument, questDocument;
+std::string autosaveStatus;
+bool Autosave(bool switching = false);
+std::string SkinJson();
+fs::path SkinsFile(const std::string& mode);
+bool Dressing();
 const char* T(const char* ru) {
     static const std::map<std::string, const char*> en = {
+    {"Карта (M)", "Map (M)"}, {"Автосохранение:", "Autosave:"}, {"Выключено", "Off"},
+    {"Многоугольник", "Polygon"}, {"Рисовать контур", "Draw outline"}, {"Завершить контур", "Finish outline"},
+    {"Отменить контур", "Cancel outline"}, {"Вершины", "Vertices"}, {"вершин", "vertices"}, {"Переставить", "Reposition"},
+    {"Черновик сохранён в .autosave", "Draft saved in .autosave"},
+    {"ЛКМ по земле — вершина. Enter — завершить, Backspace — убрать последнюю, Esc — отменить.", "Click the ground to add a vertex. Enter: finish. Backspace: remove last. Esc: cancel."},
+    {"1 мин", "1 min"}, {"5 мин", "5 min"}, {"10 мин", "10 min"},
+    {"Диагностика разработки", "Development diagnostics"}, {"Автосохранено", "Autosaved"},
+    {"Ошибка автосохранения", "Autosave failed"},
+    {"Сохранена копия восстановления; основной файл занят или изменён извне", "Recovery copy saved; main file is locked or changed externally"},
+    {"Карта: двойной ЛКМ — телепорт; M / Esc — закрыть", "Map: double left-click to teleport; M / Esc to close"},
     {"Дойти до точки", "Go to a point"},
     {"Удерживать зону", "Hold an area"},
     {"Сделать N раз", "Do N times"},
@@ -138,7 +159,7 @@ const char* T(const char* ru) {
     {"Вернуть", "Redo"},
     {"Возвращено", "Redone"},
     {"Убрано: %zu   Сдвинуто: %zu   Добавлено: %zu", "Removed: %zu   Moved: %zu   Added: %zu"},
-    {"Выделено", "Selection"},
+    {"Выделено", "Selection"}, {"Свойства выбранного", "Inspector"},
     {"Кликните по объекту в мире", "Click an object in the world"},
     {"Кликните в мире, чтобы поставить проп", "Click in the world to place the prop"},
     {"Проп ", "Prop "},
@@ -558,6 +579,7 @@ struct WActor { char id[48] = "", group[48] = "", look[192] = "", anim[128] = "i
 // zombie: a zombie zone instead (world.json "zombieZones", docs/zombies.md): a circle that keeps `max` zombies of
 // `types` (comma separated) while a player is within `wake` m of it, a dead one back after `respawn` s.
 struct WZone { char name[48] = ""; bool pvp = false, box = false; WT t; float radius = 20, length = 40, width = 40, height = 50;
+               bool polygon = false; std::vector<::polygon::Point> points;
                bool enabled = true, notify = true; char text[160] = ""; int world = -1;
                bool zombie = false; char types[96] = "Swarmer"; int max = 6; float respawn = 60, wake = 150; };
 // A box to carry in both hands (world.json "carries", docs/API.md "Переноска"): placed here, made by the server.
@@ -604,6 +626,8 @@ std::string worldMode;                        // mode whose world is edited
 std::vector<std::string> modes;               // modes/* folders
 bool worldDirty = false;                      // the game should apply the edits again
 bool worldClickPending = false;
+int polygonEditZone = -1, polygonMoveVertex = -1;
+std::vector<::polygon::Point> polygonBefore;
 // Selection in the world: kind 1 world object (id = key, t = its transform), 2 added prop (id = uid),
 // 3 logic object (id = "name#index"), 4 NPC (id = its id), 5 zone (id = its index), 6 box to carry (id = its key).
 struct WSel { int kind = 0; std::string id, cls; WT t; UObject* actor = nullptr; };  // actor: the clicked world object
@@ -793,10 +817,7 @@ void FromJson(const json::Value& v, Quest& q) {
     }
 }
 bool WriteFile(const fs::path& file, const std::string& text) {
-    std::error_code ec; fs::create_directories(file.parent_path(), ec);
-    const fs::path tmp = file.wstring() + L".tmp";
-    { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << text; if (!out) return false; }
-    return MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    return editor_storage::Write(file, text, false);
 }
 bool ValidId(const char* id) {
     if (!id[0]) return false;
@@ -817,6 +838,23 @@ WT TFrom(const json::Value& v) {
     WT t; t.x = float(v["x"].asNumber()); t.y = float(v["y"].asNumber()); t.z = float(v["z"].asNumber());
     t.pitch = float(v["pitch"].asNumber()); t.yaw = float(v["yaw"].asNumber()); t.roll = float(v["roll"].asNumber()); t.scale = float(v["scale"].asNumber(1));
     return t;
+}
+std::string PolygonError(const std::vector<::polygon::Point>& points) {
+    const auto error=::polygon::Validate(points);
+    if(english || error.empty()) return error;
+    if(error=="A polygon needs 3 to 128 vertices") return "Нужно от 3 до 128 вершин";
+    if(error=="Invalid polygon coordinates") return "Недопустимые координаты вершин";
+    if(error=="Polygon vertices must be at least 1 cm apart") return "Вершины совпадают: расстояние должно быть не меньше 1 см";
+    if(error=="Polygon edges overlap") return "Рёбра накладываются друг на друга";
+    if(error=="Polygon edges intersect") return "Рёбра пересекаются";
+    return "Контур должен иметь ненулевую площадь";
+}
+std::string WorldProblem() {
+    for(const auto& z:world.zones) if(z.polygon && !z.zombie) {
+        const auto error=PolygonError(z.points);
+        if(!error.empty()) return std::string(z.name)+": "+error;
+    }
+    return {};
 }
 json::Value WorldJson(const World& w) {
     json::Value v = json::Value::Object();
@@ -885,9 +923,13 @@ json::Value WorldJson(const World& w) {
                 zombieList.push(j);
                 continue;
             }
-            j.set("name", std::string(z.name)); j.set("type", std::string(z.pvp ? "pvp" : "pve")); j.set("shape", std::string(z.box ? "box" : "circle"));
+            j.set("name", std::string(z.name)); j.set("type", std::string(z.pvp ? "pvp" : "pve")); j.set("shape", std::string(z.polygon ? "polygon" : z.box ? "box" : "circle"));
             j.set("x", double(std::round(z.t.x))); j.set("y", double(std::round(z.t.y))); j.set("z", double(std::round(z.t.z)));
-            if (z.box) { j.set("yaw", double(std::round(z.t.yaw * 10) / 10)); j.set("length", double(z.length)); j.set("width", double(z.width)); }
+            if(z.polygon) {
+                j.set("yaw",double(z.t.yaw)); auto points=json::Value::Array();
+                for(auto p:z.points) points.push(json::Value::Object().set("x",p.x).set("y",p.y));
+                j.set("points",points);
+            } else if (z.box) { j.set("yaw", double(std::round(z.t.yaw * 10) / 10)); j.set("length", double(z.length)); j.set("width", double(z.width)); }
             else j.set("radius", double(z.radius));
             j.set("height", double(z.height));
             if (z.world >= 0) j.set("world", double(z.world));
@@ -993,6 +1035,8 @@ void WorldFrom(const json::Value& v, World& w) {
         Copy(z.name, sizeof z.name, j["name"].asString());
         z.pvp = j["type"].asString() == "pvp";
         z.box = j["shape"].asString() == "box" || (!j["shape"].isString() && (j["width"].isNumber() || j["length"].isNumber()));
+        z.polygon=j["shape"].asString()=="polygon" || (!j["shape"].isString() && j["points"].isArray());
+        for(const auto& p:j["points"].elements()) z.points.push_back({p["x"].asNumber(),p["y"].asNumber()});
         z.t.x = float(j["x"].asNumber()); z.t.y = float(j["y"].asNumber()); z.t.z = float(j["z"].asNumber()); z.t.yaw = float(j["yaw"].asNumber());
         z.radius = float(j["radius"].asNumber(20)); z.length = float(j["length"].asNumber(40)); z.width = float(j["width"].asNumber(40));
         z.height = float(j["height"].asNumber(50)); z.world = j["world"].isNumber() ? int(j["world"].asNumber()) : -1;
@@ -1082,6 +1126,10 @@ WZone* ZoneOf(const std::string& id) {
     return i >= 0 && i < int(world.zones.size()) ? &world.zones[size_t(i)] : nullptr;
 }
 void SelectZone(int index) {
+    if(polygonEditZone>=0 && polygonEditZone!=index) {
+        if(polygonEditZone<int(world.zones.size())) world.zones[size_t(polygonEditZone)].points=polygonBefore;
+        polygonEditZone=polygonMoveVertex=-1;
+    }
     if (index < 0 || index >= int(world.zones.size())) { wsel = {}; return; }
     wsel = {5, std::to_string(index), "", world.zones[size_t(index)].t};
 }
@@ -1168,7 +1216,9 @@ void RefreshQuestList() {
 }
 bool SaveQuest() {
     if (!ValidId(quest.id)) { Toast(T("Имя файла квеста: латиница, цифры, _ и -")); return false; }
-    if (!WriteFile(QuestDir() / (std::string(quest.id) + ".json"), ToJson(quest).dump())) { Toast(T("Не удалось сохранить")); return false; }
+    const auto path = QuestDir() / (std::string(quest.id) + ".json");
+    if (questDocument.path != path) questDocument.Load(path, "");
+    if (questDocument.Save(ToJson(quest).dump(), false) != editor_storage::Result::Saved) { Toast(T("Не удалось сохранить")); return false; }
     if (!loadedId.empty() && loadedId != quest.id) { std::error_code ec; fs::remove(QuestDir() / (loadedId + ".json"), ec); }
     loadedId = quest.id;
     RefreshQuestList();
@@ -1176,12 +1226,14 @@ bool SaveQuest() {
     return true;
 }
 void LoadQuest(const std::string& id) {
+    if (!Autosave(true)) return;
     std::ifstream in(QuestDir() / (id + ".json"), std::ios::binary); std::stringstream ss; ss << in.rdbuf();
     json::Value v;
     if (!json::Value::Parse(ss.str(), v) || !v.isObject()) { Toast("quests/" + id + T(".json повреждён")); return; }
     FromJson(v, quest);
     if (!quest.id[0]) Copy(quest.id, sizeof(quest.id), id);
     loadedId = id; questOpen = true; selected = quest.steps.empty() ? -1 : 0; previewDirty = true;
+    questDocument.Load(QuestDir() / (id + ".json"), ToJson(quest).dump());
     ResetHistory();
 }
 void WritePreview() {
@@ -1252,6 +1304,7 @@ UObject* SpawnBare(UObject* cls, const FVector& at, UObject* context) {
     }
     Params finish(Fn(EditorStatics(), "FinishSpawningActor")); finish.Set("Actor", a); finish.Set("SpawnTransform", t);
     Call(EditorStatics(), "FinishSpawningActor", &finish);
+    diagnostics::Object("editor-spawn", a, a->InternalIndex, SerialAt(a->InternalIndex));
     if (auto f = Fn(a, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", false); Call(a, "SetActorEnableCollision", &p); }
     return a;
 }
@@ -1262,6 +1315,7 @@ UObject* AddShape(UObject* actor, UObject* mesh, UObject* material, const FVecto
     for (auto k = c->Class; k; k = SuperOf(k)) if (auto prop = FindProperty(k, "Mobility")) { *(reinterpret_cast<uint8_t*>(c) + Field<int>(prop, off::UProperty_Offset)) = 2; break; }
     if (auto f = Fn(c, "SetStaticMesh")) { Params p(f); p.Set("NewMesh", mesh); Call(c, "SetStaticMesh", &p); }
     RegisterComponent(c);
+    diagnostics::Object("editor-shape-register", c, c->InternalIndex, SerialAt(c->InternalIndex));
     if (auto f = Fn(c, "SetCollisionEnabled")) { Params p(f); p.Set<uint8_t>("NewType", 0); Call(c, "SetCollisionEnabled", &p); }
     if (auto f = Fn(c, "K2_AttachTo")) { Params p(f); p.Set("InParent", Field<UObject*>(actor, off::Actor_RootComponent)); p.Set<uint8_t>("AttachType", 0); Call(c, "K2_AttachTo", &p); }
     if (auto f = Fn(c, "K2_SetRelativeLocationAndRotation")) { Params p(f); p.Set("NewLocation", loc); p.Set("NewRotation", rot); Call(c, "K2_SetRelativeLocationAndRotation", &p); }
@@ -1270,7 +1324,10 @@ UObject* AddShape(UObject* actor, UObject* mesh, UObject* material, const FVecto
     return c;
 }
 void DestroyVis(LVis& v) {
-    for (UObject* a : {v.actor, v.label}) if (IsValid(a)) Call(a, "K2_DestroyActor");
+    for (UObject* a : {v.actor, v.label}) if (IsValid(a)) {
+        diagnostics::Object("editor-destroy", a, a->InternalIndex, SerialAt(a->InternalIndex));
+        Call(a, "K2_DestroyActor");
+    }
     v = LVis{};
 }
 void UpdateLogicVisuals(UObject* pawn) {
@@ -1311,7 +1368,8 @@ void UpdateLogicVisuals(UObject* pawn) {
                 Want w{"zone#" + std::to_string(i), std::string(z.name) + (z.zombie ? "  (zombies)" : z.pvp ? "  (PvP)" : "  (PvE)") + (z.enabled ? "" : " -"), {}, true,
                        wsel.kind == 5 && wsel.id == std::to_string(i) ? 2 : z.zombie ? 8 : z.pvp ? 4 : 3, z.box && !z.zombie ? 2 : 1, z.length / 2, z.width / 2, true};
                 w.item.t = z.t; w.item.t.pitch = w.item.t.roll = 0; w.item.radius = z.radius;
-                if (!z.box) w.item.t.yaw = 0;
+                if(z.polygon && !z.zombie) { w.shape=3; }
+                if (!z.box && !z.polygon) w.item.t.yaw = 0;
                 wants.push_back(w);
             }
     }
@@ -1333,11 +1391,12 @@ void UpdateLogicVisuals(UObject* pawn) {
         if (v.actor && !IsValid(v.actor)) v = LVis{};
         char geo[64];
         snprintf(geo, sizeof geo, "%d %.2f %.2f %.2f", w.shape, w.shape == 1 ? w.item.radius : w.halfX, w.halfY, w.zone ? 1.f : 0.f);
-        if (!v.actor || v.geo != geo) {
+        std::string geometry=geo;
+        if (!v.actor || v.geo != geometry) {
             DestroyVis(v);
             v.actor = SpawnBare(smaCls, {w.item.t.x, w.item.t.y, w.item.t.z}, pawn);
             if (!v.actor) continue;
-            v.geo = geo;
+            v.geo = geometry;
             // One coloured material for all its shapes.
             UObject* root = Field<UObject*>(v.actor, off::Actor_RootComponent);
             UObject* first = AddShape(v.actor, cylinder, nullptr, {0, 0, 200}, {0, 0, 0}, {0.08f, 0.08f, 4.f});  // the beam, 4 m
@@ -1366,6 +1425,9 @@ void UpdateLogicVisuals(UObject* pawn) {
                         AddShape(v.actor, cylinder, v.material, {a.X + (b.X - a.X) * f, a.Y + (b.Y - a.Y) * f, postH * 50}, {0, 0, 0}, {postW, postW, postH});
                     }
                 }
+            } else if(w.shape==3) {
+                // The editable wire contour is projected by DrawWorldTools. Keep the
+                // centre marker stable while vertices move: no component churn per click.
             } else {
                 AddShape(v.actor, cone, v.material, {80, 0, 120}, {-90, 0, 0}, {0.4f, 0.4f, 0.8f});  // points along the actor's yaw
             }
@@ -1563,13 +1625,18 @@ void ListModes() {
     std::sort(modes.begin(), modes.end());
 }
 void LoadWorld(const std::string& m) {
+    if (!Autosave(true)) return;
     worldMode = m; world = World{}; wsel = {};
     std::ifstream in(WorldFile(m), std::ios::binary); std::stringstream ss; ss << in.rdbuf();
     json::Value v;
     if (!ss.str().empty() && json::Value::Parse(ss.str(), v) && v.isObject()) WorldFrom(v, world);
     ScanLogic(m);
     LoadSkinLists(m);
+    worldDocument.Load(WorldFile(m), WorldJson(world).dump());
+    skinDocument.Load(SkinsFile(m), SkinJson());
+    diagnostics::Event("editor load mode=%s points=%zu props=%zu", m.c_str(), world.logic.size(), world.add.size());
     placeLogic.clear(); placeZone = 0; placeCarry = false; placeEnt = 0; doorPending.clear();
+    polygonEditZone=polygonMoveVertex=-1; polygonBefore.clear();
     if (world.env.set) {  // the mode's own time and weather
         DGMP_SetTimeOfDay(world.env.time); DGMP_SetTimePaused(world.env.paused);
         if (world.env.weather < 0) DGMP_SetWeatherAutomatic(1); else DGMP_SetWeather(uint32_t(world.env.weather));
@@ -1637,6 +1704,16 @@ Pick PickUnderMouse(UObject* pawn, UObject* controller, bool complex = false) {
 void WorldClick(UObject* pawn, UObject* controller) {
     const Pick pick = PickUnderMouse(pawn, controller, true);
     std::lock_guard g(lock);
+    if(polygonEditZone>=0 && polygonEditZone<int(world.zones.size())) {
+        auto& z=world.zones[size_t(polygonEditZone)];
+        if(!pick.valid || !z.polygon) return;
+        const double a=z.t.yaw*0.017453292519943, dx=(pick.at.X-z.t.x)/100,dy=(pick.at.Y-z.t.y)/100;
+        const ::polygon::Point p{dx*std::cos(a)+dy*std::sin(a),-dx*std::sin(a)+dy*std::cos(a)};
+        if(polygonMoveVertex>=0 && polygonMoveVertex<int(z.points.size())) {
+            z.points[size_t(polygonMoveVertex)]=p; polygonEditZone=polygonMoveVertex=-1;
+        } else if(z.points.size()<128) z.points.push_back(p);
+        worldDirty=true; return;
+    }
     if (!pick.valid) { wsel = {}; return; }
     if (placeZone) {
         WZone z; z.pvp = placeZone == 2; z.zombie = placeZone == 3;
@@ -1826,6 +1903,7 @@ void WorldRestore(std::vector<World>& from, std::vector<World>& to, const char* 
     to.push_back(world); world = from.back(); from.pop_back();
     worldCommittedJson = WorldJson(world).dump(); worldCommitted = world; worldCommittedValid = true;
     wsel = {}; worldDirty = true; Toast(done);
+    polygonEditZone=polygonMoveVertex=-1;
 }
 LItem* LogicOf(const std::string& id) {
     const size_t hash = id.rfind('#');
@@ -1840,6 +1918,7 @@ void SelectLogic(const std::string& name, int index) {
     wsel = {3, name + "#" + std::to_string(index), "", it->second[index].t};
 }
 void WorldDelete() {
+    polygonEditZone=polygonMoveVertex=-1;
     if (wsel.kind == 1) {
         if (std::find(world.remove.begin(), world.remove.end(), wsel.id) == world.remove.end()) world.remove.push_back(wsel.id);
         world.move.erase(wsel.id);
@@ -2025,6 +2104,7 @@ void DrawZones() {
         ImGui::PopStyleColor(); ImGui::SameLine();
         char label[160];
         if (z.zombie) snprintf(label, sizeof label, "%s  —  R %.0f %s, %d  %s%s", z.name, z.radius, T("м"), z.max, z.types, z.enabled ? "" : T(", выключена"));
+        else if(z.polygon) snprintf(label,sizeof label,"%s  —  %zu %s%s",z.name,z.points.size(),T("вершин"),z.enabled?"":T(", выключена"));
         else if (z.box) snprintf(label, sizeof label, "%s  —  %.0f x %.0f %s%s", z.name, z.length, z.width, T("м"), z.enabled ? "" : T(", выключена"));
         else snprintf(label, sizeof label, "%s  —  R %.0f %s%s", z.name, z.radius, T("м"), z.enabled ? "" : T(", выключена"));
         if (ImGui::Selectable(label, wsel.kind == 5 && wsel.id == std::to_string(i))) SelectZone(i);
@@ -2067,10 +2147,40 @@ void DrawZoneProps() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T("Имя для кода режима: getZone(\"имя\"), setZone(\"имя\", {...}), player:inZone(\"имя\"). Латиница, цифры, _ и -"));
     if (ImGui::RadioButton(T("PvE (безопасная)"), !z->pvp)) z->pvp = false;
     ImGui::SameLine(); if (ImGui::RadioButton("PvP", z->pvp)) z->pvp = true;
-    if (ImGui::RadioButton(T("Круг"), !z->box)) z->box = false;
-    ImGui::SameLine(); if (ImGui::RadioButton(T("Прямоугольник"), z->box)) z->box = true;
+    if (ImGui::RadioButton(T("Круг"), !z->box && !z->polygon)) { z->box=false; z->polygon=false; polygonEditZone=-1; }
+    ImGui::SameLine(); if (ImGui::RadioButton(T("Прямоугольник"), z->box && !z->polygon)) { z->box=true; z->polygon=false; polygonEditZone=-1; }
+    ImGui::SameLine(); if(ImGui::RadioButton(T("Многоугольник"),z->polygon)) {
+        z->polygon=true; z->box=false;
+        if(z->points.empty()) z->points={{-z->length/2,-z->width/2},{z->length/2,-z->width/2},{z->length/2,z->width/2},{-z->length/2,z->width/2}};
+    }
     bool moved = ImGui::DragFloat3(T("Центр"), &z->t.x, 5.f, 0, 0, "%.0f");
-    if (z->box) {
+    if(z->polygon) {
+        moved |= ImGui::DragFloat(T("Поворот"),&z->t.yaw,1.f,-360,360,"%.0f°");
+        const int index=std::atoi(wsel.id.c_str());
+        if(polygonEditZone!=index) {
+            if(ImGui::Button(T("Рисовать контур"))) {
+                polygonBefore=z->points; z->points.clear(); polygonEditZone=index; polygonMoveVertex=-1;
+                placeLogic.clear(); placeProp.clear(); placeActor.clear(); placeZone=0; placeCarry=false; placeEnt=0; doorPending.clear();
+            }
+        } else {
+            ImGui::TextWrapped("%s",T("ЛКМ по земле — вершина. Enter — завершить, Backspace — убрать последнюю, Esc — отменить."));
+            if(ImGui::Button(T("Завершить контур")) && ::polygon::Validate(z->points).empty()) polygonEditZone=polygonMoveVertex=-1;
+            ImGui::SameLine(); if(ImGui::Button(T("Отменить контур"))) { z->points=polygonBefore; polygonEditZone=polygonMoveVertex=-1; }
+        }
+        const auto error=PolygonError(z->points);
+        if(!error.empty()) ImGui::TextColored(ImVec4(1,.35f,.25f,1),"%s",error.c_str());
+        ImGui::Text("%s: %zu / 128",T("Вершины"),z->points.size());
+        ImGui::BeginChild("polygonVertices",ImVec2(0,160),true);
+        for(size_t i=0;i<z->points.size();++i) {
+            ImGui::PushID(int(i)); float xy[]{float(z->points[i].x),float(z->points[i].y)};
+            ImGui::Text("%zu",i+1); ImGui::SameLine(); ImGui::SetNextItemWidth(145);
+            if(ImGui::DragFloat2("##xy",xy,.1f,-100000,100000,"%.2f")) z->points[i]={xy[0],xy[1]};
+            ImGui::SameLine(); if(ImGui::SmallButton(T("Переставить"))) { polygonBefore=z->points; polygonEditZone=index; polygonMoveVertex=int(i); }
+            ImGui::SameLine(); if(ImGui::SmallButton("X")) { z->points.erase(z->points.begin()+i); ImGui::PopID(); break; }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+    } else if (z->box) {
         moved |= ImGui::DragFloat(T("Поворот"), &z->t.yaw, 1.f, -360, 360, "%.0f°");
         ImGui::DragFloat(T("Длина, м"), &z->length, 0.5f, 1.f, 5000.f, "%.0f");
         ImGui::DragFloat(T("Ширина, м"), &z->width, 0.5f, 1.f, 5000.f, "%.0f");
@@ -2091,7 +2201,7 @@ void DrawZoneProps() {
     ImGui::TextDisabled("Lua: getZone(\"%s\")", luaName.c_str());
     ImGui::PopID();
 }
-// The selected box's settings (World > Selected).
+// The selected box's settings (Inspector).
 char carryKeyEdit[48] = "";
 std::string carryKeyFor;  // the box carryKeyEdit belongs to
 void DrawCarryProps() {
@@ -2130,7 +2240,7 @@ void DrawCarryProps() {
     ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
     ImGui::PopID();
 }
-// The selected vehicle, door or loot (World > Selected).
+// The selected vehicle, door or loot (Inspector).
 char entKeyEdit[48] = "";
 std::string entKeyFor;
 void DrawEntProps() {
@@ -2246,7 +2356,7 @@ void AnimField(const char* label, char* anim, size_t size) {
     ImGui::PopID();
 }
 
-// The selected NPC's settings (World > Selected).
+// The selected NPC's settings (Inspector).
 char actorIdEdit[48] = "";
 std::string actorIdFor;  // the NPC actorIdEdit belongs to
 void DrawActorProps() {
@@ -2278,10 +2388,65 @@ void DrawActorProps() {
     if (ImGui::Button(T("Удалить"))) { WorldDelete(); return; }
     ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate();
 }
+// Selection properties have their own scroll and placement, independent of the world palette.
+ImVec2 worldPanelPos{};
+void DrawWorldInspector() {
+    if(worldMode.empty()) return;
+    const auto* vp=ImGui::GetMainViewport();
+    const float width=460.f;
+    ImGui::SetNextWindowPos(ImVec2(std::max(vp->WorkPos.x+20,worldPanelPos.x-width-12),worldPanelPos.y),ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(width,std::min(620.f,vp->WorkSize.y-40)),ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(340,220),ImVec2(FLT_MAX,FLT_MAX));
+    const std::string title=std::string(T("Свойства выбранного"))+"###world-inspector";
+    if(!ImGui::Begin(title.c_str())) { ImGui::End(); return; }
+    ImGui::TextDisabled("%s",worldMode.c_str());
+    ImGui::SameLine(); if(ImGui::Button(T("Сохранить"))) actions.push_back({Action::WorldSave,""});
+    ImGui::Separator();
+    if (wsel.kind == 0) ImGui::TextDisabled(placeProp.empty() ? T("Кликните по объекту в мире") : T("Кликните в мире, чтобы поставить проп"));
+    else if (wsel.kind == 4) DrawActorProps();
+    else if (wsel.kind == 5) DrawZoneProps();
+    else if (wsel.kind == 6) DrawCarryProps();
+    else if (wsel.kind == 7) DrawEntProps();
+    else {
+        ImGui::TextWrapped("%s", wsel.kind == 2 ? (T("Проп ") + wsel.id).c_str() : wsel.id.c_str());
+        if (!wsel.cls.empty()) ImGui::TextDisabled("%s", wsel.cls.c_str());
+        WT& t = wsel.t;
+        bool changed = false;
+        changed |= ImGui::DragFloat3(T("Позиция"), &t.x, 5.f, 0, 0, "%.0f");
+        changed |= ImGui::DragFloat3(T("Поворот"), &t.pitch, 1.f, -360, 360, "%.0f°");
+        WAdd* added = nullptr;
+        if (wsel.kind == 2) for (auto& a : world.add) if (a.uid == wsel.id) added = &a;
+        if (wsel.kind == 2 && !(added && added->light)) changed |= ImGui::DragFloat(T("Масштаб"), &t.scale, 0.01f, 0.05f, 20.f, "%.2f");
+        if (added && added->light) {
+            WLight& l = added->l;
+            bool lit = false;
+            lit |= ImGui::ColorEdit3(T("Цвет"), l.color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueWheel);
+            lit |= ImGui::DragFloat(T("Яркость"), &l.intensity, 50.f, 0.f, 200000.f, "%.0f", ImGuiSliderFlags_Logarithmic);
+            lit |= ImGui::DragFloat(T("Дальность, м"), &l.radius, 0.1f, 0.5f, 200.f, "%.1f");
+            if (added->asset == "light:spot") lit |= ImGui::DragFloat(T("Угол конуса"), &l.cone, 0.5f, 2.f, 89.f, "%.0f°");
+            lit |= ImGui::Checkbox(T("Тени"), &l.shadows);
+            if (lit) worldDirty = true;
+        }
+        LItem* li = wsel.kind == 3 ? LogicOf(wsel.id) : nullptr;
+        const LDecl* ld = li ? FindDecl(wsel.id.substr(0, wsel.id.rfind('#'))) : nullptr;
+        if (li && (!ld || ld->trigger)) ImGui::DragFloat(T("Радиус, м"), &li->radius, 0.1f, 0.5f, 200.f, "%.1f");
+        if (changed) {
+            if (wsel.kind == 1) world.move[wsel.id] = t;
+            else if (li) li->t = t;
+            else for (auto& a : world.add) if (a.uid == wsel.id) a.t = t;
+            worldDirty = true;
+        }
+        if (ImGui::Button(wsel.kind == 1 ? T("Убрать из мира") : wsel.kind == 3 ? T("Удалить") : T("Удалить проп"))) WorldDelete();
+        if (wsel.kind == 1 && world.move.count(wsel.id)) { ImGui::SameLine(); if (ImGui::Button(T("Вернуть на место"))) { world.move.erase(wsel.id); wsel = {}; worldDirty = true; } }
+        if (wsel.kind == 2) { ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate(); }
+    }
+    ImGui::End();
+}
 void DrawWorld() {
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkSize.x - 520, 20), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(500, 560), ImGuiCond_FirstUseEver);
     ImGui::Begin(T("Мир"));
+    worldPanelPos=ImGui::GetWindowPos();
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo(T("Режим"), worldMode.empty() ? T("— выберите —") : worldMode.c_str())) {
         for (auto& m : modes) if (ImGui::Selectable(m.c_str(), m == worldMode)) actions.push_back({Action::WorldLoad, m});
@@ -2375,45 +2540,6 @@ void DrawWorld() {
                 ImGui::TreePop();
             }
         }
-    }
-    ImGui::SeparatorText(T("Выделено"));
-    if (wsel.kind == 0) ImGui::TextDisabled(placeProp.empty() ? T("Кликните по объекту в мире") : T("Кликните в мире, чтобы поставить проп"));
-    else if (wsel.kind == 4) DrawActorProps();
-    else if (wsel.kind == 5) DrawZoneProps();
-    else if (wsel.kind == 6) DrawCarryProps();
-    else if (wsel.kind == 7) DrawEntProps();
-    else {
-        ImGui::TextWrapped("%s", wsel.kind == 2 ? (T("Проп ") + wsel.id).c_str() : wsel.id.c_str());
-        if (!wsel.cls.empty()) ImGui::TextDisabled("%s", wsel.cls.c_str());
-        WT& t = wsel.t;
-        bool changed = false;
-        changed |= ImGui::DragFloat3(T("Позиция"), &t.x, 5.f, 0, 0, "%.0f");
-        changed |= ImGui::DragFloat3(T("Поворот"), &t.pitch, 1.f, -360, 360, "%.0f°");
-        WAdd* added = nullptr;
-        if (wsel.kind == 2) for (auto& a : world.add) if (a.uid == wsel.id) added = &a;
-        if (wsel.kind == 2 && !(added && added->light)) changed |= ImGui::DragFloat(T("Масштаб"), &t.scale, 0.01f, 0.05f, 20.f, "%.2f");
-        if (added && added->light) {
-            WLight& l = added->l;
-            bool lit = false;
-            lit |= ImGui::ColorEdit3(T("Цвет"), l.color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueWheel);
-            lit |= ImGui::DragFloat(T("Яркость"), &l.intensity, 50.f, 0.f, 200000.f, "%.0f", ImGuiSliderFlags_Logarithmic);
-            lit |= ImGui::DragFloat(T("Дальность, м"), &l.radius, 0.1f, 0.5f, 200.f, "%.1f");
-            if (added->asset == "light:spot") lit |= ImGui::DragFloat(T("Угол конуса"), &l.cone, 0.5f, 2.f, 89.f, "%.0f°");
-            lit |= ImGui::Checkbox(T("Тени"), &l.shadows);
-            if (lit) worldDirty = true;
-        }
-        LItem* li = wsel.kind == 3 ? LogicOf(wsel.id) : nullptr;
-        const LDecl* ld = li ? FindDecl(wsel.id.substr(0, wsel.id.rfind('#'))) : nullptr;
-        if (li && (!ld || ld->trigger)) ImGui::DragFloat(T("Радиус, м"), &li->radius, 0.1f, 0.5f, 200.f, "%.1f");
-        if (changed) {
-            if (wsel.kind == 1) world.move[wsel.id] = t;
-            else if (li) li->t = t;
-            else for (auto& a : world.add) if (a.uid == wsel.id) a.t = t;
-            worldDirty = true;
-        }
-        if (ImGui::Button(wsel.kind == 1 ? T("Убрать из мира") : wsel.kind == 3 ? T("Удалить") : T("Удалить проп"))) WorldDelete();
-        if (wsel.kind == 1 && world.move.count(wsel.id)) { ImGui::SameLine(); if (ImGui::Button(T("Вернуть на место"))) { world.move.erase(wsel.id); wsel = {}; worldDirty = true; } }
-        if (wsel.kind == 2) { ImGui::SameLine(); if (ImGui::Button(T("Дублировать"))) WorldDuplicate(); }
     }
     if (!world.remove.empty() && ImGui::TreeNode(T("Убранные объекты"))) {
         for (size_t i = 0; i < world.remove.size(); ++i) {
@@ -2928,6 +3054,33 @@ void DrawWorldTools() {
     const float w = io.DisplaySize.x, h = io.DisplaySize.y;
     float view[16], proj[16];
     Matrices(view, proj, w, h);
+    for(size_t zi=0;zi<world.zones.size();++zi) {
+        const auto& z=world.zones[zi]; if(!z.polygon || z.zombie) continue;
+        const double angle=z.t.yaw*0.017453292519943, c=std::cos(angle),s=std::sin(angle);
+        auto screen=[&](::polygon::Point p,ImVec2& out) { return Project(view,proj,w,h,
+            float(z.t.x+(p.x*c-p.y*s)*100),float(z.t.y+(p.x*s+p.y*c)*100),z.t.z+100,out); };
+        const ImU32 color=::polygon::Validate(z.points).empty()?IM_COL32(70,230,110,230):IM_COL32(255,90,60,230);
+        auto dl=ImGui::GetBackgroundDrawList();
+        for(size_t i=0;i<z.points.size();++i) {
+            ImVec2 a,b;
+            if(!screen(z.points[i],a)) continue;
+            if(screen(z.points[(i+1)%z.points.size()],b)) dl->AddLine(a,b,color,2);
+            dl->AddCircleFilled(a,5,color);
+            if(wsel.kind==5 && wsel.id==std::to_string(zi)) dl->AddText(ImVec2(a.x+7,a.y),color,std::to_string(i+1).c_str());
+        }
+    }
+    if(polygonEditZone>=0) {
+        if(polygonEditZone>=int(world.zones.size())) { polygonEditZone=polygonMoveVertex=-1; return; }
+        auto& z=world.zones[size_t(polygonEditZone)];
+        if(!io.WantTextInput) {
+            if(ImGui::IsKeyPressed(ImGuiKey_Escape)) { z.points=polygonBefore; polygonEditZone=polygonMoveVertex=-1; worldDirty=true; }
+            else if(ImGui::IsKeyPressed(ImGuiKey_Backspace) && !z.points.empty()) { z.points.pop_back(); worldDirty=true; }
+            else if(ImGui::IsKeyPressed(ImGuiKey_Enter) && ::polygon::Validate(z.points).empty()) polygonEditZone=polygonMoveVertex=-1;
+        }
+        if(polygonEditZone>=0 && overlay::CursorMode() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse)
+            actions.push_back({Action::WorldClick,""});
+        TrackWorldHistory(); return;
+    }
     bool busy = false;
     if (wsel.kind) {
         if (!io.WantTextInput) {
@@ -3140,9 +3293,7 @@ std::string SkinsProblem() {
     }
     return {};
 }
-bool SaveSkinLists() {
-    const std::string problem = SkinsProblem();
-    if (!problem.empty()) { Toast(problem); return false; }
+std::string SkinJson() {
     json::Value v = json::Value::Object();
     for (int k = 0; k < 2; ++k) {
         json::Value list = json::Value::Array();
@@ -3155,10 +3306,52 @@ bool SaveSkinLists() {
         }
         v.set(kSkinKinds[k], list);
     }
-    if (!WriteFile(SkinsFile(worldMode), v.dump())) { Toast(T("Не удалось сохранить")); return false; }
+    return v.dump();
+}
+bool SaveSkinLists() {
+    const std::string problem = SkinsProblem();
+    if (!problem.empty()) { Toast(problem); return false; }
+    if (skinDocument.Save(SkinJson(), false) != editor_storage::Result::Saved) { Toast(T("Не удалось сохранить")); return false; }
     skinsChanged = false;
     Toast(T("Сохранено: modes/") + worldMode + "/skins.json");
     return true;
+}
+bool Autosave(bool switching) {
+    if (!autosave.minutes) return true;
+    int saved = 0, recovery = 0, failed = 0;
+    auto save = [&](editor_storage::Document& doc, const std::string& text, bool draft=false) {
+        if (!doc.Dirty(text)) return;
+        diagnostics::Event("autosave begin path=%ls bytes=%zu", doc.path.c_str(), text.size());
+        // An incomplete contour survives a crash in recovery, but never replaces the
+        // active server document with an invalid/missing safe zone.
+        auto copy=doc; copy.baseline.ok=false;
+        const auto result = draft ? copy.Save(text,true) : doc.Save(text, true);
+        if (result == editor_storage::Result::Saved) ++saved;
+        else if (result == editor_storage::Result::RecoveryOnly) ++recovery;
+        else if (result == editor_storage::Result::Failed) ++failed;
+        dg::Log("Editor autosave result=%d path=%ls", int(result), doc.path.c_str());
+    };
+    if (!worldMode.empty()) {
+        save(worldDocument, WorldJson(world).dump(),!WorldProblem().empty());
+        // An unfinished appearance selection remains a draft in the creator.
+        if (!Dressing() && SkinsProblem().empty()) save(skinDocument, SkinJson());
+    }
+    if (questOpen) {
+        const auto path = QuestDir() / (ValidId(quest.id) ? std::string(quest.id) + ".json" : std::string(".autosave/quest-draft.json"));
+        if (questDocument.path != path) {
+            questDocument.Load(path, "");
+            // An unsaved renamed/new quest must never replace an existing quest automatically.
+            if (questDocument.baseline.exists) questDocument.baseline.ok = false;
+        }
+        save(questDocument, ToJson(quest).dump());
+    }
+    if (saved || recovery || failed) {
+        SYSTEMTIME time; GetLocalTime(&time); char clock[16]; snprintf(clock, sizeof(clock), "%02u:%02u:%02u", time.wHour,time.wMinute,time.wSecond);
+        autosaveStatus = std::string(clock) + " — " + (failed ? T("Ошибка автосохранения") : recovery ? T("Сохранена копия восстановления; основной файл занят или изменён извне") : T("Автосохранено"));
+        if(recovery && !WorldProblem().empty()) autosaveStatus=std::string(clock)+" — "+WorldProblem()+" · "+T("Черновик сохранён в .autosave");
+        if (!switching || failed || recovery) Toast(autosaveStatus);
+    }
+    return failed == 0;
 }
 void OpenWardrobe(int kind, int index) {
     const SkinEntry& e = skinLists[kind][size_t(index)];
@@ -3365,10 +3558,17 @@ void UpdateWardrobe(UObject* pawn, UObject* controller) {
 
 void Draw() {
     std::lock_guard g(lock);
+    if (overlay::NativeInput()) {
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, 20), ImGuiCond_Always, ImVec2(0.5f,0));
+        ImGui::Begin("##editor-map-help", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings);
+        ImGui::TextUnformatted(T("Карта: двойной ЛКМ — телепорт; M / Esc — закрыть"));
+        ImGui::End();
+        return;
+    }
     ImGuizmo::BeginFrame();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 20, vp->WorkPos.y + 120), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(380, 90), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(620, 180), ImGuiCond_FirstUseEver);
     ImGui::Begin(T("Редактор DGMP"), nullptr, ImGuiWindowFlags_NoCollapse);
     const int wasMode = mode;
     ImGui::RadioButton(T("Мир"), &mode, 0); ImGui::SameLine(); if (ImGui::RadioButton(T("Квест"), &mode, 1)) previewDirty = true;
@@ -3376,17 +3576,32 @@ void Draw() {
     if (mode != wasMode && wasMode == 2 && Dressing()) skins::CloseCreator();
     ImGui::SameLine(0, 24);
     ImGui::TextDisabled("%s", overlay::CursorMode() ? T("Tab — полёт") : T("Tab — курсор"));
-    ImGui::SameLine(ImGui::GetWindowWidth() - 150);
     bool inv = invertLook;
     if (ImGui::Checkbox("Invert Y", &inv)) {
         invertLook = inv;
         WritePrivateProfileStringW(L"Editor", L"InvertY", inv ? L"1" : L"0", (fs::path(profile::Root()) / L"editor.ini").c_str());
     }
-    ImGui::SameLine(ImGui::GetWindowWidth() - 50);
+    ImGui::SameLine();
     if (ImGui::SmallButton(english ? "RU" : "EN")) {
         english = !english;
         WritePrivateProfileStringW(L"Editor", L"Language", english ? L"en" : L"ru", (fs::path(profile::Root()) / L"editor.ini").c_str());
     }
+    ImGui::TextUnformatted(T("Автосохранение:")); ImGui::SameLine();
+    const char* intervals[] = {T("Выключено"), T("1 мин"), T("5 мин"), T("10 мин")};
+    const int values[] = {0, 1, 5, 10};
+    int selectedInterval = autosave.minutes == 0 ? 0 : autosave.minutes == 5 ? 2 : autosave.minutes == 10 ? 3 : 1;
+    ImGui::SetNextItemWidth(110);
+    if (ImGui::Combo("##autosave", &selectedInterval, intervals, 4)) {
+        autosave.Set(values[selectedInterval], Now());
+        WritePrivateProfileStringW(L"Editor", L"AutosaveMinutes", std::to_wstring(autosave.minutes).c_str(), (fs::path(profile::Root()) / L"editor.ini").c_str());
+        diagnostics::Event("autosave interval=%d minutes", autosave.minutes);
+    }
+    bool diag = diagnostics::Enabled();
+    if (ImGui::Checkbox(T("Диагностика разработки"), &diag)) {
+        diagnostics::SetEnabled(diag);
+        WritePrivateProfileStringW(L"Editor", L"Diagnostics", diag ? L"1" : L"0", (fs::path(profile::Root()) / L"editor.ini").c_str());
+    }
+    if (!autosaveStatus.empty()) ImGui::TextWrapped("%s", autosaveStatus.c_str());
     ImGui::End();
     if (mode == 2) {
         DrawSkins();
@@ -3394,7 +3609,7 @@ void Draw() {
     } else {
         DrawLibrary();
         if (mode == 1) DrawQuest();
-        else DrawWorld();
+        else { DrawWorld(); DrawWorldInspector(); }
         DrawSceneTools();
     }
     if (mode == 1) { HistoryKeys(); TrackHistory(); }
@@ -3431,9 +3646,11 @@ void Start() {
     GetPrivateProfileStringW(L"Editor", L"Language", L"en", lang, 8, (fs::path(profile::Root()) / L"editor.ini").c_str());
     english = wcscmp(lang, L"ru") != 0;
     invertLook = GetPrivateProfileIntW(L"Editor", L"InvertY", 1, (fs::path(profile::Root()) / L"editor.ini").c_str()) != 0;
+    autosave.Set(GetPrivateProfileIntW(L"Editor", L"AutosaveMinutes", 1, (fs::path(profile::Root()) / L"editor.ini").c_str()), Now());
     overlay::SetDraw(&Draw);
     overlay::SetVisible(true);
     overlay::SetKeepFocus(true);
+    overlay::EnableEditorMapKey();
 }
 
 void Update(double now, UObject* pawn, UObject* controller) {
@@ -3452,8 +3669,10 @@ void Update(double now, UObject* pawn, UObject* controller) {
         std::lock_guard g(lock);
         auto pending = std::move(actions); actions.clear();
         for (auto& [action, arg] : pending) {
+            diagnostics::Event("editor action=%d target=%s mode=%s", int(action), arg.c_str(), worldMode.c_str());
             switch (action) {
             case Action::New:
+                if (!Autosave(true)) break;
                 quest = Quest{}; Copy(quest.id, sizeof(quest.id), "quest_" + std::to_string(GetTickCount64() % 100000));
                 Copy(quest.title.en, sizeof(quest.title.en), "New quest"); Copy(quest.title.ru, sizeof(quest.title.ru), "Новый квест");
                 loadedId.clear(); questOpen = true; selected = -1; previewDirty = true; ResetHistory(); break;
@@ -3463,8 +3682,8 @@ void Update(double now, UObject* pawn, UObject* controller) {
             case Action::WorldLoad: LoadWorld(arg); break;
             case Action::SkinsSave: SaveSkinLists(); break;
             case Action::WorldSave: {
-                std::error_code ec; fs::create_directories(WorldFile(worldMode).parent_path(), ec);
-                if (WriteFile(WorldFile(worldMode), WorldJson(world).dump())) Toast(T("Сохранено: modes/") + worldMode + "/world.json"); else Toast(T("Не удалось сохранить"));
+                if(const auto error=WorldProblem();!error.empty()) { Toast(error); break; }
+                if (worldDocument.Save(WorldJson(world).dump(), false) == editor_storage::Result::Saved) Toast(T("Сохранено: modes/") + worldMode + "/world.json"); else Toast(T("Не удалось сохранить"));
                 break;
             }
             case Action::WorldClick: worldClickPending = true; break;  // handled below, outside the lock
@@ -3479,6 +3698,15 @@ void Update(double now, UObject* pawn, UObject* controller) {
             }
         }
         if (previewDirty && now >= previewAt) { previewDirty = false; previewAt = now + 0.3; WritePreview(); }
+        if (autosave.Due(now)) { diagnostics::Phase("editor-autosave"); Autosave(); }
+    }
+    static bool waitForMapRelease = false;
+    if (overlay::NativeInput()) {
+        std::lock_guard g(lock); worldClickPending = false; waitForMapRelease = true; return;
+    }
+    if (waitForMapRelease) {
+        if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) return;
+        waitForMapRelease = false;
     }
     // World edits: the editor's preview (hidden, not destroyed, so removals can be undone).
     bool worldClick = false;
@@ -3490,10 +3718,10 @@ void Update(double now, UObject* pawn, UObject* controller) {
         worldClick = worldClickPending; worldClickPending = false;
     }
     if (worldClick) WorldClick(pawn, controller);
-    worldedit::Update(pawn);
-    UpdateLogicVisuals(pawn);
-    UpdateActorPreviews(pawn);
-    UpdateCarryPreviews(pawn);
+    diagnostics::Phase("editor-world"); worldedit::Update(pawn);
+    diagnostics::Phase("editor-logic-markers"); UpdateLogicVisuals(pawn);
+    diagnostics::Phase("editor-actor-previews"); UpdateActorPreviews(pawn);
+    diagnostics::Phase("editor-carry-previews"); UpdateCarryPreviews(pawn);
     UpdateSelectionOutline(controller);
     UpdateWardrobe(pawn, controller);
     // Left click into the world (not on a window) while the cursor belongs to the editor.

@@ -36,6 +36,7 @@ namespace fs = std::filesystem;
 //   trace [seconds]                   log distinct events of the local pawn/controller and their components
 //   refs <obj> [bytes]                 raw scan: offsets holding pointers to live objects (unreflected fields)
 //   ai [radius m] [all]                AI pawns: class, controller, health, distance (visible unless all)
+//   camp [radius m]                    audit native camp NPCs and service interaction flags
 //   sdump <obj> <Prop> [index] [depth] fields of a struct property / struct array element
 //   z spawn <faction> [dist m] [chase 0|1] | z last | z list | z brain <obj> on|off |
 //     z drive <obj> x y z [yaw] | z mirror <src> <puppet> [delay s] [side m] | z release <obj>
@@ -290,6 +291,28 @@ std::string Run(const std::string& line) {
         hud::Submit(w);
         return "said";
     }
+    if (cmd == "camp") {
+        const float radius = (a.size() > 1 ? std::stof(a[1]) : 250.f) * 100.f;
+        auto ai = FindClass("BendAIPawn"), dummy = FindClass("XpecDummySkeletalMeshActor");
+        const FVector me = IsValid(ctxPawn) ? ActorPos(ctxPawn) : FVector{};
+        int count = 0, visible = 0, enabled = 0;
+        for (int i = 0, n = NumObjects(); i < n; ++i) {
+            auto o = ObjectAt(i);
+            if (!o || o == ctxPawn || (o->ObjectFlags & 0x30) || !IsValid(o) || zombies::IsOurs(o)) continue;
+            const bool npc = (ai && IsA(o, ai)) || (dummy && IsA(o, dummy));
+            if (!npc && !policy::IsNativeCampService(o)) continue;
+            const FVector p = ActorPos(o);
+            const float dx = p.X - me.X, dy = p.Y - me.Y, dz = p.Z - me.Z;
+            const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (d > radius) continue;
+            const bool hidden = GetBoolProp(o, "bHidden"), usable = !npc && !GetBoolProp(o, "NoInteract") && GetBoolProp(o, "InteractCurrentlyEnabled");
+            visible += !hidden; enabled += usable; ++count;
+            out << (npc ? "NPC " : "SERVICE ") << GetName(o) << " hidden=" << hidden << " enabled=" << usable
+                << " at " << p.X << " " << p.Y << " " << p.Z << "\n";
+        }
+        out << "native=" << count << " visible=" << visible << " enabledServices=" << enabled;
+        return out.str();
+    }
     if (cmd == "ai") {  // ai [radius m] [all]: AI pawns (visible ones unless "all"): class, controller, health, distance
         const float radius = a.size() > 1 ? std::stof(a[1]) * 100.f : 1e9f; const bool all = a.size() > 2 && a[2] == "all";
         UObject* cls = FindClass("BendAIPawn"); if (!cls) return "no BendAIPawn";
@@ -395,6 +418,7 @@ std::string Run(const std::string& line) {
         for (auto& n : SearchNames(a[1].c_str(), a.size() > 2 ? std::stoi(a[2]) : 80)) out << "  " << n << "\n";
         return out.str();
     }
+    if (cmd == "ghosts") return mp::DescribeGhosts();
     if (cmd == "trace") {
         const double seconds = a.size() > 1 ? std::stod(a[1]) : 60;
         std::vector<UObject*> extra;  // trace <seconds> ghosts | <obj>: also those objects

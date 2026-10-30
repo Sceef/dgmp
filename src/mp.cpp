@@ -1,4 +1,5 @@
 #include "mp.h"
+#include "diagnostics.h"
 #include "hud.h"
 #include "inventory.h"
 #include "gameevents.h"
@@ -17,8 +18,10 @@
 #include "webui.h"
 #include "clientlua.h"
 #include "traps.h"
+#include "throws.h"
 #include "overlay.h"
 #include "imgui.h"
+#include <atomic>
 #include <mutex>
 #include "lang.h"
 #include <filesystem>
@@ -277,11 +280,13 @@ std::vector<uint8_t> BuildGear(UObject* pawn) {
     Params p(f); Call(pawn, "GetAttachedActors", &p);
     const RawList actors = p.Get<RawList>("OutActors");
     static UObject* meshCls = FindClass("MeshComponent");
+    static UObject* equippableCls = FindClass("BendEquippableItem");  // weapons, the rock, the binoculars
     std::vector<UObject*> items;  // components already written, by index
     net::Writer body;
     for (int i = 0; i < actors.num; ++i) {
         UObject* a = actors.data[i];
-        if (!IsValid(a) || GetName(a->Class).rfind("Bend_Wpn", 0) != 0 || GetBoolProp(a, "bHidden")) continue;
+        if (!IsValid(a) || GetBoolProp(a, "bHidden")) continue;
+        if (GetName(a->Class).rfind("Bend_Wpn", 0) != 0 && !(equippableCls && IsA(a, equippableCls))) continue;
         auto g = Fn(a, "GetComponentsByClass"); if (!g) continue;
         Params q(g); q.Set("ComponentClass", meshCls); Call(a, "GetComponentsByClass", &q);
         const RawList comps = q.Get<RawList>("ReturnValue");
@@ -318,6 +323,12 @@ std::vector<uint8_t> BuildGear(UObject* pawn) {
                         scale = {div(cs.X, b.Scale3D.X), div(cs.Y, b.Scale3D.Y), div(cs.Z, b.Scale3D.Z)};
                     }
                 }
+                // Rounded: worked out from world transforms, the numbers shake a little every time, and each
+                // change is sent and makes the others rebuild every mesh this player carries.
+                auto snap = [](float v, float step) { return std::round(v / step) * step; };
+                loc = {snap(loc.X, 0.2f), snap(loc.Y, 0.2f), snap(loc.Z, 0.2f)};
+                rot = {snap(rot.Pitch, 0.5f), snap(rot.Yaw, 0.5f), snap(rot.Roll, 0.5f)};
+                scale = {snap(scale.X, 0.005f), snap(scale.Y, 0.005f), snap(scale.Z, 0.005f)};
                 body.Str(FullName(mesh)); body.U8(skeletal); body.U8(uint8_t(int8_t(parentIndex))); body.Str(NameOf(socket));
                 body.F32(loc.X); body.F32(loc.Y); body.F32(loc.Z); body.F32(rot.Pitch); body.F32(rot.Yaw); body.F32(rot.Roll);
                 body.F32(scale.X); body.F32(scale.Y); body.F32(scale.Z);
@@ -487,15 +498,52 @@ struct ClockSync {
 
 struct PoseFrame { double t; FVector pos; FQuat rot; std::vector<FTransform> local; };
 
+// A clothing part's own posed copy. The game's parts never tick (bCanEverTick false): their skeletal
+// master pushes each pose into them, a poseable mesh does not (they stood in the base pose), and set
+// again as their master every frame they took a broken buffer (a crumpled body). So each part gets a
+// poseable mesh of its own, with its materials, written with the same bones by name.
+UObject* CreatePoseable(UObject* actor, UObject* src);
+UObject* DamageTypeFor(const std::string& weapon);
+void Footstep(UObject* mesh, const FVector& foot, bool close);
+struct PoseTwin { UObject* src = nullptr; UObject* comp = nullptr; std::vector<int32_t> index; };
+
 struct PoseTrack {
     UObject* comp = nullptr;
     BoneList bones;
+    std::vector<PoseTwin> twins;
     bool active = false, mismatchLogged = false;
     uint32_t hash = 0;
     std::deque<PoseFrame> frames;
     double lastRecv = 0;
 
-    void Reset() { comp = nullptr; active = false; frames.clear(); }
+    void Reset() { comp = nullptr; active = false; frames.clear(); twins.clear(); }
+    void DropTwins() {
+        for (auto& tw : twins) {
+            if (IsValid(tw.comp)) if (auto f = Fn(tw.comp, "K2_DestroyComponent")) { Params p(f); p.Set("Object", tw.comp); Call(tw.comp, "K2_DestroyComponent", &p); }
+            if (IsValid(tw.src)) SetCompHidden(tw.src, false);
+        }
+        twins.clear();
+    }
+    // The parts shown with this pose: twins made for new ones, dropped for gone ones.
+    void SyncTwins(UObject* actor, const std::vector<UObject*>& parts) {
+        bool same = parts.size() == twins.size();
+        for (size_t i = 0; same && i < parts.size(); ++i) same = twins[i].src == parts[i] && IsValid(twins[i].comp);
+        if (same) return;
+        DropTwins();
+        auto boneIndex = Fn(comp, "GetBoneIndex");
+        for (UObject* part : parts) {
+            PoseTwin tw; tw.src = part;
+            tw.comp = CreatePoseable(actor, part);
+            if (!tw.comp) continue;
+            for (const FName& n : bones.names) {
+                int32_t idx = -1;
+                if (boneIndex) { Params p(boneIndex); p.Set("BoneName", n); Call(tw.comp, "GetBoneIndex", &p); idx = p.Get<int32_t>("ReturnValue"); }
+                tw.index.push_back(idx);
+            }
+            SetCompHidden(part, true);
+            twins.push_back(std::move(tw));
+        }
+    }
     void Push(ClockSync& clock, uint32_t h, double sendTime, const FVector& pos, const FQuat& rot, const net::QBone* b, int count, double now) {
         hash = h;
         const double t = clock.Map(sendTime, now);
@@ -512,8 +560,11 @@ struct PoseTrack {
             if (!mismatchLogged) dg::Log("MP pose: bone list mismatch (theirs %08X, ours %08X)", hash, bones.hash);
             mismatchLogged = true; return false;
         }
-        return !frames.empty() && frames.back().local.size() == bones.names.size() && now - lastRecv < 0.6;
+        // A gap in the stream (lost packets) keeps the last pose for a while: the fallback animations are
+        // Deacon's, and on another skeleton (a woman's) they do not play, the body stands in its base pose.
+        return !frames.empty() && frames.back().local.size() == bones.names.size() && now - lastRecv < 3.0;
     }
+    bool Stale(double now) const { return now - lastRecv > 0.4; }  // no fresh pose: the body goes where the state says
     bool Sample(const ClockSync& clock, double now, FVector& pos, FQuat& rot, std::vector<FTransform>& local) {
         if (frames.empty()) return false;
         const double t = now - std::max(0.12, clock.Delay(1.0 / 15));
@@ -535,14 +586,22 @@ struct PoseTrack {
     void Apply(const ClockSync& clock, double now, UObject* actor) {
         FVector pos; FQuat rot; std::vector<FTransform> local;
         if (!Sample(clock, now, pos, rot, local) || local.size() != bones.names.size()) return;
-        if (actor) SetActorTransform(actor, pos, rot);
-        auto& arr = Field<FTransformArray>(comp, kPoseable_BoneSpaceTransforms);
-        for (size_t i = 0; i < local.size(); ++i) { const int32_t idx = bones.index[i]; if (idx >= 0 && idx < arr.Num) arr.Data[idx] = local[i]; }
-        // Touch the root through the API so the engine marks the pose dirty.
-        if (auto f = Fn(comp, "SetBoneTransformByName")) {
-            Params p(f); p.Set("BoneName", bones.names[0]); p.Set("InTransform", arr.Data[bones.index[0]]); p.Set<uint8_t>("BoneSpace", 1);
-            Call(comp, "SetBoneTransformByName", &p);
-        }
+        if (actor && !Stale(now)) SetActorTransform(actor, pos, rot);
+        auto write = [&](UObject* target, const std::vector<int32_t>& index) {
+            auto& arr = Field<FTransformArray>(target, kPoseable_BoneSpaceTransforms);
+            int32_t first = -1;
+            for (size_t i = 0; i < local.size() && i < index.size(); ++i) {
+                const int32_t idx = index[i];
+                if (idx >= 0 && idx < arr.Num) { arr.Data[idx] = local[i]; if (first < 0) first = int32_t(i); }
+            }
+            // Touch a bone through the API so the engine marks the pose dirty.
+            if (first >= 0) if (auto f = Fn(target, "SetBoneTransformByName")) {
+                Params p(f); p.Set("BoneName", bones.names[first]); p.Set("InTransform", arr.Data[index[first]]); p.Set<uint8_t>("BoneSpace", 1);
+                Call(target, "SetBoneTransformByName", &p);
+            }
+        };
+        write(comp, bones.index);
+        for (auto& tw : twins) if (IsValid(tw.comp)) write(tw.comp, tw.index);
     }
 };
 
@@ -630,10 +689,11 @@ void SwitchGroupPose(UObject* mainActor, std::vector<GhostPart>& parts, PoseTrac
     SetCompHidden(t.comp, !on); SetCompHidden(main, on);
     for (auto& gp : parts) {
         UObject* comp = MeshComp(gp.actor);
-        if (gp.master) SetMaster(comp, target);
+        if (gp.master) SetMaster(comp, main);  // posed through its twin (PoseTwin)
         else { AttachCompTo(comp, target, gp.socket); SetRelative(comp, gp.relLoc, gp.relRot); }
     }
-    for (UObject* part : LookParts(main)) SetMaster(part, target);  // clothing created by SetLook
+    for (UObject* part : LookParts(main)) SetMaster(part, main);  // clothing created by SetLook: twins too
+    if (!on) t.DropTwins();
     t.active = on;
 }
 
@@ -665,7 +725,21 @@ bool MoveFlashlightToL() {
     return true;
 }
 void DrawPlates();
-void DrawHudLayer() { DrawPlates(); traps::Draw(); clientlua::Draw(); mpui::DrawHud(); voice::DrawHud(); }
+// A hit on another player (a bullet or a swing this player made): a small cross at the centre of the
+// screen for a moment, as games show it, since the other body barely reacts here.
+std::atomic<double> hitMarkUntil{0};
+void MarkHit() { hitMarkUntil = Clock() + 0.25; }
+void DrawHitMark() {
+    const double left = hitMarkUntil.load() - Clock();
+    if (left <= 0) return;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const ImVec2 s = ImGui::GetIO().DisplaySize;
+    const float cx = s.x * 0.5f, cy = s.y * 0.5f, k = s.y / 1080.f, in = 6.f * k, out = 15.f * k;
+    const ImU32 c = IM_COL32(255, 255, 255, int(255 * std::min(1.0, left / 0.12)));
+    for (int sx : {-1, 1}) for (int sy : {-1, 1})
+        dl->AddLine(ImVec2(cx + sx * in, cy + sy * in), ImVec2(cx + sx * out, cy + sy * out), c, 2.5f * k);
+}
+void DrawHudLayer() { DrawPlates(); DrawHitMark(); traps::Draw(); clientlua::Draw(); mpui::DrawHud(); voice::DrawHud(); }
 void DrawPlates() {
     std::vector<Plate> list;
     std::string caption;
@@ -702,6 +776,8 @@ struct Ghost {
     struct Snap { double t; net::PlayerState s; };
     std::deque<Snap> snaps;
     double lastRecv = 0, nextSpawnTry = 0, nextBikeTry = 0;
+    bool footUp[2] = {false, false};  // each foot (left, right) lifted since its last step (Footsteps; not at first)
+    double footAt[2] = {0, 0};
     UObject* body = nullptr;
     std::vector<GhostPart> bodyParts;
     UObject* bike = nullptr;
@@ -716,6 +792,7 @@ struct Ghost {
     UObject* blocker = nullptr;     // capsule that blocks other players (server setting)
     UObject* bikeBlocker = nullptr; // box that blocks other players and bikes on its bike
     uint8_t blockersOn = 0xFF;
+    bool blockerRiding = false;  // on a vehicle: the body blocks nothing (see UpdateBlockers)
     bool deadShown = false;
     std::map<UObject*, net::HitZone> hitZones;  // hit boxes on the body and the zone each one counts as
     struct HitBox { UObject* comp; FName bone; FVector loc; FRotator rot; };
@@ -828,6 +905,14 @@ struct Ghost {
             }
         return c;
     }
+    // The bike drawn under this player: hidden once they are off it, and then out of everything's way
+    // (its blocker too): the server's bike they left stands right there and would be thrown into the air.
+    void ShowBike(bool show) {
+        SetHidden(bike, !show); for (auto& p : bikeParts) SetHidden(p.actor, !show);
+        if (auto f = IsValid(bike) ? Fn(bike, "SetActorEnableCollision") : nullptr) { Params p(f); p.SetBool("bNewActorEnableCollision", show); Call(bike, "SetActorEnableCollision", &p); }
+        for (auto& part : bikeParts) if (auto f = IsValid(part.actor) ? Fn(part.actor, "SetActorEnableCollision") : nullptr) { Params p(f); p.SetBool("bNewActorEnableCollision", show); Call(part.actor, "SetActorEnableCollision", &p); }
+        bikeHidden = !show;
+    }
     void UpdateBlockers() {
         if (blockersOn == collisions && (!(collisions & net::CollideBikes) || !bike || bikeBlocker)) return;
         auto enable = [](UObject* c, bool on) { if (auto f = IsValid(c) ? Fn(c, "SetCollisionEnabled") : nullptr) { Params p(f); p.Set<uint8_t>("NewType", on ? 3 : 0); Call(c, "SetCollisionEnabled", &p); } };
@@ -837,7 +922,9 @@ struct Ghost {
             if (auto f = Fn(bike, "SetActorEnableCollision")) { Params p(f); p.SetBool("bNewActorEnableCollision", true); Call(bike, "SetActorEnableCollision", &p); }
             if (auto f = Fn(MeshComp(bike), "SetCollisionEnabled")) { Params p(f); p.Set<uint8_t>("NewType", 0); Call(MeshComp(bike), "SetCollisionEnabled", &p); }
         }
-        enable(blocker, (collisions & net::CollidePlayers) != 0);
+        // A rider's body blocks nothing: behind someone it sits on their bike, and a capsule in its seat
+        // throws that bike (and its driver) into the air on the driver's screen.
+        enable(blocker, (collisions & net::CollidePlayers) != 0 && !blockerRiding);
         enable(bikeBlocker, (collisions & net::CollideBikes) != 0);
         blockersOn = collisions;
     }
@@ -964,12 +1051,48 @@ struct Ghost {
         Call(MeshComp(body), "PlayAnimation", &p);
         anim = a;
     }
+    // A remote body's footsteps: the game plays them from its walk animations' notifies, which a body
+    // posed from the network has none of. A foot coming down to the ground while the player moves is a
+    // step: the game's own step sound and dust of the surface under it (BendSurfaceTypeManager).
+    void Footsteps(double now, const FVector& feet, const FVector& cam, const net::PlayerState& s) {
+        const PoseTrack& t = tracks[net::kPoseBody];
+        if (!t.active || !IsValid(t.comp) || (s.flags & net::StateOnBike)) return;
+        const float camD2 = (cam.X - feet.X) * (cam.X - feet.X) + (cam.Y - feet.Y) * (cam.Y - feet.Y) + (cam.Z - feet.Z) * (cam.Z - feet.Z);
+        if (camD2 > 4000.f * 4000.f) return;  // 40 m: not heard
+        const float speed = std::sqrt(s.vx * s.vx + s.vy * s.vy);
+        static const FName bones[2] = {FindName("LeftFoot"), FindName("RightFoot")};
+        auto f = Fn(t.comp, "GetBoneLocationByName"); if (!f) return;
+        for (int i = 0; i < 2; ++i) {
+            Params p(f); p.Set("BoneName", bones[i]); p.Set<uint8_t>("BoneSpace", 0); Call(t.comp, "GetBoneLocationByName", &p);
+            const FVector foot = p.Get<FVector>("ReturnValue");
+            if (foot.X == 0 && foot.Y == 0) continue;  // no such bone
+            const float height = foot.Z - feet.Z;
+            if (height > 18.f) { footUp[i] = true; continue; }
+            if (height > 12.f || !footUp[i] || speed < 60.f || now - footAt[i] < 0.22) continue;
+            footUp[i] = false; footAt[i] = now;
+            Footstep(MeshComp(body), foot, camD2 < 1200.f * 1200.f);
+        }
+    }
     void UpdateTrack(int ch, UObject* actor, std::vector<GhostPart>& parts, double now) {
         PoseTrack& t = tracks[ch];
         if (!actor || !t.comp) return;
         const bool want = t.Usable(now);
-        if (want != t.active) { SwitchGroupPose(actor, parts, t, want); if (ch == net::kPoseBody) { anim = -1; ReattachBody(); } }
-        if (t.active) t.Apply(clock, now, actor);
+        if (want != t.active) {
+            SwitchGroupPose(actor, parts, t, want);
+            if (ch == net::kPoseBody) {
+                anim = -1; ReattachBody();
+                // The hidden main mesh would go on playing the fallback animation: its footstep notifies put
+                // dirt where its feet are not (on another skeleton, at the hands or the hips).
+                if (want) if (UObject* main = MeshComp(actor); IsValid(main)) if (auto f = Fn(main, "Stop")) Call(main, "Stop");
+            }
+        }
+        if (t.active) {
+            std::vector<UObject*> slaved;
+            for (auto& gp : parts) if (gp.master && IsValid(MeshComp(gp.actor))) slaved.push_back(MeshComp(gp.actor));
+            if (ch == net::kPoseBody) for (UObject* part : LookParts(MeshComp(actor))) slaved.push_back(part);
+            t.SyncTwins(actor, slaved);
+            t.Apply(clock, now, actor);
+        }
     }
     bool Sample(double now, net::PlayerState& out) {
         if (snaps.empty()) return false;
@@ -1054,11 +1177,19 @@ struct Ghost {
             blockersOn = 0xFF;  // the body's collision came back: re-apply the blocker setting
             if (dead && IsValid(tag)) { SetHidden(tag, true); tagHidden = true; }
         }
-        if ((s.flags & net::StateOtherWorld) && bike && !bikeHidden) { SetHidden(bike, true); for (auto& p : bikeParts) SetHidden(p.actor, true); bikeHidden = true; }
+        if ((s.flags & net::StateOtherWorld) && bike && !bikeHidden) ShowBike(false);
         if (dead) return;
         if (gearDirty) BuildGear();
+        // Off the bike again, its capsule waits until it is clear of this player (the driver it got off
+        // behind): switched on against the driver's bike, it would throw them both.
+        bool riding = (s.flags & net::StateOnBike) != 0;
+        if (!riding && blockerRiding && IsValid(L.mesh)) {
+            const FVector me = C2WPos(L.mesh);
+            riding = (me.X - meshPos.X) * (me.X - meshPos.X) + (me.Y - meshPos.Y) * (me.Y - meshPos.Y) < 180.f * 180.f;
+        }
+        if (riding != blockerRiding) { blockerRiding = riding; blockersOn = 0xFF; }
         UpdateBlockers();
-        if (!tracks[net::kPoseBody].active) SetActorTransform(body, meshPos, meshRot);
+        if (!tracks[net::kPoseBody].active || tracks[net::kPoseBody].Stale(now)) SetActorTransform(body, meshPos, meshRot);
         UpdateTrack(net::kPoseBody, body, bodyParts, now);
         if (!tracks[net::kPoseBody].active) PlayAnim(s.anim);
 
@@ -1077,13 +1208,14 @@ struct Ghost {
         }
         if (bike) {
             const bool hide = !(s.flags & net::StateHasBike);
-            if (hide != bikeHidden) { SetHidden(bike, hide); for (auto& p : bikeParts) SetHidden(p.actor, hide); bikeHidden = hide; }
+            if (hide != bikeHidden) ShowBike(!hide);
             if (!hide) {
                 if (!tracks[net::kPoseBike].active) SetActorTransform(bike, {s.bx, s.by, s.bz}, {s.bqx, s.bqy, s.bqz, s.bqw});
                 UpdateTrack(net::kPoseBike, bike, bikeParts, now);
             }
         }
         health = s.health;
+        Footsteps(now, meshPos, cam, s);
         PlaceTag(meshPos, cam);
     }
 };
@@ -1119,10 +1251,12 @@ struct Npc {
     std::string worn, playing, named;
     float tagSize = 0;
     double nextTry = 0, nextTag = 0;
+    bool tagSight = true;
     void DropTag() { DestroyActor(tag); named.clear(); tagSize = 0; }
     void Despawn() { DestroyActor(body); DropTag(); blocker = nullptr; worn.clear(); playing.clear(); changed = true; }
 };
 std::map<uint16_t, Npc> npcs;
+std::vector<mpui::WorldIcon> npcLabels;
 UObject* NpcBlocker(UObject* owner, UObject* parent) {
     static UObject* capsule = FindClass("CapsuleComponent");
     UObject* c = capsule ? NewObject(capsule, owner) : nullptr;
@@ -1139,6 +1273,7 @@ UObject* NpcBlocker(UObject* owner, UObject* parent) {
     return c;
 }
 void UpdateNpcs(double now, const FVector& player, const FVector& cam) {
+    npcLabels.clear();
     for (auto& [id, n] : npcs) {
         if (n.body && !IsValid(n.body)) n.Despawn();  // the level went away
         if (n.tag && !IsValid(n.tag)) n.DropTag();
@@ -1179,33 +1314,23 @@ void UpdateNpcs(double now, const FVector& player, const FVector& cam) {
                 n.playing = n.info.anim;
             }
         }
-        // The name above it, facing the camera, within 25 m. One tag per NPC, owned by it alone and turned
-        // every frame: a tag that cannot be turned is destroyed rather than left facing an old camera.
+        // Use the UTF-8 HUD font rather than the game's Latin-only TextRender font.
+        // Publish projected labels to the render thread through the existing icon snapshot.
+        n.DropTag();
         const float dc = std::sqrt(Dist2(at, cam));
-        const bool showName = !n.info.name.empty() && dc < 2500.f && nametags != net::NametagMode::Hidden;
-        if (!showName) { n.DropTag(); continue; }
-        if (!n.tag) {
-            if (now < n.nextTag) continue;
-            n.nextTag = now + 1;
-            n.tag = SpawnActor(FindClass("TextRenderActor"), {at.X, at.Y, at.Z + 205.f});
-            if (UObject* tc = n.tag ? Field<UObject*>(n.tag, off::TextRenderActor_Component) : nullptr; IsValid(tc)) {
-                if (auto f = Fn(tc, "SetHorizontalAlignment")) { Params p(f); p.Set<uint8_t>("Value", 1); Call(tc, "SetHorizontalAlignment", &p); }
-                if (auto f = Fn(tc, "SetVerticalAlignment")) { Params p(f); p.Set<uint8_t>("Value", 2); Call(tc, "SetVerticalAlignment", &p); }
-                if (auto f = Fn(tc, "SetTextRenderColor")) { Params p(f); p.Set<uint32_t>("Value", 0xFFF2D16B); Call(tc, "SetTextRenderColor", &p); }  // ARGB: the mode's people in yellow
+        if(n.info.name.empty() || dc>=2500.f || nametags==net::NametagMode::Hidden) continue;
+        const FVector label{at.X,at.Y,at.Z+205.f};
+        if(nametags!=net::NametagMode::ThroughWalls) {
+            if(now>=n.nextTag) { n.nextTag=now+.2; n.tagSight=LineClear(worldPawn,cam,label); }
+            if(!n.tagSight) continue;
+        }
+        if(auto project=IsValid(worldController)?Fn(worldController,"ProjectWorldLocationToScreen"):nullptr) {
+            Params pr(project); pr.Set("WorldLocation",label); Call(worldController,"ProjectWorldLocationToScreen",&pr);
+            if(pr.GetBool("ReturnValue")) {
+                const auto pos=pr.Get<FVector2D>("ScreenLocation");
+                npcLabels.push_back({pos.X,pos.Y,0,std::clamp(1500.f/std::max(dc,1.f),.7f,1.f),0xFF6BD1F2,"","{F2D16B}"+n.info.name});
             }
-            n.named.clear(); n.tagSize = 0;
         }
-        UObject* tc = IsValid(n.tag) ? Field<UObject*>(n.tag, off::TextRenderActor_Component) : nullptr;
-        if (!IsValid(tc)) { n.DropTag(); continue; }
-        if (n.named != n.info.name) {
-            const std::wstring wname = W(n.info.name);
-            Params t(Fn(tc, "SetText")); t.Set("Value", FString{wname.c_str(), int32_t(wname.size() + 1), int32_t(wname.size() + 1)}); Call(tc, "SetText", &t);
-            n.named = n.info.name;
-        }
-        const float size = std::clamp(12.f + dc * 0.009f, 14.f, 40.f);
-        if (std::fabs(size - n.tagSize) > 1.f) { if (auto f = Fn(tc, "SetWorldSize")) { Params p(f); p.Set("Value", size); Call(tc, "SetWorldSize", &p); } n.tagSize = size; }
-        const FVector p{at.X, at.Y, at.Z + 205.f};
-        SetActorTransform(n.tag, p, RotatorToQuat({0, std::atan2(cam.Y - p.Y, cam.X - p.X) * 57.2957795f, 0}));
     }
 }
 
@@ -1214,31 +1339,12 @@ void DespawnAll() { for (auto& [id, g] : ghosts) g->Despawn(); for (auto& [id, n
 // ---------------------------------------------------------------- quest markers
 // Each marker is the game's own MapWaypointMarkerBP actor (as used for mission objectives): map and
 // minimap icon, in-world waypoint icon and an optional road route. Arrival is decided by the server.
+// All three coordinates belong to the mode/editor. Do not ground-snap: a vertical trace can select
+// a building's roof instead of its interior floor, moving the visible icon away from the actual task.
 struct QuestMarker {
     net::Client::Events::MarkerInfo info{};
     UObject* actor = nullptr;
-    bool grounded = false;  // z snapped to the ground (needs the area streamed in)
 };
-// Server positions usually come from a player's height somewhere else: put markers on the ground.
-// First down from just above the point (a floor under it); if nothing is there the point is
-// underground, so from high above. Returns false when the area is not loaded yet.
-bool GroundZ(UObject* context, float x, float y, float& z) {
-    static UObject* lib = nullptr;
-    if (!IsValid(lib)) lib = FindObject("/Script/Engine.Default__KismetSystemLibrary");
-    auto f = lib && IsValid(context) ? Fn(lib, "LineTraceSingle_NEW") : nullptr; if (!f) return false;
-    for (const float top : {z + 200.f, z + 20000.f}) {
-        const float bottom = z - 20000.f;
-        Params p(f); p.Set("WorldContextObject", context); p.Set("Start", FVector{x, y, top}); p.Set("End", FVector{x, y, bottom});
-        p.Set<uint8_t>("TraceChannel", 0); p.SetBool("bTraceComplex", false); p.SetBool("bIgnoreSelf", true);
-        Call(lib, "LineTraceSingle_NEW", &p);
-        if (!p.GetBool("ReturnValue")) continue;
-        auto hit = FindProperty(f, "OutHit");
-        const float time = *reinterpret_cast<const float*>(static_cast<uint8_t*>(p.Data()) + Field<int>(hit, off::UProperty_Offset) + 4);  // FHitResult::Time
-        z = top + (bottom - top) * time;
-        return true;
-    }
-    return false;
-}
 std::map<uint16_t, QuestMarker> questMarkers;
 
 void DestroyMarker(QuestMarker& m) {
@@ -1473,18 +1579,6 @@ void UpdateMarkers(double now, const FVector& player) {
     for (auto& [id, m] : questMarkers) {
         if (m.actor && !IsValid(m.actor)) m.actor = nullptr;  // level change
         if (!m.actor) SpawnMarker(m);
-        if (check && IsValid(m.actor) && !m.grounded) {
-            const float dx = m.info.x - player.X, dy = m.info.y - player.Y;
-            float z = m.info.z;
-            if (dx * dx + dy * dy < 400000.f * 400000.f && GroundZ(m.actor, m.info.x, m.info.y, z)) {
-                m.grounded = true;
-                if (std::fabs(z - m.info.z) > 50.f) {
-                    m.info.z = z;
-                    SetActorTransform(m.actor, {m.info.x, m.info.y, z}, FQuat{0, 0, 0, 1});
-                    if (questMarkers.count(routeMarker) && &questMarkers[routeMarker] == &m) routeTarget = {};  // rebuild the route
-                }
-            }
-        }
         // Opening the map hides script waypoints it does not own: show ours again.
         if (check && IsValid(m.actor) && GetBoolProp(m.actor, "bHidden")) SetHidden(m.actor, false);
     }
@@ -1525,6 +1619,7 @@ void HookClient() {
         webui::Reset();
         clientlua::Reset();
         traps::Reset();
+        throws::Reset();
         images::Reset();
         worldIcons.clear(); iconSight.clear();
         myWorld = 0;
@@ -1597,6 +1692,7 @@ void HookClient() {
         sounds::Play(path, at ? &v : nullptr, volume, pitch);
     };
     client.on.playerShot = [](uint16_t id, const std::string& cls, float x, float y, float z) { sounds::OnPlayerShot(id, cls, FVector{x, y, z}); };
+    client.on.playerThrow = [](uint16_t id, const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz) { throws::OnThrow(id, mesh, scale, FVector{x, y, z}, FVector{vx, vy, vz}); };
     client.on.voice = [](uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size) { voice::OnFrame(id, route, codec, gain, range, frame, size); };
     client.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) { voice::OnSetup(flags, radio, call); };
     client.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* info) { blips::OnBlip(id, info); };
@@ -1684,11 +1780,24 @@ void HookClient() {
         if (text.empty() || !json::Value::Parse(text, v)) { worldedit::Clear(); return; }
         worldedit::Set(v, false);
     };
-    client.on.damage = [](uint16_t from, float amount, net::HitZone zone) {
-        // Through the game's own damage path: hit reactions, armour, and the MP death (ModifyDamage).
+    client.on.damage = [](uint16_t from, float amount, net::HitZone zone, const std::string& weapon) {
+        // Through the game's own damage path: hit reactions, armour, and the MP death (ModifyDamage). With
+        // the game's damage type of that weapon and from where the attacker stands, the body flinches the
+        // way it does when an NPC hits it (a plain ApplyDamage only reddened the screen).
         if (!IsValid(worldPawn) || !Statics()) return;
-        if (auto f = Fn(Statics(), "ApplyDamage")) {
+        UObject* type = DamageTypeFor(weapon);
+        FVector from_{}, at{};
+        if (auto it = ghosts.find(from); it != ghosts.end()) from_ = it->second->lastMeshPos;
+        if (auto f = Fn(worldPawn, "K2_GetActorLocation")) { Params p(f); Call(worldPawn, "K2_GetActorLocation", &p); at = p.Get<FVector>("ReturnValue"); }
+        auto point = Fn(Statics(), "ApplyPointDamage");
+        if (point && (from_.X != 0 || from_.Y != 0)) {
+            const FVector dir{at.X - from_.X, at.Y - from_.Y, 0.f};
+            Params p(point); p.Set("DamagedActor", worldPawn); p.Set<float>("BaseDamage", amount); p.Set("HitFromDirection", dir);
+            p.Set("DamageCauser", worldPawn); if (type) p.Set("DamageTypeClass", type);
+            Call(Statics(), "ApplyPointDamage", &p);
+        } else if (auto f = Fn(Statics(), "ApplyDamage")) {
             Params p(f); p.Set("DamagedActor", worldPawn); p.Set<float>("BaseDamage", amount); p.Set("DamageCauser", worldPawn);
+            if (type) p.Set("DamageTypeClass", type);
             Call(Statics(), "ApplyDamage", &p);
         }
         dg::Log("MP: hit by player %u for %.1f (zone %d), health now %.1f", from, amount, int(zone), Field<float>(worldPawn, 0x1FD4));
@@ -1811,13 +1920,13 @@ void LoadPreview(const std::filesystem::path& file) {
         if (it == questMarkers.end()) { QuestMarker m; m.info = w; questMarkers[id] = m; ++changed; continue; }  // spawned by UpdateMarkers
         auto& m = it->second;
         const bool look = m.info.category != w.category || m.info.style != w.style || m.info.title != w.title || m.info.description != w.description;
-        const bool moved = std::fabs(m.info.x - w.x) > 1 || std::fabs(m.info.y - w.y) > 1;
+        const bool moved = std::fabs(m.info.x - w.x) > 1 || std::fabs(m.info.y - w.y) > 1 || std::fabs(m.info.z - w.z) > 1;
         if (look && IsValid(m.actor)) DressWaypoint(m.actor, w);
         if (moved) {
-            m.info = w; m.grounded = false;
+            m.info = w;
             if (IsValid(m.actor)) SetActorTransform(m.actor, {w.x, w.y, w.z}, FQuat{0, 0, 0, 1});
         } else if (look) {
-            const float z = m.info.z; m.info = w; m.info.z = z;  // keep the ground-snapped height
+            m.info = w;
         }
         changed += look || moved;
     }
@@ -2005,10 +2114,112 @@ void OnGhostDamage(UObject* actor, UObject* component, float damage, UObject* in
         const net::HitZone zone = z != g->hitZones.end() ? z->second : net::HitZone::Body;
         const std::string weapon = IsValid(causer) ? GetName(causer->Class) : std::string();
         client.SendHit(id, damage, zone, weapon);
+        MarkHit();
         dg::Log("MP: hit %s for %.1f (zone %d, %s)", g->nick.c_str(), damage, int(zone), weapon.c_str());
         return;
     }
 }
+
+// ---------------------------------------------------------------- melee on players
+// The game's melee only strikes its own characters: a remote player's body is not a target, so no punch
+// or knife reached anyone. Each press of the melee button (the controller's Melee, a script function) is
+// checked a moment later: when a swing is on, the nearest remote body in front within reach is hit.
+// (The button does not come through ProcessEvent; the pawn's IsCurrentlyInAMeleeAttack does tell.)
+double meleeSwingAt = 0, lastMeleeHit = 0;
+bool meleeWasOn = false, meleePending = false;
+struct MeleeKind { const char* key; float damage, reach; };
+MeleeKind MeleeOf(const std::string& cls) {
+    std::string c; for (char ch : cls) c += char(std::tolower(static_cast<unsigned char>(ch)));
+    if (c.find("fist") != std::string::npos || c.empty()) return {"fists", 12.f, 170.f};
+    if (c.find("knife") != std::string::npos) return {"knife", 30.f, 180.f};
+    return {"weapon", 40.f, 230.f};  // bats, axes, machetes, stool legs
+}
+void MeleeSwing(UObject* pawn) {
+    UObject* weapon = nullptr;
+    if (auto f = Fn(pawn, "GetEquippedItemCurrentlyInHand")) { Params p(f); Call(pawn, "GetEquippedItemCurrentlyInHand", &p); weapon = p.Get<UObject*>("ReturnValue"); }
+    const std::string cls = IsValid(weapon) ? GetName(weapon->Class) : "Bend_WpnMelee_Fists_C";
+    if (IsValid(weapon) && cls.find("Melee") == std::string::npos && cls.find("Fist") == std::string::npos) return;  // a gun's butt: not here
+    const MeleeKind kind = MeleeOf(cls);
+    FVector at{}; FRotator rot{};
+    if (auto f = Fn(pawn, "K2_GetActorLocation")) { Params p(f); Call(pawn, "K2_GetActorLocation", &p); at = p.Get<FVector>("ReturnValue"); }
+    if (auto f = Fn(pawn, "K2_GetActorRotation")) { Params p(f); Call(pawn, "K2_GetActorRotation", &p); rot = p.Get<FRotator>("ReturnValue"); }
+    const float yaw = rot.Yaw * 0.0174532925f, fx = std::cos(yaw), fy = std::sin(yaw);
+    const float feet = at.Z - 90.f;
+    uint16_t best = 0xFFFF; float bestD = kind.reach;
+    for (auto& [id, g] : ghosts) {
+        if (!g->Spawned() || g->deadShown) continue;
+        const FVector m = g->lastMeshPos;  // the body's feet
+        const float dx = m.X - at.X, dy = m.Y - at.Y, d = std::sqrt(dx * dx + dy * dy);
+        if (d > bestD || std::fabs(m.Z - feet) > 150.f) continue;
+        if (d > 40.f && (dx * fx + dy * fy) / d < 0.5f) continue;  // not in front (60 degrees each side)
+        best = id; bestD = d;
+    }
+    if (best == 0xFFFF) { dg::Log("MP: melee swing, no one in reach (%s)", cls.c_str()); return; }
+    lastMeleeHit = Clock();
+    client.SendHit(best, kind.damage, net::HitZone::Body, cls);
+    MarkHit();
+    dg::Log("MP: melee hit %s for %.0f (%s, %.1f m)", ghosts[best]->nick.c_str(), kind.damage, cls.c_str(), bestD / 100);
+}
+void UpdateMelee(double now, UObject* pawn) {
+    // A swing starts when the attack does (the flag stays on some 2.5 s after one swing: once per start).
+    const bool on = CallBool(pawn, "IsCurrentlyInAMeleeAttack");
+    if (on && !meleeWasOn) { meleeSwingAt = now; meleePending = true; }
+    meleeWasOn = on;
+    if (!meleePending || now - meleeSwingAt < 0.2) return;
+    meleePending = false;
+    if (now - lastMeleeHit >= 0.35) MeleeSwing(pawn);
+}
+
+namespace {
+// One step of a remote body at `foot`: the game's surface sound and dust (step_foot_boot, the name its
+// walk animations use) of what is under it. `near`: the player's own step sound (louder, close).
+void Footstep(UObject* mesh, const FVector& foot, bool close) {
+    static UObject *kismet = nullptr, *manager = nullptr;
+    if (!IsValid(kismet)) kismet = FindObject("/Script/Engine.Default__KismetSystemLibrary");
+    if (!IsValid(manager)) {
+        UObject* cdo = FindObject("/Script/BendGame.Default__BendSurfaceTypeManager");
+        if (auto f = IsValid(cdo) ? Fn(cdo, "GetBendSurfaceTypeManager") : nullptr) { Params p(f); Call(cdo, "GetBendSurfaceTypeManager", &p); manager = p.Get<UObject*>("ReturnValue"); }
+    }
+    auto trace = IsValid(kismet) ? Fn(kismet, "LineTraceSingle_NEW") : nullptr, surface = Statics() ? Fn(Statics(), "GetSurfaceType") : nullptr;
+    auto play = IsValid(manager) ? Fn(manager, "PlaySurfaceImpactFX") : nullptr;
+    if (!trace || !surface || !play || !IsValid(mesh)) return;
+    Params t(trace); t.Set("WorldContextObject", mesh); t.Set("Start", FVector{foot.X, foot.Y, foot.Z + 40.f}); t.Set("End", FVector{foot.X, foot.Y, foot.Z - 60.f});
+    t.Set<uint8_t>("TraceChannel", 0); t.SetBool("bTraceComplex", true); t.SetBool("bIgnoreSelf", true);
+    Call(kismet, "LineTraceSingle_NEW", &t);
+    uint8_t type = 0; FVector at = foot;
+    auto hitProp = FindProperty(trace, "OutHit"), inProp = FindProperty(surface, "Hit");
+    if (t.GetBool("ReturnValue") && hitProp && inProp) {
+        Params h(surface);
+        std::memcpy(static_cast<uint8_t*>(h.Data()) + Field<int>(inProp, off::UProperty_Offset), static_cast<uint8_t*>(t.Data()) + Field<int>(hitProp, off::UProperty_Offset), 136);
+        Call(Statics(), "GetSurfaceType", &h);
+        type = h.Get<uint8_t>("ReturnValue");
+    }
+    static const FName step = FindName("step_foot_boot");
+    Params p(play); p.Set("SkeletalMesh", mesh); p.Set<uint8_t>("SurfaceType", type); p.Set("FXName", step); p.SetBool("IsPlayer", close);
+    p.Set("Location", at); p.Set<float>("Volume", 1.f);
+    Call(manager, "PlaySurfaceImpactFX", &p);
+    static int logged = 0;
+    if (logged < 6) { ++logged; dg::Log("MP: remote footstep at %.0f %.0f %.0f, surface %u%s", at.X, at.Y, at.Z, type, close ? " (near)" : ""); }
+}
+// The game's damage type for another player's weapon class (its hit reactions): blades, blunt, fists, bullets.
+UObject* DamageTypeFor(const std::string& weapon) {
+    std::string c; for (char ch : weapon) c += char(std::tolower(static_cast<unsigned char>(ch)));
+    const char* name = c.empty() ? "DmgTypeBP_Bullet" : c.find("fist") != std::string::npos ? "DmgTypeBP_Melee_Fist"
+        : c.find("knife") != std::string::npos ? "DmgTypeBP_Melee_BootKnife" : c.find("melee") != std::string::npos ? "DmgTypeBP_Melee_Blunt"
+        : c.find("rock") != std::string::npos ? "DmgTypeBP_BulletRock" : "DmgTypeBP_Bullet";
+    static std::map<std::string, UObject*> cache;
+    UObject*& cls = cache[name];
+    if (!IsValid(cls)) {
+        cls = FindClass((std::string(name) + "_C").c_str());
+        if (!cls) {
+            const std::string path = std::string("/Game/Libraries/Blueprints/DamageTypes/") + name + "." + name + "_C";
+            cls = FindObject(path.c_str()); if (!cls) cls = LoadAsset(path.c_str());
+        }
+        if (!cls) dg::Log("MP: damage type %s not found", name);
+    }
+    return cls;
+}
+}  // namespace
 
 bool Init() {
     const std::string target = Env(L"DGMP_CONNECT");
@@ -2052,7 +2263,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
     hud::SetVisible(inWorld);
     hud::SetChatAllowed(gameplay && phase == Phase::Joined);
     if (!connectStarted && inWorld && phase != Phase::Failed) StartConnect();
-    client.Service(now);
+    diagnostics::Phase("mp-network"); client.Service(now);
 
     static bool f9 = false;
     const bool f9Now = (GetAsyncKeyState(VK_F9) & 0x8000) != 0, f9Pressed = f9Now && !f9; f9 = f9Now;
@@ -2112,6 +2323,9 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         if (!deathPhase && (hp <= 1.5f || lethal)) {
             deathPhase = 1; deathAt = now;
             traps::OnLocalDeath(pawn);  // a bear trap holding the body lets go of it
+            // Off any vehicle: the respawn is a fast travel, and the game's travel with a rider who died
+            // on a thrown bike may never end (the loading cover stays up for good).
+            if (CallBool(pawn, "IsInVehicle")) if (auto f = Fn(pawn, "TryExitVehicle")) { Params p(f); p.SetBool("bForce", true); Call(pawn, "TryExitVehicle", &p); }
             LeaveCorpse(L.mesh, reportedLook);
             HideLocalBody(pawn, true);
             SetHudVisible(false);  // the restored health would show while the player "lies dead"
@@ -2150,13 +2364,15 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         scriptKeys = canAct; scriptHud = playing && !spec.on;
         mpui::Update(client, at, canAct, playing && !spec.on);
         webui::Update(client);
-        vehicles::Update(now, pawn, controller, client);
+        diagnostics::Phase("mp-vehicles"); vehicles::Update(now, pawn, controller, client);
         zombies::Net(now, pawn, client, myWorld);
         carry::Update(now, pawn, client, canAct && !mpui::DialogOpen() && !webui::Focused());  // (keys typed into a page are not F)
         objects::Update(now, pawn);
         traps::Update(pawn, client.localId());
         blips::Update(pawn);
         sounds::Update(pawn, client);
+        throws::Update(now, pawn, client);
+        UpdateMelee(now, pawn);
         playeranim::Update(pawn, controller, client, canAct && !mpui::DialogOpen() && !webui::Focused(), localDead || Respawning());
         UpdateHeliView(pawn);  // after the helicopter moved this frame (else the view lags a frame and shakes)
         // The UI took or gave back the keyboard: nothing the game saw pressed stays held (a W let go
@@ -2259,7 +2475,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
     UpdateNpcs(now, {s.x, s.y, s.z}, cam);
     // The mode's icons in the world: on screen where they are in front of the camera and near enough.
     {
-        std::vector<mpui::WorldIcon> shown;
+        std::vector<mpui::WorldIcon> shown=npcLabels;
         auto project = IsValid(controller) ? Fn(controller, "ProjectWorldLocationToScreen") : nullptr;
         for (auto& [id, ic] : worldIcons) {
             if (!project || (ic.world >= 0 && ic.world != myWorld)) continue;
@@ -2313,6 +2529,28 @@ uint16_t PlayerOfActor(UObject* actor) {
         for (auto& part : g->bodyParts) if (part.actor == actor) return id;
     }
     return 0;
+}
+std::string DescribeGhosts() {
+    std::string out;
+    auto hidden = [](UObject* c) { return IsValid(c) ? (GetBoolProp(c, "bHiddenInGame") ? "hidden" : "shown") : "none"; };
+    for (auto& [id, g] : ghosts) {
+        char line[512];
+        const FVector at = IsValid(g->body) ? C2WPos(MeshComp(g->body)) : FVector{};
+        const PoseTrack& t = g->tracks[net::kPoseBody];
+        std::snprintf(line, sizeof line, "%u %s body=%p at (%.0f %.0f %.0f) actorHidden=%d dead=%d main=%s pose=%p %s active=%d frames=%zu twins=%zu",
+            id, g->nick.c_str(), (void*)g->body, at.X, at.Y, at.Z, IsValid(g->body) ? int(GetBoolProp(g->body, "bHidden")) : -1, int(g->deadShown),
+            IsValid(g->body) ? hidden(MeshComp(g->body)) : "none", (void*)t.comp, hidden(t.comp), int(t.active), t.frames.size(), t.twins.size());
+        out += line; out += "\n";
+        std::snprintf(line, sizeof line, "    pose: hash theirs %08X ours %08X, bones %zu, last frame %.2f s ago, newest t %.2f, now %.2f\n", t.hash, t.bones.hash, t.bones.names.size(),
+            Clock() - t.lastRecv, t.frames.empty() ? 0.0 : t.frames.back().t, Clock());
+        out += line;
+        for (auto& tw : t.twins) {
+            std::snprintf(line, sizeof line, "    twin %p (%s) of %s %s, %zu bones mapped\n", (void*)tw.comp, hidden(tw.comp), IsValid(tw.src) ? GetName(tw.src).c_str() : "-", hidden(tw.src),
+                size_t(std::count_if(tw.index.begin(), tw.index.end(), [](int32_t i) { return i >= 0; })));
+            out += line;
+        }
+    }
+    return out.empty() ? "no remote players" : out;
 }
 std::vector<UObject*> GhostActors() {
     std::vector<UObject*> out;

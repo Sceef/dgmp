@@ -166,6 +166,10 @@ void Server::Run() {
 void Server::OnConnect(ENetPeer* peer) {
     peer->data = nullptr;
     enet_peer_timeout(peer, 0, 5000, 15000);
+    // ENet throttles unreliable packets while the round trip grows, by dropping them: a pose is cut into a
+    // few fragments, and one dropped loses the whole pose. Over the internet (jitter) that left the remote
+    // bodies standing in their base pose. Never throttled down (deceleration 0).
+    enet_peer_throttle_configure(peer, ENET_PEER_PACKET_THROTTLE_INTERVAL, ENET_PEER_PACKET_THROTTLE_ACCELERATION, 0);
     Log("Connection from %s", Address(peer->address).c_str());
 }
 
@@ -388,6 +392,26 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         break;
     }
     case net::Msg::CarryAction: OnCarryAction(*p, r); break;
+    case net::Msg::Throw: {
+        // A thrown rock: the players nearby (same world, 120 m) see a copy fly. A mesh of the game only,
+        // from next to the thrower, at most a few a second.
+        const auto mesh = r.Str(256); const float scale = r.F32();
+        float v[6]; for (float& f : v) f = r.F32();
+        if (!r.ok() || mesh.rfind("/Game/", 0) != 0 || (p->state.flags & net::StateDead)) break;
+        bool finite = std::isfinite(scale); for (float f : v) finite = finite && std::isfinite(f);
+        const float dx = v[0] - p->state.x, dy = v[1] - p->state.y, dz = v[2] - p->state.z;
+        if (!finite || dx * dx + dy * dy + dz * dz > 600.f * 600.f || v[3] * v[3] + v[4] * v[4] + v[5] * v[5] > 6000.f * 6000.f) break;
+        const double now = Now();
+        if (now - p->throwWindow >= 1.0) { p->throwWindow = now; p->throwCount = 0; }
+        if (++p->throwCount > 4) break;
+        net::Writer w; w.Op(net::Msg::PlayerThrow); w.U16(p->id); w.Str(mesh); w.F32(std::clamp(scale, 0.05f, 4.f)); for (float f : v) w.F32(f);
+        for (auto& [id, other] : players_) {
+            if (other.get() == p || !other->ready || !other->peer || Apart(*other, *p)) continue;
+            const float ox = other->state.x - v[0], oy = other->state.y - v[1], oz = other->state.z - v[2];
+            if (ox * ox + oy * oy + oz * oz <= 12000.f * 12000.f) SendTo(other->peer, w, true);  // 120 m: a rock is not seen further
+        }
+        break;
+    }
     case net::Msg::Shot: {
         // Its weapon fired: the players nearby (same world, 300 m) hear it.
         const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
@@ -493,7 +517,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         victim->lastAttacker = p->id; victim->lastHitAt = now;
         if (victim->bot) { HurtBot(victim, damage, p); break; }
         if (!victim->peer) break;
-        net::Writer w; w.Op(net::Msg::Damage); w.U16(p->id); w.F32(damage); w.U8(zone);
+        net::Writer w; w.Op(net::Msg::Damage); w.U16(p->id); w.F32(damage); w.U8(zone); w.Str(weapon);  // (the weapon: the victim's hit reaction)
         SendTo(victim->peer, w, true);
         break;
     }
@@ -761,6 +785,20 @@ void Server::RelayPose(Player& from, const uint8_t* payload, size_t size) {
         if (dx * dx + dy * dy + dz * dz > range2) continue;
         enet_peer_send(p->peer, net::kChanPose, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT));
     }
+    // Test: every bot shows this player's body pose where the bot walks (the remote body path on one PC).
+    if (!botPose_ || from.bot || payload[0] != uint8_t(net::kPoseBody)) return;
+    for (auto& [bid, b] : players_) {
+        if (!b->bot) continue;
+        std::vector<uint8_t> copy(payload, payload + size);
+        const float h = (b->state.yaw - 90.f) * 0.00872664626f;  // half the mesh yaw, radians
+        const float at[7] = {b->state.x, b->state.y, b->state.z - 90.f, 0.f, 0.f, std::sin(h), std::cos(h)};
+        std::memcpy(copy.data() + 17, at, sizeof(at));
+        const double t = b->state.time;  // the bot's clock (the server's), as its states have: else its body goes stale
+        std::memcpy(copy.data() + 9, &t, sizeof(t));
+        net::Writer bw; bw.Op(net::Msg::PlayerPose); bw.U16(b->id); bw.Raw(copy.data(), copy.size());
+        for (auto& [id, p] : players_)
+            if (p->ready && p->peer && !Apart(*p, *b)) enet_peer_send(p->peer, net::kChanPose, enet_packet_create(bw.buf.data(), bw.buf.size(), ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT));
+    }
 }
 
 void Server::SendMarker(ENetPeer* peer, const Marker& m) {
@@ -904,15 +942,20 @@ void Server::TickMarkers() {
 bool Zone::Contains(float px, float py, float pz) const {
     if (std::fabs(pz - z) > height) return false;
     const float dx = px - x, dy = py - y;
-    if (!box) return dx * dx + dy * dy <= radius * radius;
+    if (!box && !polygon) return dx * dx + dy * dy <= radius * radius;
     const float a = yaw * 0.017453293f, c = std::cos(a), s = std::sin(a);
+    if(polygon) return ::polygon::Contains(points,{(dx*c+dy*s)/100,(-dx*s+dy*c)/100});
     return std::fabs(dx * c + dy * s) <= halfX && std::fabs(-dx * s + dy * c) <= halfY;
 }
 json::Value Server::ZoneJson(const Zone& z) {
     json::Value v = json::Value::Object();
-    v.set("name", z.name); v.set("type", std::string(z.pvp ? "pvp" : "pve")); v.set("shape", std::string(z.box ? "box" : "circle"));
+    v.set("name", z.name); v.set("type", std::string(z.pvp ? "pvp" : "pve")); v.set("shape", std::string(z.polygon ? "polygon" : z.box ? "box" : "circle"));
     v.set("x", double(z.x)); v.set("y", double(z.y)); v.set("z", double(z.z)); v.set("yaw", double(z.yaw));
-    if (z.box) { v.set("length", double(z.halfX * 2 / 100)); v.set("width", double(z.halfY * 2 / 100)); }
+    if(z.polygon) {
+        auto points=json::Value::Array();
+        for(auto p:z.points) points.push(json::Value::Object().set("x",p.x).set("y",p.y));
+        v.set("points",points);
+    } else if (z.box) { v.set("length", double(z.halfX * 2 / 100)); v.set("width", double(z.halfY * 2 / 100)); }
     else v.set("radius", double(z.radius / 100));
     v.set("height", double(z.height / 100)); v.set("world", double(z.world));
     v.set("enabled", z.enabled); v.set("notify", z.notify); v.set("text", z.text);
@@ -926,9 +969,20 @@ bool Server::ZoneFromJson(const json::Value& v, Zone& z, std::string& error) {
         z.pvp = t == "pvp";
     }
     if (const auto& s = v["shape"].asString(); !s.empty()) {
-        if (s != "circle" && s != "box") { error = "shape must be \"circle\" or \"box\""; return false; }
+        if (s != "circle" && s != "box" && s != "polygon") { error = "shape must be circle, box or polygon"; return false; }
         z.box = s == "box";
-    } else if (v["width"].isNumber() || v["length"].isNumber()) z.box = true;
+        z.polygon = s == "polygon";
+    } else if(v["points"].isArray()) { z.polygon=true; z.box=false; }
+    else if (v["width"].isNumber() || v["length"].isNumber()) { z.box = true; z.polygon=false; }
+    if(!v["points"].isNull()) {
+        if(!v["points"].isArray() || v["points"].size()>128) { error="points must be an array of at most 128 vertices"; return false; }
+        z.points.clear();
+        for(const auto& p:v["points"].elements()) {
+            if(!p["x"].isNumber() || !p["y"].isNumber()) { error="each polygon vertex needs x and y"; return false; }
+            z.points.push_back({p["x"].asNumber(),p["y"].asNumber()});
+        }
+    }
+    if(z.polygon && !(error=::polygon::Validate(z.points)).empty()) return false;
     auto num = [&](const char* key, float& out, float scale, float lo) {
         if (v[key].isNumber() && std::isfinite(v[key].asNumber())) out = std::max(lo, float(v[key].asNumber()) * scale);
     };
@@ -1047,6 +1101,7 @@ void Server::TickBots(float dt) {
             if (Now() < p->botDeadUntil) { p->state.vx = p->state.vy = p->state.vz = 0; p->state.anim = net::AnimIdle; p->state.flags = net::StateDead; p->state.time = Now(); continue; }
             p->botDeadUntil = 0; p->state.health = 100;
         }
+        if (botStill_) { p->state.vx = p->state.vy = p->state.vz = 0; p->state.anim = net::AnimIdle; p->state.flags = 0; p->state.time = Now(); continue; }
         // Walk a 6 m circle around the spawn so clients have something moving to render.
         p->botPhase += dt * 0.25f;
         const float r = 600.f, a = p->botPhase + id;
@@ -1153,8 +1208,11 @@ void Server::SetHud(Player* p, const std::string& id, const std::string& json) {
     Send(p, w, true);
 }
 void Server::SendInteraction(ENetPeer* peer, const Interaction& in) {
+    const auto* viewer=peer?static_cast<const Player*>(peer->data):nullptr;
+    const auto translated=in.texts.find(viewer?viewer->lang:"en");
+    const auto& text=translated!=in.texts.end()?translated->second:in.text;
     net::Writer w; w.Op(net::Msg::Interaction); w.U16(in.id); w.U8(1);
-    w.F32(in.x); w.F32(in.y); w.F32(in.z); w.F32(in.radius); w.U8(in.key); w.Str(in.text.substr(0, 256)); w.I32(in.world);
+    w.F32(in.x); w.F32(in.y); w.F32(in.z); w.F32(in.radius); w.U8(in.key); w.Str(text.substr(0, 256)); w.I32(in.world);
     SendTo(peer, w, true);
 }
 uint16_t Server::AddInteraction(Interaction in) {
@@ -1531,9 +1589,12 @@ void Server::FreeWorld(int32_t world) {
     for (auto id : watching) if (Player* p = Find(id); p && p->watching == world) { const int32_t before = p->ViewWorld(); p->watching = INT32_MIN; ViewChanged(p, before); }
 }
 void Server::SendActor(ENetPeer* peer, const Actor& a) {
+    const auto* viewer=peer?static_cast<const Player*>(peer->data):nullptr;
+    const auto translated=a.names.find(viewer?viewer->lang:"en");
+    const auto& name=translated!=a.names.end()?translated->second:a.name;
     net::Writer w; w.Op(net::Msg::Actor); w.U16(a.id); w.U8(1);
     w.F32(a.x); w.F32(a.y); w.F32(a.z); w.F32(a.yaw); w.I32(a.world);
-    w.Str(a.look.substr(0, net::kLookPathMax - 1)); w.Str(a.anim.substr(0, 511)); w.Str(a.name.substr(0, 127)); w.U8(a.solid);
+    w.Str(a.look.substr(0, net::kLookPathMax - 1)); w.Str(a.anim.substr(0, 511)); w.Str(name.substr(0, 127)); w.U8(a.solid);
     SendTo(peer, w, true);
 }
 uint16_t Server::AddActor(Actor a) {
@@ -2230,11 +2291,17 @@ void Server::TickLoot() {
 }
 
 void Server::SendBlip(Player* to, const Blip& b) {
+    if (!to) {
+        for (auto& [id,p] : players_) if (p->ready && p->peer &&
+            (b.only == 0xFFFF || (b.only == id && p->joinedAt == b.onlyJoinedAt))) SendBlip(p.get(),b);
+        return;
+    }
     net::Writer w; w.Op(net::Msg::Blip); w.U16(b.id); w.U8(1); w.F32(b.x); w.F32(b.y); w.F32(b.z); w.Str(b.icon); w.U32(b.color); w.F32(b.scale);
     w.U8(uint8_t((b.map ? net::BlipMap : 0) | (b.radar ? net::BlipRadar : 0) | (b.edge ? net::BlipEdge : 0))); w.I32(b.world);
-    if (to) { if (to->peer) SendTo(to->peer, w, true); return; }
-    if (b.only == 0xFFFF) { Send(nullptr, w, true); return; }
-    if (Player* p = Find(b.only); p && p->joinedAt == b.onlyJoinedAt && p->peer) SendTo(p->peer, w, true);
+    const auto title=b.titles.find(to->lang), description=b.descriptions.find(to->lang);
+    w.Str((title!=b.titles.end()?title->second:b.title).substr(0,512));
+    w.Str((description!=b.descriptions.end()?description->second:b.description).substr(0,2048));
+    if (to->peer) SendTo(to->peer, w, true);
 }
 uint16_t Server::AddBlip(Blip b) {
     while (blips_.count(nextBlip_) || !nextBlip_) ++nextBlip_;
@@ -2503,6 +2570,18 @@ void Server::HandleConsole(const std::string& raw) {
         if (rest == "off") { RemoveBots(); return; }
         const int n = rest.empty() ? 1 : std::clamp(std::atoi(rest.c_str()), 1, 16);
         for (int i = 0, made = 0; made < n && i < 100; ++i) if (AddBot("Bot_" + std::to_string(i + 1))) ++made;
+    } else if (cmd == "botstop") {  // test: bots stop in a row 3 m east of the first player, facing it (again: walk)
+        botStill_ = !botStill_;
+        const Player* first = nullptr;
+        for (auto& [id, p] : players_) if (p->ready && !p->bot) { first = p.get(); break; }
+        int i = 0;
+        if (botStill_ && first) for (auto& [id, b] : players_) if (b->bot) {
+            b->state.x = first->state.x + 300.f; b->state.y = first->state.y + 150.f * float(i++); b->state.z = first->state.z; b->state.yaw = 180.f;
+        }
+        Log("Bots %s", botStill_ ? "stand still" : "walk again");
+    } else if (cmd == "botpose") {  // test: bots show the first player's body pose where they walk
+        botPose_ = !botPose_;
+        Log("Bots %s the players' poses", botPose_ ? "now copy" : "no longer copy");
     } else if (cmd == "botgear") {  // test: bots carry what the first player carries
         const Player* source = nullptr;
         for (auto& [id, p] : players_) if (p->ready && !p->bot && !p->gear.empty()) { source = p.get(); break; }

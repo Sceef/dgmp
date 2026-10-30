@@ -30,6 +30,8 @@ void UpdateEditorPreview(double now, ue::UObject* pawn);
 
 // Bodies of the remote players (research tools).
 std::vector<ue::UObject*> GhostActors();
+// The remote players' bodies, for the dev console (ghosts): where, what is shown, the pose and its twins.
+std::string DescribeGhosts();
 // The remote players drawn here now: id, where the body stands (feet), alive (not dead or hidden).
 struct RemoteBody { uint16_t id; ue::FVector pos; bool alive; };
 std::vector<RemoteBody> RemoteBodies();

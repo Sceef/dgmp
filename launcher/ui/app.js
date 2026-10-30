@@ -43,6 +43,7 @@ const I18N = {
     "address.placeholder": "IP:port, e.g. 192.168.1.20:7777", "fav.add": "Add to favorites", "fav.remove": "Remove from favorites",
     "connect": "Connect", "refresh": "Refresh (F5)", "play": "Play",
     "th.name": "Name", "mode": "Mode", "th.players": "Players", "th.ping": "Ping",
+    "copy.title": "Copy the address", "copy.done": "Address {a} copied",
     "ping.ms": "{n} ms", "ping.none": "no response", "tag.version": "other version",
     "empty.favorites": "No favorites yet.<br>Enter a server address above and press “Add to favorites”.",
     "empty.recent": "Servers you've played on will show up here.",
@@ -76,6 +77,7 @@ const I18N = {
     "address.placeholder": "IP:порт, например 192.168.1.20:7777", "fav.add": "В избранное", "fav.remove": "Убрать из избранного",
     "connect": "Подключиться", "refresh": "Обновить (F5)", "play": "Играть",
     "th.name": "Название", "mode": "Режим", "th.players": "Игроки", "th.ping": "Пинг",
+    "copy.title": "Скопировать адрес", "copy.done": "Адрес {a} скопирован",
     "ping.ms": "{n} мс", "ping.none": "нет ответа", "tag.version": "другая версия",
     "empty.favorites": "В избранном пока пусто.<br>Введите адрес сервера сверху и нажмите «В избранное».",
     "empty.recent": "Здесь появятся серверы, на которых вы играли.",
@@ -129,6 +131,22 @@ function entries() {
 }
 function isFavorite(address) { return (app.state?.favorites || []).some((f) => f.address === address); }
 
+// The address as a button: a click copies it (the row is not selected by it).
+const COPY_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>`;
+function copyButton(address) {
+  return `<button class="copy" data-copy="${esc(address)}" title="${t("copy.title")}">${esc(address)}${COPY_ICON}</button>`;
+}
+async function copyAddress(button) {
+  const a = button.dataset.copy;
+  try { await navigator.clipboard.writeText(a); }
+  catch {
+    const area = Object.assign(document.createElement("textarea"), { value: a });
+    document.body.append(area); area.select(); document.execCommand("copy"); area.remove();
+  }
+  setStatus(t("copy.done", { a }));
+  button.classList.add("done");
+  setTimeout(() => button.classList.remove("done"), 1200);
+}
 function pingClass(p) { return p < 0 ? "ping-none" : p < 80 ? "ping-good" : p < 160 ? "ping-mid" : "ping-bad"; }
 
 function renderServers() {
@@ -143,7 +161,7 @@ function renderServers() {
     const tags = online && !i.compatible ? `<span class="tag">${t("tag.version")}</span>` : "";
     return `<tr data-address="${esc(e.address)}" class="${online ? "" : "offline"} ${app.selected === e.address ? "sel" : ""}">
       <td class="c-lock">${online && i.password ? "🔒" : ""}</td>
-      <td><span class="srv-name">${esc(name)}</span>${tags}<span class="srv-addr">${esc(e.address)}</span></td>
+      <td><span class="srv-name">${esc(name)}</span>${tags}<span class="srv-addr">${copyButton(e.address)}</span></td>
       <td class="c-mode">${online ? esc(i.mode) : ""}</td>
       <td class="c-players">${players}</td>
       <td class="c-ping ${i ? pingClass(i.ping) : "ping-none"}">${ping}</td>
@@ -166,10 +184,10 @@ function renderDetail() {
   const online = i && i.ping >= 0;
   d.hidden = false;
   $("#d-name").textContent = online ? i.name : (entries().find((e) => e.address === address)?.name || address);
-  $("#d-meta").textContent = online
-    ? `${address} · ${i.mode} · ${t("detail.players", { n: i.players, max: i.maxPlayers })} · ${t("ping.ms", { n: i.ping })}`
+  $("#d-meta").innerHTML = copyButton(address) + esc(online
+    ? ` · ${i.mode} · ${t("detail.players", { n: i.players, max: i.maxPlayers })} · ${t("ping.ms", { n: i.ping })}`
       + (i.password ? " · " + t("detail.password") : "") + (i.compatible ? "" : " · " + t("detail.incompatible"))
-    : `${address} · ${t("detail.offline")}`;
+    : ` · ${t("detail.offline")}`);
   $("#d-fav").textContent = t(isFavorite(address) ? "fav.remove" : "fav.add");
   $("#d-play").disabled = app.gameRunning || (online && !i.compatible);
 }
@@ -397,6 +415,8 @@ $("#add-fav").addEventListener("click", () => {
 });
 
 $("#server-rows").addEventListener("click", (e) => {
+  const copy = e.target.closest("[data-copy]");
+  if (copy) { copyAddress(copy); return; }
   const star = e.target.closest("[data-star]");
   if (star) { toggleFavorite(star.dataset.star); return; }
   const row = e.target.closest("tr[data-address]");
@@ -408,6 +428,8 @@ $("#server-rows").addEventListener("dblclick", (e) => {
   const row = e.target.closest("tr[data-address]");
   if (row) connect(row.dataset.address);
 });
+$("#d-meta").addEventListener("click", (e) => { const copy = e.target.closest("[data-copy]"); if (copy) copyAddress(copy); });
+$("#server-rows").addEventListener("dblclick", (e) => { if (e.target.closest("[data-copy]")) e.stopPropagation(); }, true);
 $("#d-play").addEventListener("click", () => app.selected && connect(app.selected));
 $("#d-fav").addEventListener("click", () => app.selected && toggleFavorite(app.selected));
 

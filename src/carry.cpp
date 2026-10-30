@@ -379,7 +379,7 @@ void Update(double now, UObject* pawn, net::Client& client, bool canAct) {
     }
     DWORD pid = 0; GetWindowThreadProcessId(GetForegroundWindow(), &pid);
     const bool fDown = pid == GetCurrentProcessId() && (GetAsyncKeyState('F') & 0x8000);
-    // F belongs to the box only while its prompt is the one shown (an interaction of the mode comes first).
+    // The carried box owns F, even beside an NPC. A ground pickup yields to mode interactions.
     // holdStart: -1 not held, -2 used (until F is let go).
     const bool active = target && mpui::CarryPromptShown();
     if (!fDown) holdStart = -1;
@@ -395,7 +395,7 @@ void Update(double now, UObject* pawn, net::Client& client, bool canAct) {
         prompt.clear(); target = 0;
     }
     const float progress = target && holdStart >= 0 ? float(std::min(1.0, (now - holdStart) / kHoldTime)) : 0.f;
-    mpui::SetCarryPrompt(prompt, progress);
+    mpui::SetCarryPrompt(prompt, progress, hands != Hands::Empty);
 }
 
 }  // namespace carry

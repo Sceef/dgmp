@@ -15,6 +15,7 @@
 #include "editorui.h"
 #include "lang.h"
 #include "zombies.h"
+#include "diagnostics.h"
 #include "../api/dgmp.h"
 #include <windows.h>
 #include <malloc.h>
@@ -54,7 +55,7 @@ float arrivalYaw=0;
 double arrivalAfter=0;
 float speed=2000, lastDelta=0;
 double startTime=0, requestTime=0, stableSince=0, nextScan=0, nextSweep=0, nextStatus=0;
-unsigned int triggers=0, removedAI=0, errors=0;
+unsigned int triggers=0, removedAI=0, removedAIGear=0, errors=0;
 int commandSeq=0;
 uint8_t previousMovement=1;
 bool previousCollision=true, previousIgnoreMove=false;
@@ -104,7 +105,8 @@ void DevInputMode(UObject* target,bool ui) {
     }
 }
 void DevInputPolicy() {
-    if(devInputLocked && (!(devmenu::IsOpen() || overlay::CursorMode()) || devInputController!=controller)) {
+    const bool editorInput=(devmenu::IsOpen() || overlay::CursorMode()) && !overlay::NativeInput();
+    if(devInputLocked && (!editorInput || devInputController!=controller)) {
         if(IsValid(devInputController)) {
             BoolArg(devInputController,"SetIgnoreMoveInput","bNewMoveInput",false);
             BoolArg(devInputController,"SetIgnoreLookInput","bNewLookInput",false);
@@ -113,7 +115,7 @@ void DevInputPolicy() {
         }
         devInputLocked=false; devInputController=nullptr;
     }
-    if((devmenu::IsOpen() || overlay::CursorMode()) && !devInputLocked && IsValid(controller)) {
+    if(editorInput && !devInputLocked && IsValid(controller)) {
         devInputController=controller;
         devPreviousCursor=GetBoolProp(controller,"bShowMouseCursor");
         SetBoolProp(controller,"bShowMouseCursor",true);
@@ -191,6 +193,12 @@ void StopEditorCamera() {
 }
 // One frame of the editor camera: look (game mouse look, or right button in cursor mode) and move.
 void EditorCamera(float dt) {
+    if(overlay::NativeInput() || policy::GetState().menuActive) {
+        camVel={};
+        if(camLook) { camLook=false; ShowCursor(TRUE); }
+        lastControl=View();
+        return;
+    }
     // Something else moved the player (F8, a teleport, a load): the camera goes along.
     const FVector at=Position();
     const float dx=at.X-camPos.X, dy=at.Y-camPos.Y, dz=at.Z-(camPos.Z-200.f);
@@ -358,8 +366,9 @@ void SavePoint(bool spawn) {
     dg::Log("%s saved: %.3f %.3f %.3f yaw=%.3f",spawn?"Spawn":"Marker",pos.X,pos.Y,pos.Z,view.Yaw);
 }
 // Fast travel (moves the bike along and streams the destination), then AlignArrival snaps exactly.
+double travelSince=0;  // when the pending travel was asked for
 void TravelTo(const FVector& pos,float yaw) {
-    arrivalPosition=pos; arrivalYaw=yaw; arrivalAfter=Now()+3; pendingArrival=true;
+    arrivalPosition=pos; arrivalYaw=yaw; arrivalAfter=Now()+3; pendingArrival=true; travelSince=Now();
     panel::Loading(true,0.85f,lang::Pick(L"Перемещение",L"Travelling"));
     auto fn=Fn(gameMode,"RequestFastTravel");
     if(fn) {
@@ -373,6 +382,81 @@ void ReturnSpawn() {
     if(!GetPrivateProfileIntW(L"Spawn",L"Enabled",0,Ini().c_str())) return;
     TravelTo({ReadFloat(L"Spawn",L"X",0),ReadFloat(L"Spawn",L"Y",0),ReadFloat(L"Spawn",L"Z",0)},ReadFloat(L"Spawn",L"Yaw",0));
     note=L"Returning to saved spawn";
+}
+double editorMapOpeningUntil=0;
+bool editorMapWasOpen=false, mapGroundPending=false;
+FVector mapGroundTarget{};
+double mapGroundDeadline=0, mapGroundCheck=0;
+void OpenEditorMap() {
+    if(multiplayer || !ready || pendingArrival || mapGroundPending) return;
+    overlay::SetNativeInput(true);
+    DevInputPolicy(); // release the editor's UIOnly input before the native menu takes focus
+    camVel={};
+    if(camLook) { camLook=false; ShowCursor(TRUE); }
+    // A CameraActor view target bypasses BendCamMenu. Retain the flight state and
+    // position, but let the game's pawn camera render its native map until close.
+    if(flying && IsValid(editorCam)) ViewThrough(pawn);
+    if(policy::OpenMap()) { editorMapOpeningUntil=Now()+2; editorMapWasOpen=true; }
+    else {
+        overlay::SetNativeInput(false);
+        if(flying && IsValid(editorCam)) ViewThrough(editorCam);
+    }
+}
+bool MapGround(const FVector& at,FVector& ground) {
+    auto kismet=FindObject("/Script/Engine.Default__KismetSystemLibrary"), statics=GameStatics();
+    auto trace=kismet?Fn(kismet,"LineTraceSingle_NEW"):nullptr, brk=statics?Fn(statics,"BreakHitResult"):nullptr;
+    if(!trace || !brk) return false;
+    auto hit=FindProperty(trace,"OutHit"), input=FindProperty(brk,"Hit");
+    if(!hit || !input || Field<int>(hit,off::UProperty_ElementSize)!=136 || Field<int>(input,off::UProperty_ElementSize)!=136) return false;
+    Params ray(trace); ray.Set("WorldContextObject",pawn);
+    ray.Set("Start",FVector{at.X,at.Y,100000.f}); ray.Set("End",FVector{at.X,at.Y,-100000.f});
+    ray.Set<uint8_t>("TraceChannel",0); ray.SetBool("bTraceComplex",true); ray.SetBool("bIgnoreSelf",true);
+    if(!Call(kismet,"LineTraceSingle_NEW",&ray) || !ray.GetBool("ReturnValue")) return false;
+    Params result(brk); memcpy(static_cast<uint8_t*>(result.Data())+Field<int>(input,off::UProperty_Offset),static_cast<uint8_t*>(ray.Data())+Field<int>(hit,off::UProperty_Offset),136);
+    if(!Call(statics,"BreakHitResult",&result)) return false;
+    ground=result.Get<FVector>("ImpactPoint");
+    return std::isfinite(ground.Z) && result.Get<FVector>("ImpactNormal").Z>0.5f;
+}
+void EditorMap(double now) {
+    if(multiplayer) return;
+    const bool active=policy::GetState().menuActive;
+    if(active) editorMapOpeningUntil=0;
+    const bool usingMap=active || now<editorMapOpeningUntil;
+    overlay::SetNativeInput(usingMap);
+    if(!usingMap && editorMapWasOpen) {
+        if(flying && IsValid(editorCam)) ViewThrough(editorCam);
+        lastControl=View(); camVel={};
+        diagnostics::Event("map closed; editor camera restored");
+    }
+    editorMapWasOpen=usingMap;
+    FVector destination;
+    if(ready && policy::TakeEditorMapTeleport(destination)) {
+        policy::CloseMap();
+        if(!flying) SetFlying(true);
+        // The native map supplies XY, not reliable terrain height. Stream the destination
+        // above terrain first, then trace its loaded geometry; never guess a walking Z.
+        mapGroundTarget={destination.X,destination.Y,60000.f};
+        mapGroundPending=true; mapGroundDeadline=now+30; mapGroundCheck=now+3;
+        TravelTo(mapGroundTarget,camRot.Yaw);
+        diagnostics::Event("map teleport streaming x=%.1f y=%.1f",destination.X,destination.Y);
+    }
+    if(mapGroundPending && !pendingArrival && !Loading() && now>=mapGroundCheck) {
+        mapGroundCheck=now+0.5;
+        FVector ground;
+        if(MapGround(mapGroundTarget,ground)) {
+            SetFlying(true);
+            camPos={ground.X,ground.Y,ground.Z+1000.f}; camVel={};
+            const bool moved=SetPosition({camPos.X,camPos.Y,camPos.Z-200.f});
+            PlaceCamera(); ViewThrough(editorCam); lastControl=View();
+            if(moved) { mapGroundPending=false; note=lang::Pick(L"Телепорт по карте выполнен",L"Map teleport complete"); }
+            diagnostics::Event("map teleport ground=%.1f camera=%.1f moved=%d",ground.Z,camPos.Z,moved);
+        }
+        if(mapGroundPending && now>=mapGroundDeadline) {
+            mapGroundPending=false;
+            note=lang::Pick(L"Поверхность не найдена: оставлен режим полёта",L"No ground found: remaining in flight mode");
+            dg::Log("Map teleport: terrain trace timed out; flight retained at safe altitude");
+        }
+    }
 }
 // Server teleports: the first one (spawn) and long jumps travel with the bike; short hops on foot move directly.
 void ApplyServerTeleport() {
@@ -426,7 +510,13 @@ void FixBikeAfterArrival(double now) {
 }
 void AlignArrival(double now) {
     FixBikeAfterArrival(now);
-    if(!pendingArrival || now<arrivalAfter || Loading() || !IsValid(pawn)) return;
+    // A fast travel that never finishes (the game's loading never shows or never ends): the player is
+    // put there directly, so the cover comes down instead of staying up for good.
+    if(pendingArrival && travelSince && now-travelSince>30 && Loading()) {
+        dg::Log("Travel stuck for %.0f s (game loading); placing the player directly",now-travelSince);
+        travelSince=0; arrivalAfter=now;
+    }
+    if(!pendingArrival || now<arrivalAfter || (Loading() && travelSince) || !IsValid(pawn)) return;
     // Bend fast travel treats Z as a feet position. Our editor stores the actor's root position.
     const auto before=Position();
     if(!SetPosition(arrivalPosition)) { dg::Log("Could not align arrival; retrying"); arrivalAfter=now+1; return; }
@@ -477,6 +567,50 @@ bool SweepManagersSafe(double now) {
     __try { SweepManagers(now); return true; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// Native weapons and ambient hand props are separate actors: hiding their NPC does not hide them.
+// Follow ownership AND scene attachment, including nested props and actors created after the NPC
+// was suppressed. Never classify by proximity or mesh name: server/player gear uses the same assets.
+UObject* ComponentActor(UObject* component,UObject* actorClass) {
+    for(int depth=0;IsValid(component) && depth<8;++depth,component=component->Outer)
+        if(IsA(component,actorClass)) return component;
+    return nullptr;
+}
+UObject* AttachmentActor(UObject* component,UObject* actorClass) {
+    return IsValid(component)?ComponentActor(Field<UObject*>(component,off::Scene_AttachParent),actorClass):nullptr;
+}
+UObject* NativeNpcFor(UObject* object,UObject* actorClass,UObject* aiClass,UObject* dummyClass,int ownerOffset) {
+    UObject* queue[32]{};
+    size_t count=1; queue[0]=object;
+    auto append=[&](UObject* o) {
+        if(count<32 && IsValid(o) && IsA(o,actorClass) && std::find(queue,queue+count,o)==queue+count) queue[count++]=o;
+    };
+    for(size_t i=0;i<count;++i) {
+        auto o=queue[i];
+        if(o==pawn || (o->ObjectFlags&0x30)) continue;
+        if(((aiClass && IsA(o,aiClass)) || (dummyClass && IsA(o,dummyClass))) && !zombies::IsOurs(o)) return o;
+        if(ownerOffset>=0) append(Field<UObject*>(o,ownerOffset));
+        auto root=Field<UObject*>(o,off::Actor_RootComponent);
+        append(AttachmentActor(root,actorClass));
+    }
+    return nullptr;
+}
+// A hidden native NPC still animates (its meshes tick apart from the actor), and its animations carry
+// sounds: snoring, a freaker's moans, heard from NPCs no one can see. Its meshes stop, its sounds too.
+void Silence(UObject* actor) {
+    static UObject *skeletal=FindClass("SkeletalMeshComponent"), *audio=FindClass("AudioComponent");
+    auto f=Fn(actor,"GetComponentsByClass"); if(!f) return;
+    struct Raw { UObject** data; int num, max; };
+    for(UObject* cls:{skeletal,audio}) {
+        if(!cls) continue;
+        Params p(f); p.Set("ComponentClass",cls); Call(actor,"GetComponentsByClass",&p);
+        const Raw list=p.Get<Raw>("ReturnValue");
+        for(int i=0;i<list.num && i<64;++i) {
+            UObject* c=list.data[i]; if(!IsValid(c)) continue;
+            BoolArg(c,"SetComponentTickEnabled","bEnabled",false);
+            if(cls==audio) Call(c,"Stop");
+        }
+    }
+}
 void Sweep(double now) {
     if(now<nextSweep) return; nextSweep=now+0.008;
     static double nextManagers=0;
@@ -485,15 +619,49 @@ void Sweep(double now) {
         if(!SweepManagersSafe(now)) { nextManagers=now+3; dg::Log("World managers not ready; retrying"); }
     }
     auto triggerCls=FindClass("BendGameMissionTrigger"), restrictCls=FindClass("XpecRestrictArea"), aiCls=FindClass("BendAIPawn");
+    // Camp civilians/guards use a separate LOD actor, not a BendAIPawn.
+    // DGMP NPCs use plain SkeletalMeshActor and are deliberately excluded.
+    auto dummyCls=FindClass("XpecDummySkeletalMeshActor");
+    auto actorCls=FindClass("Actor");
+    auto sceneCls=FindClass("SceneComponent");
+    int ownerOffset=-1;
+    if(auto property=actorCls?FindProperty(actorCls,"Owner"):nullptr) ownerOffset=Field<int>(property,off::UProperty_Offset);
     std::vector<UObject*> hide;
+    std::vector<UObject*> hideComponents;
     static int cursor=0; const int n=NumObjects(); if(cursor>=n) cursor=0;
     const int end=std::min(n,cursor+2048);
     for(int i=cursor;i<end;++i) {
-        auto o=ObjectAt(i); if(!o || o==pawn || (o->ObjectFlags&0x10) || !IsValid(o)) continue;
+        auto o=ObjectAt(i); if(!o || o==pawn || (o->ObjectFlags&0x30) || !IsValid(o)) continue;
+        // Ambient activity actors can remain in the scenery while only ONE component is on an
+        // NPC's hand (e.g. a spice bottle); hiding the whole activity would also remove its pot.
+        if(suppressAI && sceneCls && actorCls && IsA(o,sceneCls) &&
+           (!GetBoolProp(o,"bHiddenInGame") || GetBoolProp(o,"bVisible"))) {
+            if(auto parent=AttachmentActor(o,actorCls)) {
+                if(auto npc=NativeNpcFor(parent,actorCls,aiCls,dummyCls,ownerOffset);
+                   npc && ComponentActor(o,actorCls)!=npc) {
+                    hideComponents.push_back(o);
+                    if(Once(o)) {
+                        ++removedAIGear;
+                        if(removedAIGear<=12) dg::Log("Native NPC prop hidden: %s (NPC %s)",FullName(o).c_str(),FullName(npc).c_str());
+                    }
+                }
+            }
+        }
         if(suppressStory && ((triggerCls && IsA(o,triggerCls)) || (restrictCls && IsA(o,restrictCls)))) {
             if(Once(o)) { hide.push_back(o); ++triggers; }
-        } else if(suppressAI && aiCls && IsA(o,aiCls) && !GetBoolProp(o,"bHidden") && !zombies::IsOurs(o)) {
-            if(Once(o)) { hide.push_back(o); ++removedAI; }
+        } else if(suppressAI && ((aiCls && IsA(o,aiCls)) || (dummyCls && IsA(o,dummyCls))) && !zombies::IsOurs(o)) {
+            // LOD transitions can show an already-processed actor again.
+            if(Once(o)) ++removedAI;
+            if(!GetBoolProp(o,"bHidden") || GetBoolProp(o,"bActorEnableCollision")) hide.push_back(o);
+        } else if(suppressAI && actorCls && IsA(o,actorCls) &&
+                  (!GetBoolProp(o,"bHidden") || GetBoolProp(o,"bActorEnableCollision"))) {
+            if(auto npc=NativeNpcFor(o,actorCls,aiCls,dummyCls,ownerOffset)) {
+                hide.push_back(o);
+                if(Once(o)) {
+                    ++removedAIGear;
+                    if(removedAIGear<=12) dg::Log("Native NPC gear hidden: %s (NPC %s)",FullName(o).c_str(),FullName(npc).c_str());
+                }
+            }
         }
     }
     cursor=end;
@@ -501,12 +669,20 @@ void Sweep(double now) {
         BoolArg(o,"SetActorHiddenInGame","bNewHidden",true);
         BoolArg(o,"SetActorEnableCollision","bNewActorEnableCollision",false);
         BoolArg(o,"SetActorTickEnabled","bEnabled",false);
-        if(IsA(o,aiCls)) { auto ctrl=Field<UObject*>(o,off::Pawn_Controller); if(IsValid(ctrl)) BoolArg(ctrl,"SetActorTickEnabled","bEnabled",false); }
+        if(aiCls && IsA(o,aiCls)) { auto ctrl=Field<UObject*>(o,off::Pawn_Controller); if(IsValid(ctrl)) BoolArg(ctrl,"SetActorTickEnabled","bEnabled",false); }
+        if((aiCls && IsA(o,aiCls)) || (dummyCls && IsA(o,dummyCls))) Silence(o);
+    }
+    for(auto o:hideComponents) {
+        if(auto f=Fn(o,"SetHiddenInGame")) { Params p(f); p.SetBool("NewHidden",true); p.SetBool("bPropagateToChildren",true); Call(o,"SetHiddenInGame",&p); }
+        if(auto f=Fn(o,"SetVisibility")) { Params p(f); p.SetBool("bNewVisibility",false); p.SetBool("bPropagateToChildren",true); Call(o,"SetVisibility",&p); }
+        if(auto f=Fn(o,"SetCollisionEnabled")) { Params p(f); p.Set<uint8_t>("NewType",0); Call(o,"SetCollisionEnabled",&p); }
+        BoolArg(o,"SetComponentTickEnabled","bEnabled",false);
     }
     if(processed.size()>20000) processed.clear();
 }
 void Fly(float dt) {
     if(!flying) return;
+    if(overlay::NativeInput() || policy::GetState().menuActive || mapGroundPending) return;
     if(Field<uint8_t>(movement,0x198)!=0) { auto fn=Fn(movement,"SetMovementMode"); if(fn) { Params p(fn); p.Set<uint8_t>("NewMovementMode",0); Call(movement,"SetMovementMode",&p); } }
     if(!multiplayer) {
         if(!IsValid(editorCam)) StartEditorCamera();
@@ -531,14 +707,19 @@ void Commands(double now) {
     if(overlay::Typing()) focus=false;
     const bool flyKey=Pressed(VK_F2),saveKey=Pressed(VK_F5),markKey=Pressed(VK_F6),returnKey=Pressed(VK_F8),slower=Pressed(VK_OEM_4),faster=Pressed(VK_OEM_6);
     const bool left=Pressed(VK_LBUTTON),right=Pressed(VK_RBUTTON);
+    const bool mapKey=overlay::TakeEditorMapKey();
     // Joined players have no editor tools: the server owns time, weather and positions.
     if(focus && ready && !panel::IsLoading() && !multiplayer) {
+        if(mapKey) {
+            if(overlay::NativeInput()) policy::CloseMap(); else OpenEditorMap();
+        }
+        if(overlay::NativeInput() && menuKeys[5]) policy::CloseMap();
         if(devKey && !policy::GetState().menuActive && !Paused()) DGMP_SetDevMenuVisible(!devmenu::IsOpen());
         devmenu::Update(true);
         const bool wasDev=devmenu::IsOpen();
         if(wasDev) {
             for(int i=0;i<6;++i) if(menuKeys[i]) devmenu::Key(keys[i]);
-        } else {
+        } else if(!overlay::NativeInput() && !mapGroundPending) {
             if(flyKey) SetFlying(!flying); if(saveKey) SavePoint(true); if(markKey) SavePoint(false); if(returnKey) ReturnSpawn();
             if(slower) speed=std::max(100.f,speed/2); if(faster) speed=std::min(40000.f,speed*2);
             if(flying && !overlay::CursorMode() && !policy::GetState().menuActive && !Paused()) {
@@ -558,7 +739,7 @@ void Commands(double now) {
     else if(!wcscmp(command,L"mark")) SavePoint(false);
     else if(!wcscmp(command,L"fly_toggle") && ready) SetFlying(!flying);
     else if(!wcscmp(command,L"return_spawn") && ready) ReturnSpawn();
-    else if(!wcscmp(command,L"open_map") && ready) policy::OpenMap();
+    else if(!wcscmp(command,L"open_map") && ready) { if(multiplayer) policy::OpenMap(); else OpenEditorMap(); }
     else if(!wcscmp(command,L"close_map")) policy::CloseMap();
     else if(!wcscmp(command,L"map_category")) {
         const int category=GetPrivateProfileIntW(L"Control",L"Category",-1,path.c_str());
@@ -593,7 +774,8 @@ void Status(double now) {
              << ",\"loadingCover\":" << panel::IsLoading()
              << ",\"menu\":" << (IsValid(gameMode) && GetBoolProp(gameMode,"bIsMainMenuActive"))
              << ",\"loading\":" << Loading() << ",\"x\":" << pos.X << ",\"y\":" << pos.Y << ",\"z\":" << pos.Z << ",\"yaw\":" << rotation.Yaw
-             << ",\"triggersDisabled\":" << triggers << ",\"aiHidden\":" << removedAI << ",\"errors\":" << errors << ",\"sequence\":" << commandSeq
+              << ",\"triggersDisabled\":" << triggers << ",\"aiHidden\":" << removedAI << ",\"aiGearHidden\":" << removedAIGear << ",\"errors\":" << errors << ",\"sequence\":" << commandSeq
+             << ",\"nativeServicesDisabled\":" << ui.nativeServicesDisabled << ",\"blockedNativeInteractions\":" << ui.blockedNativeInteractions
              << ",\"photoDisabled\":" << ui.photoDisabled << ",\"photoActive\":" << (IsValid(controller) && GetBoolProp(controller,"IsPhotoModeActive"))
              << ",\"mapRevealed\":" << ui.mapRevealed << ",\"fogMaterialOverridden\":" << ui.fogMaterialOverridden
              << ",\"allMapRegions\":" << ui.allRegions << ",\"mapOnly\":" << ui.mapOnly << ",\"mapMenuActive\":" << ui.menuActive << ",\"mapEnum\":" << ui.mapEnum
@@ -639,6 +821,7 @@ void FinishBootstrapFade() {
     }
 }
 void Update(float dt) {
+    diagnostics::Phase("client-refresh");
     const double now=Now(); lastDelta=dt; Refresh(now);
     if(IsValid(gameMode)) {
         const bool menu=GetBoolProp(gameMode,"bIsMainMenuActive");
@@ -655,12 +838,15 @@ void Update(float dt) {
                 AlignArrival(now); RecoverStuckFade(now); Sweep(now); Fly(dt);
             }
         } else {
+            if(pendingArrival && !menu && IsValid(pawn) && travelSince && now-travelSince>30) AlignArrival(now);  // (stuck in the game's loading)
             stableSince=0;
             if(ready && menu) { ready=false; stage="main-menu"; }
         }
         if(requested && !ready && now-requestTime>90 && stage=="load-requested") { stage="load-timeout"; bootstrapComplete=true; panel::Loading(false,0,lang::Pick(L"Ошибка загрузки",L"Loading failed")); note=L"Auto load timed out; see logs/DGMP.log"; dg::Log("Bootstrap load timed out"); }
     }
+    diagnostics::Phase("client-policy");
     policy::Update(pawn,controller,gameMode,flying || devmenu::IsOpen() || !ready || pendingArrival,revealMap,true,suppressStory);
+    EditorMap(now);
     if(multiplayer) {
         const bool inWorld=ready && IsValid(pawn) && !Loading();
         const bool gameplay=inWorld && !panel::IsLoading() && !policy::GetState().menuActive && !Paused();
@@ -698,7 +884,9 @@ void Update(float dt) {
         else if(!ready && !requested) panel::Loading(true,0.25f,lang::Pick(L"Инициализация мира",L"Initializing the world"));
         else if(!ready) panel::Loading(true,Loading()?0.55f:0.72f,lang::Pick(L"Загрузка мира",L"Loading the world"));
     }
-    Commands(now); environment::Update(ready && !panel::IsLoading() && !Loading()); Status(now);
+    diagnostics::Phase("client-commands"); Commands(now);
+    diagnostics::Phase("client-environment"); environment::Update(ready && !panel::IsLoading() && !Loading()); Status(now);
+    const auto diagnosticPosition=Position(); diagnostics::Heartbeat(now,NumObjects(),diagnosticPosition.X,diagnosticPosition.Y,diagnosticPosition.Z);
     if(!multiplayer && ready && !Loading()) { editorui::Update(now,pawn,controller); mp::UpdateEditorPreview(now,pawn); }
     // Silent while the loading cover is up: no menu music or chatter from the template save.
     audio::Update(!bootstrapComplete || panel::IsLoading());
@@ -744,7 +932,10 @@ TickFn originalTick=nullptr;
 void* copiedVtable[512];
 void __fastcall Tick(UObject* engine,float dt,bool idle) {
     static bool guarded=false; if(!guarded) { ULONG reserve=64*1024; SetThreadStackGuarantee(&reserve); guarded=true; }  // room to log a stack overflow
-    SafeInputPolicy(); originalTick(engine,dt,idle); SafeUpdate(dt);
+    diagnostics::Phase("pre-tick-policy"); SafeInputPolicy();
+    diagnostics::Phase("native-engine-tick"); originalTick(engine,dt,idle);
+    diagnostics::Phase("client-update"); SafeUpdate(dt);
+    diagnostics::Phase("native/background");
 }
 UObject* FindEngine() {
     for(int i=0,n=NumObjects();i<n;++i) { auto o=ObjectAt(i); if(o && !(o->ObjectFlags&0x10) && IsValid(o) && o->Class && GetName(o->Class)=="GameEngine") return o; } return nullptr;
@@ -772,6 +963,8 @@ void DGMPInitThread() {
     policy::ConfigureMarkers(mapMask);
     speed=std::clamp(ReadFloat(L"DGMP",L"FlySpeed",2000),100.f,40000.f); startTime=Now();
     multiplayer=mp::Init();
+    if(!multiplayer) diagnostics::Start(profile::Root(),GetPrivateProfileIntW(L"Editor",L"Diagnostics",1,(fs::path(profile::Root())/L"editor.ini").c_str())!=0);
+    else if(GetPrivateProfileIntW(L"Development",L"Diagnostics",0,Ini().c_str())!=0) diagnostics::Start(profile::Root(),true);
     policy::SetEditorSession(!multiplayer);
     if(multiplayer) { autoFly=wantedFly=false; dg::Log("Multiplayer client session: editor tools disabled"); }
     UObject* engine=nullptr;

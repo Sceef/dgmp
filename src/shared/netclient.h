@@ -61,12 +61,13 @@ public:
         std::function<void(uint16_t id, const MarkerInfo* info)> marker;  // info null = removed
         std::function<void(uint16_t id, const std::string* item, int count, float x, float y, float z, float yaw)> worldItem;  // item null = removed
         std::function<void(uint16_t playerId)> corpse;
-        std::function<void(uint16_t attacker, float damage, HitZone zone)> damage;  // another player hurt you
+        std::function<void(uint16_t attacker, float damage, HitZone zone, const std::string& weapon)> damage;  // another player hurt you (weapon: its class, may be empty)
         std::function<void(bool on)> freeze;
         std::function<void(float percent)> setHealth;  // 0: die
         std::function<void(const std::string& path, uint8_t flags, float rate)> playAnim;  // path "": stop
         std::function<void(const std::string& path, const float* at, float volume, float pitch)> sound;  // at null: 2D
         std::function<void(uint16_t id, const std::string& weaponClass, float x, float y, float z)> playerShot;
+        std::function<void(uint16_t id, const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz)> playerThrow;
         // Voice chat: a frame of that player's voice (VoiceRoute; range: where Near fades out, units) and
         // this server's voice setup (VoiceFlags, the channel names the radio key / a call talk to).
         std::function<void(uint16_t id, VoiceRoute route, VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size)> voice;  // gain: %
@@ -112,7 +113,7 @@ public:
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
         struct CarryInfo { std::string model; float x, y, z, yaw; int world; uint16_t carrier; uint8_t roll = 0; };  // roll: CarryRoll
         std::function<void(uint16_t id, const CarryInfo* info)> carry;  // info null = removed
-        struct BlipInfo { float x = 0, y = 0, z = 0; std::string icon; uint32_t color = 0; float scale = 1; bool map = true, radar = true, edge = false; int world = -1; };
+        struct BlipInfo { float x = 0, y = 0, z = 0; std::string icon; uint32_t color = 0; float scale = 1; bool map = true, radar = true, edge = false; int world = -1; std::string title, description; };
         std::function<void(uint16_t id, const BlipInfo* info)> blip;  // info null = removed
         // ghost: outlined (a client script's preview of where something goes; not sent by the server)
         struct ObjectInfo { std::string asset; float x = 0, y = 0, z = 0, pitch = 0, yaw = 0, roll = 0, scale = 1; int world = -1; bool collision = true; bool ghost = false; };
@@ -141,6 +142,7 @@ public:
     void SendKey(uint8_t virtualKey);
     void SendAnimEnd(uint8_t reason);
     void SendShot(const std::string& weaponClass, float x, float y, float z);
+    void SendThrow(const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz);
     void SendVoice(VoiceKey key, VoiceCodec codec, int gain, const uint8_t* frame, size_t size);  // unreliable, kChanVoice; gain: microphone volume %
     void SendImageRequest(const std::string& name);
     void SendUiRequest(const std::string& path);

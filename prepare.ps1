@@ -47,6 +47,9 @@ foreach ($file in Get-ChildItem -LiteralPath $sourceBin -File) {
     }
 }
 Copy-Item -LiteralPath (Join-Path $dgmpRoot 'build\version.dll') -Destination (Join-Path $runtimeBin 'version.dll') -Force
+if (Test-Path -LiteralPath (Join-Path $dgmpRoot 'build\dgmp-crashdump.exe')) {
+    Copy-Item -LiteralPath (Join-Path $dgmpRoot 'build\dgmp-crashdump.exe') -Destination (Join-Path $runtimeBin 'dgmp-crashdump.exe') -Force
+}
 Set-Content -LiteralPath (Join-Path $runtimeBin 'steam_appid.txt') -Value '1259420' -Encoding ASCII
 . (Join-Path $dgmpRoot 'world-template.ps1')
 $template = Initialize-DGMPWorldProfile $dgmpRoot (Join-Path $dgmpRoot 'worlds\bootstrap') (Get-DGMPAccountId)

@@ -1,0 +1,17 @@
+{
+  "skins": [
+    {"id": "survivor", "name": {"en": "Survivor (glasses)", "ru": "Выживший в очках"}, "look": "/Game/Characters/npc_male/looks/m_sur/m_host_eric.m_host_eric"},
+    {"id": "biker", "name": {"en": "Biker", "ru": "Байкер"}, "look": "/Game/Characters/npc_male/looks/m_mar/m_mar_biker_01.m_mar_biker_01"},
+    {"id": "motocross", "name": {"en": "Motocross rider", "ru": "Мотокроссер"}, "look": "/Game/Characters/npc_male/looks/m_mar/m_mar_biker_silver_motocross.m_mar_biker_silver_motocross"},
+    {"id": "biker_f", "name": {"en": "Biker (woman)", "ru": "Байкерша"}, "look": "/Game/Characters/npc_female/looks/f_mar/f_mar_biker.f_mar_biker"},
+    {"id": "survivor_f", "name": {"en": "Survivor (woman)", "ru": "Выжившая"}, "look": "/Game/Characters/npc_female/looks/f_sur/f_host_rose.f_host_rose"},
+    {"id": "trader_f", "name": {"en": "Trader (woman)", "ru": "Торговка"}, "look": "/Game/Characters/npc_female/looks/merchants/f_merch_ava_bergstrom.f_merch_ava_bergstrom"}
+  ],
+  "uniforms": [
+    {"id": "guard", "name": {"en": "Camp guard", "ru": "Охранник лагеря"}, "look": "/Game/Characters/npc_male/looks/m_sur/m_sur_copeland_guard_08.m_sur_copeland_guard_08"},
+    {"id": "soldier", "name": {"en": "Soldier", "ru": "Солдат"}, "look": "/Game/Characters/npc_male/looks/m_mil/m_mil_001.m_mil_001"},
+    {"id": "soldier_f", "name": {"en": "Soldier (woman)", "ru": "Солдат (женщина)"}, "look": "/Game/Characters/npc_female/looks/f_mil/f_mil_001.f_mil_001"},
+    {"id": "medic_f", "name": {"en": "Medic (woman)", "ru": "Медик (женщина)"}, "look": "/Game/Characters/npc_female/looks/f_mil/f_mil_diamondlake_medic_001.f_mil_diamondlake_medic_001"},
+    {"id": "armor", "name": {"en": "Armoured", "ru": "В броне"}, "look": "/Game/Characters/npc_male/looks/m_armor/m_mar_armor_003.m_mar_armor_003"}
+  ]
+}

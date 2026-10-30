@@ -1,5 +1,6 @@
 #include "overlay.h"
 #include "log.h"
+#include "diagnostics.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
@@ -24,6 +25,8 @@ HWND window = nullptr;
 WNDPROC gameProc = nullptr;
 bool ready = false, failed = false;
 std::atomic<bool> visible{false}, cursor{false}, typing{false}, overUi{false};
+std::atomic<bool> nativeInput{false};
+std::atomic<bool> editorMapKey{false}, mapKeyRequested{false};
 std::atomic<DrawFn> draw{nullptr}, cover{nullptr}, hud{nullptr};
 std::atomic<DrawFn> page{nullptr};
 std::atomic<FocusFn> pageFocused{nullptr};
@@ -39,7 +42,7 @@ std::atomic<uint64_t> scriptBlocked[4];  // a bit per virtual key
 bool cursorShown = false;
 int shownCalls = 0;
 void ApplyCursor() {
-    const bool want = visible && cursor;
+    const bool want = visible && cursor && !nativeInput;
     if (want == cursorShown) return;
     cursorShown = want;
     if (want) {
@@ -67,6 +70,11 @@ LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         if ((msg == WM_ACTIVATEAPP && !w) || (msg == WM_ACTIVATE && LOWORD(w) == WA_INACTIVE) || msg == WM_KILLFOCUS) return 0;
     }
     ApplyCursor();
+    if(editorMapKey && msg==WM_KEYDOWN && w=='M' && !typing) {
+        if(!(l & (1 << 30))) mapKeyRequested=true;
+        return 0;
+    }
+    if (nativeInput) return CallWindowProcW(gameProc, h, msg, w, l);
     // A key the multiplayer UI uses right now (an interaction's E): the game must not act on it too.
     if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && blockedKey && int(w) == blockedKey && !(visible && cursor)) return 0;
     if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && w < 256 && (scriptBlocked[w >> 6] & (1ull << (w & 63))) && !(visible && cursor)) return 0;
@@ -143,6 +151,7 @@ bool Init(IDXGISwapChain* chain) {
 }
 
 HRESULT __stdcall Present(IDXGISwapChain* chain, UINT sync, UINT flags) {
+    diagnostics::Phase("overlay-present");
     if (!ready && !failed) { ready = Init(chain); failed = !ready; }
     lastPresent = GetTickCount64();
     const DrawFn fn = visible ? DrawFn(draw) : nullptr, first = cover, layer = hud, web = page;
@@ -161,12 +170,13 @@ HRESULT __stdcall Present(IDXGISwapChain* chain, UINT sync, UINT flags) {
         if (web) web();
         if (first) first();
         if (fn) fn();
-        typing = fn && io.WantTextInput;
-        overUi = fn && cursor && io.WantCaptureMouse;
+        typing = fn && !nativeInput && io.WantTextInput;
+        overUi = fn && cursor && !nativeInput && io.WantCaptureMouse;
         ImGui::Render();
         context->OMSetRenderTargets(1, &target, nullptr);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     }
+    diagnostics::Phase("native-present");
     return originalPresent(chain, sync, flags);
 }
 
@@ -212,6 +222,10 @@ void SetVisible(bool on) { visible = on; if (!on) cursor = false; }
 bool Visible() { return visible; }
 void SetCursorMode(bool on) { cursor = on && visible; }
 bool CursorMode() { return cursor; }
+void SetNativeInput(bool on) { nativeInput = on; }
+bool NativeInput() { return nativeInput; }
+void EnableEditorMapKey() { editorMapKey=true; }
+bool TakeEditorMapKey() { return mapKeyRequested.exchange(false); }
 bool Typing() { return typing; }
 bool MouseOverUi() { return overUi; }
 void SetDraw(DrawFn fn) { draw = fn; }

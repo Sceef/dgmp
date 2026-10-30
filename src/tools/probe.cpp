@@ -5,8 +5,8 @@
 //   dgmp-probe join <host[:port]> <nick> [password] [--seconds N] [--say text] [--auto]
 //       stays connected, walks a small circle, prints server events; stdin lines are sent as chat, except:
 //       !at x y z (stand there: z = ground), !walk (circle again), !use <interaction>, !key <letter> (a bound key), !dlg <id> <1|0> [item],
-//       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll),
-//       !hit <id> <damage> [zone 0-3] [weapon class], !dead / !alive, !inv key=n ... (report this backpack: a cheat),
+//       !pick <carry>, !put x y z (put the carried box there), !break x y z (it breaks in a roll), !skin <zero-based choice>,
+//       !hit <id> <damage> [zone 0-3] [weapon class], !throw x y z vx vy vz (a rock thrown from there), !dead / !alive, !inv key=n ... (report this backpack: a cheat),
 //       !ui <name> [json] (the mode's page sent dgmp.send(name, data)), !cs <name> [json] (the client script sent send(name, data)),
 //       !cserr <text> (a client script failed), !iw <window id> <json> (an action in the mode's item window),
 //       !pickup <key> [x y z] [object id] (the game says we picked it up), !shot <weapon class> (we fired here). Item orders change a simulated backpack.
@@ -173,6 +173,22 @@ int main() {
             std::printf("* ACTOR %u at %.0f %.0f %.0f look %s anim %s [%s]\n", id, in->x, in->y, in->z, in->look.c_str(), in->anim.c_str(), in->name.c_str());
         };
         c.on.look = [&](uint16_t id, const std::string& look) { if (id == c.localId()) std::printf("* LOOK %s\n", look.empty() ? "(own)" : look.c_str()); };
+        c.on.blip = [](uint16_t id, const net::Client::Events::BlipInfo* b) {
+            if (!b) { std::printf("* BLIP %u removed\n",id); return; }
+            std::printf("* BLIP %u %s [%s] %s\n",id,b->icon.c_str(),b->title.c_str(),b->description.c_str());
+        };
+        c.on.vehicle = [](uint16_t id, const net::Client::Events::VehicleInfo* v) {
+            if (!v) { std::printf("* VEHICLE %u removed\n",id); return; }
+            std::printf("* VEHICLE %u model=%s at %.0f %.0f %.0f yours=%d marked=%d world %d driver %d\n",id,
+                v->model.empty()?"bike":v->model.c_str(),v->state.x,v->state.y,v->state.z,int(v->yours),int(v->marked),v->world,v->driver==0xFFFF?-1:int(v->driver));
+        };
+        std::vector<std::pair<std::string, std::string>> skinChoices;
+        c.on.customize = [&](bool cancel, const std::string& title, const std::string&, const std::string&,
+                             const std::vector<std::pair<std::string, std::string>>& choices, const float*) {
+            skinChoices = choices;
+            std::printf("* CUSTOMIZE [%s] cancel=%d choices=%zu\n", title.c_str(), int(cancel), choices.size());
+            for (size_t i = 0; i < choices.size(); ++i) std::printf("* SKIN %zu [%s] %s\n", i, choices[i].first.c_str(), choices[i].second.c_str());
+        };
         c.on.watchKeys = [&](const std::vector<uint8_t>& keys) {
             std::printf("* WATCH KEYS"); for (auto k : keys) std::printf(" %u", k); std::printf("\n");
             if (autoUi) for (auto k : keys) c.SendKey(k);
@@ -215,7 +231,8 @@ int main() {
         struct ProbeZombie { float x = 0, y = 0, z = 0, health = 200; uint16_t owner = 0xFFFF; bool dead = false; int moves = 0; };
         std::map<uint16_t, ProbeZombie> zombies;
         double nextZombieReport = 0;
-        if (!c.on.damage) c.on.damage = [](uint16_t from, float amount, net::HitZone) { std::printf("* DAMAGE %.0f from %u\n", amount, from); };
+        if (!c.on.playerThrow) c.on.playerThrow = [](uint16_t id, const std::string& mesh, float, float x, float y, float z, float, float, float) { std::printf("* THROW by %u %s at %.0f %.0f %.0f\n", id, mesh.c_str(), x, y, z); };
+        if (!c.on.damage) c.on.damage = [](uint16_t from, float amount, net::HitZone, const std::string&) { std::printf("* DAMAGE %.0f from %u\n", amount, from); };
         c.on.zombie = [&](net::Msg op, const uint8_t* data, size_t size) {
             net::Reader r(data, size);
             if (op == net::Msg::ZombieMoves) {
@@ -259,6 +276,9 @@ int main() {
                     else if (std::sscanf(s.c_str(), "!use %u", &id) == 1) c.SendUse(uint16_t(id));
                     else if (s.size() == 6 && s.rfind("!key ", 0) == 0) c.SendKey(uint8_t(std::toupper(static_cast<unsigned char>(s[5]))));  // a watched key (bindKey)
                     else if (std::sscanf(s.c_str(), "!dlg %u %u %d", &id, &ok, &item) >= 2) c.SendDialogResponse(uint16_t(id), ok != 0, item, "");
+                    else if (std::sscanf(s.c_str(), "!skin %u", &id) == 1) {
+                        if (id < skinChoices.size()) { c.SendCustomizeDone(true, skinChoices[id].second); skinChoices.clear(); }
+                    }
                     else if (std::sscanf(s.c_str(), "!pick %u", &id) == 1) c.SendCarry(uint16_t(id), net::CarryOp::Pick);
                     else if (std::sscanf(s.c_str(), "!put %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Put, x, y, z, 0);
                     else if (std::sscanf(s.c_str(), "!break %f %f %f", &x, &y, &z) == 3) c.SendCarry(carried, net::CarryOp::Break, x, y, z, 0);
@@ -266,6 +286,8 @@ int main() {
                         unsigned zone = 0; float dmg = 0; char weapon[128] = "";
                         if (std::sscanf(s.c_str(), "!hit %u %f %u %127s", &id, &dmg, &zone, weapon) >= 2) c.SendHit(uint16_t(id), dmg, net::HitZone(zone), weapon);
                     }
+                    else if (float v[6]; std::sscanf(s.c_str(), "!throw %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6)
+                        c.SendThrow("/Game/Weapons/Thrown_Weapons/Misc/Rock/Meshes/Static/Rock_Static.Rock_Static", 0.5f, v[0], v[1], v[2], v[3], v[4], v[5]);
                     else if (s.rfind("!ui ", 0) == 0) {
                         const auto rest = s.substr(4); const auto sp = rest.find(' ');
                         c.SendUiMessage(rest.substr(0, sp), sp == std::string::npos ? "null" : rest.substr(sp + 1));

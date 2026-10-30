@@ -123,6 +123,12 @@ table.servers { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .srv-name { font-weight: 600; }
 .srv-addr { display: block; font-size: 12px; color: var(--dim); font-family: var(--mono); }
 .offline .srv-name { color: var(--muted); }
+.copy { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: copy; }
+.copy svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .55; }
+.copy:hover { color: var(--accent-hi); }
+.copy:hover svg { opacity: 1; }
+.copy.done, .copy.done svg { color: var(--ok); opacity: 1; }
+.detail-meta .copy { font-family: var(--mono); }
 .ping-good { color: var(--ok); } .ping-mid { color: var(--warn); } .ping-bad { color: var(--bad); } .ping-none { color: var(--dim); }
 .full { color: var(--warn); }
 .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #3a1a17; color: #f0a198; margin-left: 6px; vertical-align: 1px; }
