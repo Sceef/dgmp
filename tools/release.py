@@ -68,8 +68,10 @@ def main():
         return
 
     notes = ROOT / "build" / "releases" / f"notes-{version}.md"
-    notes.write_text(f"{manifest['notes']['ru']}\n\n{manifest['notes']['en']}\n\nПротокол / protocol {protocol}. "
-                     f"SHA-256: `{manifest['sha256']}`\n", encoding="utf-8")
+    # The protocol tells server owners what plays together; the SHA-256 is for the launcher (update.json).
+    notes.write_text(f"{manifest['notes']['ru']}\n\n{manifest['notes']['en']}\n\n"
+                     f"Протокол {protocol}: играет с серверами того же протокола. / "
+                     f"Protocol {protocol}: plays with servers of the same protocol.\n", encoding="utf-8")
     exists = subprocess.run(["gh", "release", "view", tag, "--repo", REPO], cwd=ROOT, capture_output=True).returncode == 0
     if exists:
         # Never another file under a published version: launchers may hold its old size and SHA-256
