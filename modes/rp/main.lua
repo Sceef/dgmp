@@ -5,6 +5,7 @@
 -- doors, vehicles and loot of the World sections.
 local logic = require("logic")
 local rpchat = require("rpchat")
+local Race = require("race")
 
 local GREEN, YELLOW, RED, GREY, GOLD = "#7CD67C", "#F2D16B", "#E07070", "#A0A0A0", "#F2D16B"
 local START_MONEY, PAYDAY_MINUTES, PAYDAY_MONEY = 250, 30, 100
@@ -26,6 +27,10 @@ local function save(p)
     local acc = p.data.account
     if not acc then return end
     local x, y, z, yaw = p:position()
+    -- In a race (or quitting from one): where it was before it, not the track in the race's world.
+    local race = Race.of(p)
+    local back = (race and race:entry(p).back) or p.data.raceBack
+    if back then x, y, z, yaw = back.x, back.y, back.z, back.yaw end
     acc.money = p.money
     acc.pos = { x = x, y = y, z = z, yaw = yaw }
     storage.set(accountKey(p), acc)
@@ -108,6 +113,42 @@ on("playerRespawn", function(p)
 end)
 if hospital.placed then createBlip({ x = hospital.x, y = hospital.y, z = hospital.z, icon = "MAP_player_safehouse", color = "#E07070" }) end
 
+-- ---------------------------------------------------------------- street races
+-- A track from the editor (World > Mode logic): "race_start" (where [F] signs up), "race_grid" (start
+-- slots) and "race_checkpoint" (in order; the last one is the finish). The race runs in a virtual world
+-- of its own: the racers and the rest of the server do not get in each other's way. More tracks: copy
+-- this block with other names ("race2_start", ...).
+local RACE_PRIZES = { 300, 150, 75 }
+local streetRace = Race.new({
+    name = { en = "Street race", ru = "Уличная гонка" },
+    grid = logic.points("race_grid"),
+    checkpoints = logic.triggers("race_checkpoint", { radius = 12 }),
+    lobby = 45,
+    onLeave = function(race, p, reason, back) if reason == "quit" then p.data.raceBack = back end end,
+    onEnd = function(race, results)
+        if #results + #results.dnf < 2 then return end   -- no prizes for riding alone
+        for i, r in ipairs(results) do
+            local prize = RACE_PRIZES[i]
+            if prize and r.player.valid then
+                r.player:giveMoney(prize)
+                say(r.player, ("Prize for place %d: $%d"):format(i, prize), ("Приз за %d-е место: $%d"):format(i, prize), GOLD)
+                save(r.player)
+            end
+        end
+    end,
+})
+streetRace:signup(logic.point("race_start"), { text = "Street race" })
+command("race", function(p, args)
+    if args == "start" then
+        if streetRace:entry(p) and streetRace.state == "lobby" then streetRace:start() end
+        return
+    end
+    if streetRace:entry(p) then streetRace:leave(p)
+    elseif streetRace:watching(p) then streetRace:unwatch(p)
+    elseif streetRace.state == "racing" then streetRace:watch(p)
+    else streetRace:join(p) end
+end)
+
 -- ---------------------------------------------------------------- animations
 local ANIMS = { sit = "sit", hands = "surrender", wave = "wave", kneel = "kneel", lay = "lie", talk = "talk", guard = "guard" }
 for cmd, anim in pairs(ANIMS) do command(cmd, function(p) p:playAnim(anim, { loop = cmd ~= "wave" }) end) end
@@ -131,8 +172,8 @@ command("stats", function(p)
         ("Деньги: $%d · на сервере с %s"):format(p.money, os.date("%d.%m.%Y", acc.since or os.time())), YELLOW)
 end)
 command("help", function(p)
-    say(p, "Chat: /me /do /try /b /s /w /pm /o · /pay /stats · /sit /hands /wave /kneel /lay /talk /guard /stop · /skin",
-        "Чат: /me /do /try /b /s /w /pm /o · /pay /stats · /sit /hands /wave /kneel /lay /talk /guard /stop · /skin", YELLOW)
+    say(p, "Chat: /me /do /try /b /s /w /pm /o · /pay /stats · /sit /hands /wave /kneel /lay /talk /guard /stop · /skin · /race [start]",
+        "Чат: /me /do /try /b /s /w /pm /o · /pay /stats · /sit /hands /wave /kneel /lay /talk /guard /stop · /skin · /race [start]", YELLOW)
     if p.admin then say(p, "Admin: /goto /gethere /money /kick /ban /unban /heal", "Админ: /goto /gethere /money /kick /ban /unban /heal", YELLOW) end
 end)
 command("skin", function(p) p:customize({ title = ru(p) and "Магазин одежды" or "Clothes shop" }) end)
