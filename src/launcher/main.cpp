@@ -14,6 +14,8 @@
 #include <iphlpapi.h>
 #include <tlhelp32.h>
 #include <dwmapi.h>
+#include <winhttp.h>
+#include <bcrypt.h>
 #include <wrl.h>
 #include "WebView2.h"
 #include <algorithm>
@@ -41,9 +43,12 @@ constexpr int kMaxRecent = 15;
 constexpr const char* kQuestTestMode = "questtest";
 // The public server list (dgmp-server --master); launcher.json "master" overrides it.
 constexpr const char* kDefaultMaster = "";
-// Update manifest: {"version": "0.7.1", "url": "https://...download page", "notes": {"en": "...", "ru": "..."}};
+// Update manifest (update.json in the repository, written by tools/release.py): the newest client release,
+//   {"version": "0.8.0", "protocol": 11, "zip": "https://github.com/.../DGMP-client-0.8.0.zip", "sha256": "...",
+//    "bytes": 2933717, "url": "https://github.com/.../releases/tag/v0.8.0", "notes": {"en": "...", "ru": "..."}}
+// With zip + sha256 the launcher installs it itself; with url only it links to the page.
 // launcher.json "updateUrl" overrides it. "": no check.
-constexpr const char* kDefaultUpdateUrl = "";
+constexpr const char* kDefaultUpdateUrl = "https://raw.githubusercontent.com/Sceef/dgmp/main/update.json";
 
 fs::path g_root;
 HWND g_window = nullptr;
@@ -68,6 +73,7 @@ struct LocalServer {
     int port = 0;
     std::string password, mode;
 } g_server;
+struct Update { std::string version, zip, sha256; uint64_t bytes = 0; } g_update;  // the release update.json offers (UI thread)
 
 std::string Utf8(const std::wstring& w) {
     if (w.empty()) return {};
@@ -188,11 +194,129 @@ void CheckForUpdate() {
         std::string body, error;
         json::Value m;
         if (!srv::HttpGet(url, body, error, 10) || !json::Value::Parse(body, m)) { g_log << "Update check: " << (error.empty() ? "unreadable manifest" : error) << std::endl; return; }
-        const std::string version = m.str("version"), link = m.str("url");
+        const std::string version = m.str("version"), link = m.str("url"), zip = m.str("zip"), sha = m.str("sha256");
         if (!NewerVersion(version, dgmp::kVersion) || link.rfind("https://", 0) != 0) return;
         const auto& notes = m["notes"];
         const std::string text = notes.isString() ? notes.asString() : notes.str(g_english ? "en" : "ru");
-        ToUi(json::Value::Object().set("type", "update").set("version", version).set("url", link).set("notes", text));
+        const bool install = zip.rfind("https://", 0) == 0 && sha.size() == 64;
+        const uint64_t bytes = m["bytes"].isNumber() ? uint64_t(m["bytes"].asNumber()) : 0;
+        RunOnUi([version, zip, sha, bytes, install] { g_update = {version, install ? zip : "", sha, bytes}; });
+        Log("Update available: " + version + (install ? " (installable)" : ""));
+        ToUi(json::Value::Object().set("type", "update").set("version", version).set("url", link).set("notes", text).set("install", install));
+    }).detach();
+}
+
+// ---------------- installing an update ----------------
+// The release ZIP (tools/package-client.py: everything under "dgmp/") is downloaded, checked against the
+// manifest's SHA-256, unpacked with Windows' own tar and copied over this folder. The player's DGMP.ini and
+// editor.ini stay, profiles/ and runtime/ are not in it. The running DGMP.exe cannot be overwritten but can be
+// renamed: it becomes DGMP.exe.old (removed at the next start) and the new launcher starts.
+bool Download(const std::string& url, const fs::path& to, uint64_t expected, std::string& error) {
+    const std::wstring wurl = Wide(url);
+    URL_COMPONENTS parts{}; parts.dwStructSize = sizeof(parts);
+    wchar_t host[256] = {}, path[2048] = {};
+    parts.lpszHostName = host; parts.dwHostNameLength = 256; parts.lpszUrlPath = path; parts.dwUrlPathLength = 2048;
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) { error = "bad URL"; return false; }
+    HINTERNET session = WinHttpOpen(L"DGMP-launcher", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET connection = session ? WinHttpConnect(session, host, parts.nPort, 0) : nullptr;
+    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+    bool ok = false;
+    DWORD status = 0, size = sizeof(status);
+    if (request) WinHttpSetTimeouts(session, 15000, 15000, 30000, 60000);
+    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, nullptr) &&
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX)) {
+        if (status != 200) error = "HTTP " + std::to_string(status);
+        else {
+            std::ofstream out(to, std::ios::binary | std::ios::trunc);
+            uint64_t got = 0; int shown = -1;
+            std::vector<char> chunk(1 << 16);
+            for (DWORD avail = 0; WinHttpQueryDataAvailable(request, &avail) && avail;) {
+                DWORD read = 0;
+                if (!WinHttpReadData(request, chunk.data(), std::min<DWORD>(avail, DWORD(chunk.size())), &read) || !read) break;
+                out.write(chunk.data(), read); got += read;
+                if (got > (512ull << 20)) { error = "too large"; break; }
+                const int percent = expected ? int(got * 100 / expected) : -1;
+                if (percent != shown && percent >= 0 && percent % 5 == 0) { shown = percent; Status(L10n("Загрузка обновления: {}%", "Downloading the update: {}%", std::to_string(std::min(percent, 100))), true); }
+            }
+            ok = error.empty() && out.good() && (!expected || got == expected);
+            if (error.empty() && !ok) error = "incomplete download";
+        }
+    } else if (error.empty()) error = "no connection (" + std::to_string(GetLastError()) + ")";
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    if (session) WinHttpCloseHandle(session);
+    return ok;
+}
+std::string FileSha256(const fs::path& file) {
+    BCRYPT_ALG_HANDLE alg = nullptr; BCRYPT_HASH_HANDLE hash = nullptr;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return {};
+    std::string hex;
+    if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0) {
+        std::ifstream in(file, std::ios::binary);
+        std::vector<char> buf(1 << 16);
+        while (in) { in.read(buf.data(), buf.size()); if (in.gcount() > 0) BCryptHashData(hash, reinterpret_cast<PUCHAR>(buf.data()), ULONG(in.gcount()), 0); }
+        unsigned char digest[32];
+        if (BCryptFinishHash(hash, digest, 32, 0) == 0) { static const char* d = "0123456789abcdef"; for (unsigned char c : digest) { hex += d[c >> 4]; hex += d[c & 15]; } }
+        BCryptDestroyHash(hash);
+    }
+    BCryptCloseAlgorithmProvider(alg, 0);
+    return hex;
+}
+bool RunHidden(std::wstring command, DWORD* exitCode);
+bool IsGameRunning();
+HANDLE g_instanceMutex = nullptr;
+void InstallUpdate() {
+    if (g_update.zip.empty()) return;
+    if (IsGameRunning()) { Status(L10n("Закройте Days Gone, затем обновите.", "Close Days Gone, then update."), false, true); return; }
+    if (g_server.process) { Status(L10n("Остановите свой сервер, затем обновите.", "Stop your server, then update."), false, true); return; }
+    if (g_busy.exchange(true)) return;
+    const Update u = g_update;
+    std::thread([u] {
+        auto fail = [](const std::string& why) { Log("Update failed: " + why); Status(L10n("Обновление не удалось: {}", "The update failed: {}", why), false, true); g_busy = false; };
+        wchar_t tmp[MAX_PATH]; GetTempPathW(MAX_PATH, tmp);
+        const fs::path work = fs::path(tmp) / (L"dgmp-update-" + Wide(u.version));
+        std::error_code ec;
+        fs::remove_all(work, ec); fs::create_directories(work, ec);
+        const fs::path zip = work / L"client.zip";
+        std::string error;
+        Status(L10n("Загрузка обновления…", "Downloading the update…"), true);
+        if (!Download(u.zip, zip, u.bytes, error)) return fail(error);
+        if (FileSha256(zip) != u.sha256) return fail(L10n("контрольная сумма не совпала", "the checksum does not match"));
+        Status(L10n("Установка обновления…", "Installing the update…"), true);
+        wchar_t sys[MAX_PATH]; GetSystemDirectoryW(sys, MAX_PATH);
+        DWORD code = 1;
+        if (!RunHidden(L"\"" + std::wstring(sys) + L"\\tar.exe\" -xf \"" + zip.wstring() + L"\" -C \"" + work.wstring() + L"\"", &code) || code != 0)
+            return fail(L10n("не удалось распаковать", "could not unpack it"));
+        const fs::path from = work / L"dgmp";
+        json::Value info;
+        { std::ifstream in(from / L"build-info.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf(); json::Value::Parse(ss.str(), info); }
+        if (!fs::exists(from / L"DGMP.exe") || info.str("version") != u.version) return fail(L10n("архив не той версии", "the archive is not that version"));
+        // Copy everything; the player's own settings stay.
+        for (auto it = fs::recursive_directory_iterator(from, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (!it->is_regular_file()) continue;
+            const fs::path rel = fs::relative(it->path(), from), to = g_root / rel;
+            const std::wstring name = rel.wstring();
+            if ((name == L"DGMP.ini" || name == L"editor.ini") && fs::exists(to)) continue;
+            fs::create_directories(to.parent_path(), ec);
+            if (name == L"DGMP.exe") {
+                fs::remove(g_root / L"DGMP.exe.old", ec); ec.clear();
+                fs::rename(to, g_root / L"DGMP.exe.old", ec);
+                if (ec) return fail("DGMP.exe: " + ec.message());
+            }
+            fs::copy_file(it->path(), to, fs::copy_options::overwrite_existing, ec);
+            if (ec) return fail(Utf8(name) + ": " + ec.message());
+        }
+        fs::remove_all(work, ec);
+        Log("Updated to " + u.version + "; restarting");
+        Status(L10n("Обновлено до {}. Перезапуск…", "Updated to {}. Restarting…", u.version), true);
+        RunOnUi([] {
+            // The new launcher waits for this one's single-instance lock.
+            if (g_instanceMutex) { ReleaseMutex(g_instanceMutex); CloseHandle(g_instanceMutex); g_instanceMutex = nullptr; }
+            std::wstring cmd = L"\"" + (g_root / L"DGMP.exe").wstring() + L"\" --after-update";
+            STARTUPINFOW si{sizeof(si)}; PROCESS_INFORMATION pi{};
+            if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, g_root.c_str(), &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+            DestroyWindow(g_window);
+        });
     }).detach();
 }
 
@@ -477,6 +601,8 @@ void HandleMessage(const std::string& text) {
     if (cmd == "init") {
         ToUi(StateMessage());
         CheckForUpdate();
+    } else if (cmd == "installUpdate") {
+        InstallUpdate();
     } else if (cmd == "setLang") {
         // Kept in launcher.json.
         const auto lang = m.str("lang");
@@ -725,10 +851,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     g_log.open(g_root / L"logs" / L"launcher.log", std::ios::app);
 
     int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    bool editor = false, prepareOnly = false, refresh = false;
+    bool editor = false, prepareOnly = false, refresh = false, afterUpdate = false;
     for (int i = 1; i < argc; ++i) {
         const std::wstring a = argv[i];
-        editor |= a == L"--editor"; prepareOnly |= a == L"--prepare-only"; refresh |= a == L"--refresh-seed"; g_dev |= a == L"--dev";
+        editor |= a == L"--editor"; prepareOnly |= a == L"--prepare-only"; refresh |= a == L"--refresh-seed"; g_dev |= a == L"--dev"; afterUpdate |= a == L"--after-update";
     }
     LocalFree(argv);
     LoadSettings();
@@ -741,8 +867,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     }
 
     // Single instance: bring the running launcher forward instead.
-    CreateMutexW(nullptr, TRUE, L"DGMP.Launcher.SingleInstance");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    // Right after an update the old launcher may still be closing: wait for it.
+    bool another = false;
+    for (int i = 0; ; ++i) {
+        g_instanceMutex = CreateMutexW(nullptr, TRUE, L"DGMP.Launcher.SingleInstance");
+        another = GetLastError() == ERROR_ALREADY_EXISTS;
+        if (!another || !afterUpdate || i >= 50) break;
+        CloseHandle(g_instanceMutex); g_instanceMutex = nullptr; Sleep(100);
+    }
+    if (!another) { std::error_code ec; fs::remove(g_root / L"DGMP.exe.old", ec); }  // the launcher an update replaced
+    if (another) {
         if (HWND other = FindWindowW(L"DGMPLauncher", nullptr)) { ShowWindow(other, SW_RESTORE); SetForegroundWindow(other); }
         return 0;
     }

@@ -65,7 +65,7 @@ const I18N = {
       + "Quests and jobs are made in the game's own editor windows. Story, saves and photo mode are disabled.",
     "editor.refresh": "Restore the original world template before launch", "editor.run": "Open editor",
     "status.ready": "Ready", "game.running": "Game running",
-    "pass.title": "Password required", "cancel": "Cancel", "update.available": "Version {v} is out — download",
+    "pass.title": "Password required", "cancel": "Cancel", "update.available": "Version {v} is out — download", "update.install": "Version {v} is out — update",
     "mock.launch": "Launching Days Gone…",
   },
   ru: {
@@ -85,7 +85,7 @@ const I18N = {
     "empty.internetSearch": "Загрузка списка серверов…", "empty.internet": "Сейчас нет открытых серверов.",
     "empty.internetError": "Список серверов недоступен: {e}.",
     "detail.players": "{n}/{max} игроков", "detail.password": "пароль", "detail.incompatible": "несовместимая версия",
-    "detail.offline": "сервер не отвечает", "update.available": "Вышла версия {v} — скачать",
+    "detail.offline": "сервер не отвечает", "update.available": "Вышла версия {v} — скачать", "update.install": "Вышла версия {v} — обновить",
     "err.nick": "Сначала введите корректный ник", "err.gameRunning": "Игра уже запущена",
     "err.version": "Версия сервера не совпадает с вашей", "err.noGame": "Days Gone не найден: DGMP должен лежать в папке игры",
     "host.name": "Название сервера", "host.port": "Порт (UDP)", "host.slots": "Слоты", "password": "Пароль", "optional": "(необязательно)",
@@ -353,8 +353,10 @@ bridge.listen((m) => {
       if (!(m.url || "").startsWith("https://")) break;
       const u = $("#update");
       u.href = m.url;
-      u.textContent = t("update.available", { v: m.version });
+      u.textContent = t(m.install ? "update.install" : "update.available", { v: m.version });
       u.title = m.notes || "";
+      // Installable (a release ZIP with its checksum): the launcher downloads and installs it, then restarts.
+      u.onclick = m.install ? (e) => { e.preventDefault(); bridge.send({ cmd: "installUpdate" }); } : null;
       u.hidden = false;
       break;
     }
