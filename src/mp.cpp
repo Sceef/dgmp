@@ -619,6 +619,9 @@ struct PoseTrack {
 };
 
 // ---------------------------------------------------------------- remote players
+// FText made by the engine (below): safe to put in the engine's own objects.
+struct TextValue { uint8_t bytes[0x18]; };
+bool EngineText(const std::wstring& value, TextValue& out);
 struct GhostPart { UObject* actor = nullptr; FName socket{0, 0}; bool master = false; FVector relLoc{}; FRotator relRot{}; };
 
 // Meshes for other players' bikes when this player has none: a server vehicle's bike standing here.
@@ -1032,6 +1035,13 @@ struct Ghost {
         if (auto p = prop("EdgeDisplay")) *p = 1;    // stay on the minimap edge when far away
         if (auto p = prop("EdgeDistance")) *p = 0;   // Infinite
         if (auto p = prop("IconScale")) *reinterpret_cast<float*>(p) = 0.55f;
+        // On hover: the player's name on the plain card, not the game's story mission card (Objective).
+        if (auto p = prop("RollOverType")) *p = 7;   // EMapRolloverType::Basic
+        SetBoolProp(blip, "bUseSimpleMapInfoDisplay", true);
+        {
+            TextValue text{};
+            if (EngineText(W(nick), text)) for (auto c = blip->Class; c; c = SuperOf(c)) if (auto p = FindProperty(c, "DisplayName")) { Field<TextValue>(blip, Field<int>(p, off::UProperty_Offset)) = text; break; }
+        }
         const float warm[4] = {1.f, 0.78f, 0.35f, 1.f};
         if (auto p = prop("MinimapColor")) std::memcpy(p, warm, sizeof(warm));
         if (auto p = prop("MarkerColor")) std::memcpy(p, warm, sizeof(warm));
@@ -1379,7 +1389,6 @@ void SpawnMarker(QuestMarker& m) {
 }
 // FText made by the engine (Conv_StringToText): the parameter frame is never destructed, so its
 // reference moves into the property we copy it to. Never build texts on our own heap.
-struct TextValue { uint8_t bytes[0x18]; };
 bool EngineText(const std::wstring& value, TextValue& out) {
     static UObject* lib = nullptr;
     if (!IsValid(lib)) lib = FindObject("/Script/Engine.Default__KismetTextLibrary");
