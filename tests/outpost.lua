@@ -42,6 +42,9 @@ function removeBlip(n) blipsMade[n]=nil end
 local playerMenu
 function setPlayerMenu(m) playerMenu=m end
 function setScoreboard() end
+local deathMode
+function setDeathMode(m,o) deathMode={mode=m,opts=o} end
+function cancelTimer(n) if timers[n] then timers[n].cancelled=true end end
 function after(ms,f) timers[#timers+1]={ms=ms,f=f,once=true}; return #timers end
 function createMarker() return nextId() end
 function removeMarker() end
@@ -64,6 +67,11 @@ local methods={}
 for _,name in ipairs({"setUniform","takeBike","hud","tip","hint","setVoiceMuted","objectiveMeter","playAnim","stopAnim","markVehicle","customize","closeItemWindow","setScoreboard","leaveVoiceChannel","joinVoiceChannel"}) do methods[name]=noop end
 function methods:voiceChannels() local t={}; if self.channel then t[self.channel]="radio" end; return t end
 function methods:ask(text,opts,fn) if self.pendingAsk then return false end; self.pendingAsk={text=text,fn=fn}; return true end
+function methods:revive(hp) self.downed=false; self.revivedWith=hp end
+function methods:setDowned(o) self.downedTimes=o end
+function methods:cancelAsk() self.pendingAsk=nil end
+function methods:playAnim(a) self.anim=a end
+function methods:stopAnim() self.anim=nil end
 function methods:answer(yes) local a=self.pendingAsk; self.pendingAsk=nil; a.fn(self,yes,"answer") end
 function methods:giveWeapon(key,ammo) self.given=self.given or {}; self.given[#self.given+1]=key end
 function methods:setAmmo(key,n) self.ammoSet=self.ammoSet or {}; self.ammoSet[key]=n end
@@ -94,7 +102,7 @@ local function cmd(p,name,args)
     assert(commands[name],"Missing command "..name)(p,args or "",(args or ""):match("^%S+"))
 end
 local function tick(n)
-    for _=1,n do clock=clock+1; for _,t in ipairs(timers) do if t.ms==1000 or clock%(t.ms/1000)==0 then t.f() end end end
+    for _=1,n do clock=clock+1; for _,t in ipairs(timers) do if not t.cancelled and (t.ms<=1000 or clock%(t.ms/1000)==0) then if t.once then t.cancelled=true end; t.f() end end end
 end
 local count=0
 local function check(ok,label) assert(ok,label); count=count+1; print("PASS "..label) end
@@ -370,6 +378,19 @@ s2.windowAction(s2,{type="action",pane=2,item=1,id="ready"})
 check(R.acc(s1).bag.water==1 and not R.acc(s1).bag.food and R.acc(s2).bag.food==2 and not R.acc(s2).bag.water,"trade swaps both offers")
 emit("playerQuit",s2)
 check(not squadLib.of(s1),"a squad of one is disbanded")
+-- Downed: no medic on duty lets the wounded give up at once; a medic on duty takes the call and revives.
+check(deathMode and deathMode.mode=="downed","Rubezh lays players down instead of killing them")
+local hurt=player(9,"Hurt",false); R.acc(hurt).intro=true; at(hurt,"clinic"); hurt.downed=true
+emit("playerHelp",hurt)
+check(hurt.downedTimes and hurt.downedTimes.giveUp==0,"no medic online: giving up right away")
+local doc=player(10,"Doc",false); local da=R.acc(doc); da.intro=true; da.role="medic"; R.session(doc).duty=true; da.bag.medkit=1; at(doc,"clinic")
+emit("playerHelp",hurt)
+check(doc.pendingAsk and doc.pendingAsk.text:find("Hurt",1,true),"the medic on duty is asked to take the call")
+doc:answer(true)
+emit("playerInteract",doc,hurt)
+check(pick(doc,"Поднять раненого"),"the medic sees Revive on the wounded")
+tick(8)
+check(not hurt.downed and hurt.revivedWith==35 and not da.bag.medkit,"reviving takes a medkit and puts the wounded up")
 emit("stop")
 check(stored["outpost:v1"].accounts[key].money==355,"stop saves state")
 print("Outpost: "..count.." checks passed")

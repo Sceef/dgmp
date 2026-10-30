@@ -63,6 +63,8 @@ enum class Msg : uint8_t {
     ScriptError = 44,   // str text: a client script failed (the server logs it for the mode's author)
     PlayerInteract = 48, // u16 playerId: the player pressed the player-menu key aiming at that player (PlayerMenu)
     AskAnswer = 49,     // u16 askId, u8 yes: the answer to a question (Ask) — Y yes, N no
+    Downed = 50,        // (empty): a lethal hit while the server's death mode is "downed": the player fell instead (DownedState answers)
+    DownedAct = 51,     // u8 DownedAction: while downed — give up (to the respawn), call for help, hit again (lethal)
     ListRequest = 46,   // (empty): send me the player list now (the Tab panel is open; asked about once a second)
     VoiceIgnore = 47,   // u8 n, n x u16 playerId: the players this one muted for itself (their voices are not sent to it)
     ItemAction = 45,    // u16 windowId, str json: the player did something in the mode's item window ({type = "move" | "action" | "close", ...})
@@ -144,6 +146,9 @@ enum class Msg : uint8_t {
     VoiceSetup = 112, // u8 VoiceFlags, str radio, str call: voice chat on this server and the channels you talk to (names for the HUD)
     PlayerMenu = 133, // u8 on, u8 virtualKey, str label, f32 range (units): "[F] label" at the player you aim at (setPlayerMenu)
     Ask = 134,        // u16 askId, str text, f32 seconds: a yes/no question at the bottom of the screen, Y / N (text "": withdrawn)
+    DeathMode = 135,  // u8 downed: lethal hits make the player fall (Msg::Downed) instead of dying at once
+    DownedState = 136, // u8 on, f32 bleedout (s left), f32 giveUpIn (s), str anim: you lie wounded (on 0: you are up again, or die next)
+    PlayerDowned = 137, // u16 id, u8 on: that player lies wounded (others may help it: the player menu aims lower)
     PlayerList = 132, // str json: the Tab panel {voice, max, columns = [..], rows = [{id, name, ping, key, admin, bot, cells = [..]}]}
     Marker = 80,      // u16 id, u8 op (1 add/update: f32 x,y,z, u8 category, u8 style, u8 route, str icon, str title, str description; 2 remove)
 };
@@ -207,6 +212,7 @@ struct PlayerState {
     float bx = 0, by = 0, bz = 0, bqx = 0, bqy = 0, bqz = 0, bqw = 1;
     double time = 0;    // sender clock, seconds
 };
+enum class DownedAction : uint8_t { GiveUp = 1, CallHelp = 2, Hit = 3 };
 enum BlipFlags : uint8_t { BlipMap = 1, BlipRadar = 2, BlipEdge = 4 };
 enum AnimFlags : uint8_t { AnimLoop = 1, AnimFreeze = 2, AnimStopOnMove = 4 };
 enum StateFlags : uint8_t { StateOnBike = 1, StateHasBike = 2, StateFlying = 4, StateHasMesh = 8, StateOwnsBike = 16,

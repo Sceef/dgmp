@@ -1,5 +1,6 @@
 #include "server.h"
 #include "../shared/json.h"
+#include <cstring>
 #include "platform.h"
 #include "script.h"
 #include "../shared/version.h"
@@ -147,7 +148,7 @@ void Server::Run() {
         TickObjects();
         if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
         if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); TickTraps(); TickAsks(); }
-        if (now >= nextFollowTick_) { nextFollowTick_ = now + 1.0; TickFollowBlips(); }
+        if (now >= nextFollowTick_) { nextFollowTick_ = now + 1.0; TickFollowBlips(); TickDowned(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
         if (now >= nextReloadCheck) {
@@ -292,6 +293,15 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         if (dx * dx + dy * dy > reach * reach || std::fabs(dz) > 400.f) break;  // not there
         p->interactAt = Now();
         script_->PlayerInteract(*p, *t);
+        break;
+    }
+    case net::Msg::Downed: OnDowned(*p); break;
+    case net::Msg::DownedAct: {
+        const auto act = static_cast<net::DownedAction>(r.U8());
+        if (!r.ok() || !p->downed) break;
+        if (act == net::DownedAction::GiveUp && Now() >= p->giveUpAt) KillDowned(*p, "giveup");
+        else if (act == net::DownedAction::CallHelp && Now() - p->helpAt >= 10) { p->helpAt = Now(); script_->PlayerHelp(*p); }
+        else if (act == net::DownedAction::Hit && deathMode_.finish) KillDowned(*p, "finish");
         break;
     }
     case net::Msg::AskAnswer: {
@@ -498,6 +508,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         if (!r.ok() || !victim || victim == p || zone > 3 || !std::isfinite(damage) || damage <= 0) break;
         if (Apart(*victim, *p)) break;  // another virtual world or choosing a skin: not there
         if (victim->state.flags & net::StateDead) break;  // already down (a late bullet)
+        if (p->downed) break;  // lying wounded: no weapon in hand
         // What the shooter's client claims has to be possible (docs/API.md "Античит").
         if ((p->state.flags & (net::StateDead | net::StateHidden)) || p->spectating) { Strike(*p, "hitWhileDead", "hit " + victim->nick + " while dead or spectating"); break; }
         if (p->passengerOf && FindVehicle(p->passengerOf) && FindVehicle(p->passengerOf)->Helicopter()) { Strike(*p, "hitFromHelicopter", "hit " + victim->nick); break; }
@@ -537,6 +548,7 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         damage = script_->PlayerDamage(*victim, *p, damage * scale[zone], zones[zone], weapon);
         if (damage <= 0) break;
         victim->lastAttacker = p->id; victim->lastHitAt = now;
+        if (victim->downed) { if (deathMode_.finish) KillDowned(*victim, "finish"); break; }
         if (victim->bot) { HurtBot(victim, damage, p); break; }
         if (!victim->peer) break;
         net::Writer w; w.Op(net::Msg::Damage); w.U16(p->id); w.F32(damage); w.U8(zone); w.Str(weapon);  // (the weapon: the victim's hit reaction)
@@ -714,6 +726,8 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     { net::Writer t; t.Op(net::Msg::Settings); t.U8(static_cast<uint8_t>(cfg_.nametags)); t.U8(cfg_.collisions); SendTo(peer, t, true); }
     SendVoiceSetup(*p);
     SendPlayerMenu(*p);
+    SendDeathMode(*p);
+    for (auto& [oid, o] : players_) if (o->downed && o.get() != p) { net::Writer d; d.Op(net::Msg::PlayerDowned); d.U16(oid); d.U8(1); SendTo(p->peer, d, true); }
     for (auto& [mid, m] : markers_) if (m.only == 0xFFFF && Shows(m, *p)) SendMarker(peer, m);
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF && Shows(item, *p)) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
@@ -1238,6 +1252,73 @@ void Server::SendInteraction(ENetPeer* peer, const Interaction& in) {
     w.F32(in.x); w.F32(in.y); w.F32(in.z); w.F32(in.radius); w.U8(in.key); w.Str(text.substr(0, 256)); w.I32(in.world);
     w.U8(in.aim); w.F32(in.aimHeight); w.F32(in.aimRadius); w.U8(uint8_t(in.priority));
     SendTo(peer, w, true);
+}
+void Server::SetDeathMode(DeathMode mode) {
+    deathMode_ = std::move(mode);
+    if (deathMode_.anim.empty()) deathMode_.anim = ResolveAnim("lie");
+    for (auto& [id, p] : players_) SendDeathMode(*p);
+}
+void Server::SendDeathMode(Player& p) {
+    if (!p.peer || !p.ready || p.bot) return;
+    net::Writer w; w.Op(net::Msg::DeathMode); w.U8(deathMode_.downed); SendTo(p.peer, w, true);
+}
+// The client fell instead of dying (its lethal hit, death mode "downed"): the mode may refuse it
+// (playerDowned returning false: it dies as usual).
+void Server::OnDowned(Player& p) {
+    if (p.downed) return;
+    const uint16_t id = p.id;
+    Player* attacker = p.lastHitAt > 0 && Now() - p.lastHitAt < 15 ? Find(p.lastAttacker) : nullptr;
+    if (!deathMode_.downed || p.passengerOf || !script_->PlayerDowned(p, attacker)) {
+        if (Player* still = Find(id)) { net::Writer w; w.Op(net::Msg::DownedState); w.U8(0); w.F32(0); w.F32(0); w.Str(""); SendTo(still->peer, w, true); SetHealth(still, 0); }
+        return;
+    }
+    if (Find(id) != &p) return;  // the handler kicked it
+    p.downed = true; p.downedBy = attacker ? attacker->id : 0xFFFF;
+    p.downedUntil = Now() + std::max(5.f, deathMode_.bleedout); p.giveUpAt = Now() + std::max(0.f, deathMode_.giveUpAfter); p.helpAt = 0;
+    if (p.carrying) LoseCarry(p, p.state.x, p.state.y, p.state.z - 90.f, p.state.yaw, "death");
+    net::Writer w; w.Op(net::Msg::DownedState); w.U8(1); w.F32(float(p.downedUntil - Now())); w.F32(float(p.giveUpAt - Now())); w.Str(deathMode_.anim);
+    SendTo(p.peer, w, true);
+    net::Writer all; all.Op(net::Msg::PlayerDowned); all.U16(p.id); all.U8(1);
+    for (auto& [oid, o] : players_) if (o.get() != &p && o->ready && o->peer) SendTo(o->peer, all, true);
+    Log("%s is down%s%s", p.nick.c_str(), attacker ? " (by " : "", attacker ? (attacker->nick + ")").c_str() : "");
+}
+void Server::EndDowned(Player& p) {
+    if (!p.downed) return;
+    p.downed = false;
+    if (p.peer) { net::Writer w; w.Op(net::Msg::DownedState); w.U8(0); w.F32(0); w.F32(0); w.Str(""); SendTo(p.peer, w, true); }
+    net::Writer all; all.Op(net::Msg::PlayerDowned); all.U16(p.id); all.U8(0);
+    for (auto& [oid, o] : players_) if (o.get() != &p && o->ready && o->peer) SendTo(o->peer, all, true);
+}
+void Server::SetDownedTimes(Player& p, float bleedout, float giveUp) {
+    if (!p.downed) return;
+    if (bleedout >= 0) p.downedUntil = Now() + std::max(1.f, bleedout);
+    if (giveUp >= 0) p.giveUpAt = Now() + giveUp;
+    if (!p.peer) return;
+    net::Writer w; w.Op(net::Msg::DownedState); w.U8(1); w.F32(float(p.downedUntil - Now())); w.F32(float(std::max(0.0, p.giveUpAt - Now()))); w.Str(deathMode_.anim);
+    SendTo(p.peer, w, true);
+}
+void Server::Revive(Player& p, float percent) {
+    if (!p.downed) return;
+    EndDowned(p);
+    SetHealth(&p, std::clamp(percent, 1.f, 100.f));
+    Log("%s is up again", p.nick.c_str());
+}
+void Server::KillDowned(Player& p, const char* why) {
+    if (!p.downed) return;
+    const uint16_t id = p.id;
+    if (std::strcmp(why, "bleedout") == 0) script_->PlayerBleedout(p);
+    Player* still = Find(id); if (!still || !still->downed) return;  // kicked or revived by the handler
+    // Its death (playerDeath) names who brought it down, unless someone finished it off just now.
+    if (std::strcmp(why, "finish") != 0 && still->downedBy != 0xFFFF) { still->lastAttacker = still->downedBy; still->lastHitAt = Now(); }
+    EndDowned(*still);
+    SetHealth(still, 0);
+    Log("%s died of the wounds (%s)", still->nick.c_str(), why);
+}
+void Server::TickDowned() {
+    const double now = Now();
+    std::vector<uint16_t> late;
+    for (auto& [id, p] : players_) if (p->downed && now >= p->downedUntil) late.push_back(id);
+    for (auto id : late) if (Player* p = Find(id)) KillDowned(*p, "bleedout");
 }
 void Server::SetPlayerMenu(PlayerMenu menu) {
     playerMenu_ = std::move(menu);
@@ -2541,7 +2622,8 @@ bool Server::ReloadMode() {
     // Voice channels, ranges and mutes are the mode's: the new code sets them again.
     voiceRange_ = cfg_.voiceRange; voiceOn_ = cfg_.voice; scoreColumns_.clear();
     SetPlayerMenu({});
-    for (auto& [id, p] : players_) CancelAsk(*p);
+    for (auto& [id, p] : players_) { CancelAsk(*p); if (p->downed) Revive(*p, 30); }
+    SetDeathMode({});
     for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; p->scoreCells.clear(); SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
     ids.clear();
     for (auto& [id, z] : zombies_) ids.push_back(id);

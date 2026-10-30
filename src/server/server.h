@@ -390,6 +390,9 @@ struct Player {
     std::vector<std::string> scoreCells;           // its row's cells in the Tab panel (player:setScoreboard)
     double listAt = 0;                             // it asked for the player list then (ListRequest rate limit)
     uint16_t askId = 0; double askUntil = 0;      // the yes/no question on its screen (player:ask; 0: none)
+    bool downed = false;                           // lies wounded (setDeathMode "downed"): bleeds out at downedUntil
+    double downedUntil = 0, giveUpAt = 0, helpAt = 0;
+    uint16_t downedBy = 0xFFFF;                    // who brought it down (the killer if it dies of it)
     double interactAt = 0;                         // its last PlayerInteract (rate limit)
     uint64_t voiceBytesIn = 0;                     // since it joined
 };
@@ -605,6 +608,14 @@ public:
     // A yes/no question at the bottom of its screen (player:ask): its id, 0 when one is already open.
     uint16_t Ask(Player& p, const std::string& text, float seconds);
     void CancelAsk(Player& p);
+    // Death mode (setDeathMode): "downed" — a lethal hit lays the player down; it bleeds out, gives up, is
+    // finished off or revived (player:revive).
+    struct DeathMode { bool downed = false; float bleedout = 300, giveUpAfter = 30; bool finish = true; std::string anim; };
+    void SetDeathMode(DeathMode mode);
+    const DeathMode& deathMode() const { return deathMode_; }
+    void Revive(Player& p, float percent);
+    void SetDownedTimes(Player& p, float bleedout, float giveUp);  // seconds from now; < 0: unchanged
+    void KillDowned(Player& p, const char* why);  // "bleedout", "giveup", "finish", "code"
     void OnVoiceIgnore(Player& p, net::Reader& r);
     bool JoinVoiceChannel(Player& p, const std::string& name, VoiceJoin how);  // false: a bad name or too many
     void LeaveVoiceChannel(Player& p, const std::string& name);              // "": all of them
@@ -712,6 +723,11 @@ private:
     float voiceRange_ = 2500;
     bool voiceOn_ = true;
     PlayerMenu playerMenu_;
+    DeathMode deathMode_;
+    void SendDeathMode(Player& p);
+    void OnDowned(Player& p);
+    void EndDowned(Player& p);
+    void TickDowned();
     uint16_t nextAsk_ = 1;
     void TickAsks();
     void EndAsk(Player& p, bool yes, const char* reason);

@@ -76,6 +76,8 @@ void SetCarryRollBlock(bool on);
 // Spectating (mp.cpp): the player's input actions (attack, aim, weapons, interact, crouch...) do nothing;
 // the mouse look still turns the spectator's camera.
 void SetSpectatorInputBlock(bool on);
+// Lying wounded (multiplayer death mode "downed"): none of the game's actions (fire, aim, roll, interact...).
+void SetDownedInputBlock(bool on);
 void Observe(ue::UObject* object);
 // Shows the game's own tutorial popup (title, text, optional Texture2D asset path) for a mode/server hint.
 // Empty title = survival-tip line at the bottom, closed automatically after `seconds` (default 5).

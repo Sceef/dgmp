@@ -6,6 +6,26 @@ local C, D = R.cfg, R.rules
 local interact=require("interact")
 local squad=require("squad")
 local trade=require("trade")
+local medic=require("medic")
+
+-- A lethal hit lays the player down: a medic on duty revives it (a medkit), else it bleeds out or gives up
+-- (to the clinic, as before). Finishing off a wounded player kills it.
+setDeathMode("downed", { bleedout = 240, giveUpAfter = 60, finish = true })
+medic.setup({
+    isMedic = function(p) local a, s = R.acc(p), R.session(p); return a ~= nil and s ~= nil and a.role == "medic" and s.duty end,
+    seconds = 6, health = 35,
+    use = function(m, t, check)
+        local a = R.acc(m)
+        if not a or (a.bag.medkit or 0) < 1 then return false, L.resolve(L("Нужна аптечка в рюкзаке.", "You need a medkit in your backpack."), m) end
+        if check then return true end
+        D.take(a.bag, "medkit", 1); R.commit("revive", m, t.name); S.calls[t.id] = nil
+        return true
+    end,
+})
+on("playerDowned", function(p)
+    local s = R.session(p); if not s then return end
+    R.msg(p, L("Вы тяжело ранены. H — позвать медика, через минуту можно сдаться (E).", "You are badly wounded. H: call a medic; after a minute you may give up (E)."), false)
+end)
 
 squad.setup({ max = 6, chat = "sq", radio = false, color = "#7CD67C" })
 
@@ -78,7 +98,6 @@ interact.add({ id = "pay", order = 25,
 interact.add({ id = "aid", order = 40,
     label = { ru = "Оказать помощь (аптечка)", en = "Treat (medkit)" },
     when = function(p, t) return both(p, t) and duty(p, "medic") and t.health < 95 end,
-    downed = true,
     onUse = function(p, t)
         local a, s = R.acc(p), R.session(p)
         if now() < (s.aidAt or 0) then return R.msg(p, L("Подождите немного.", "Wait a moment."), false) end

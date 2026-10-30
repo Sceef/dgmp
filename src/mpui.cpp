@@ -249,6 +249,7 @@ struct PlayerMenu { bool on = false; uint8_t key = 'F'; std::string label; float
 std::vector<PlayerSpot> playerSpots;
 int aimedPlayer = -1;
 struct Question { uint16_t id = 0; std::string text; double until = 0; } question;  // id 0: none
+struct DownedHud { bool on = false; float bleed = 0, giveUp = 0, hold = 0; bool help = false; } downedHud;
 constexpr uint16_t kPlayerPrompt = 0xFFFE;
 std::map<uint16_t, Spot> playerSight;  // sight checks of aimed players
 struct CarryPrompt { std::string text; float progress = 0; bool inHands = false; } carryPrompt;
@@ -351,7 +352,7 @@ void Reset() {
     std::lock_guard g(lock);
     icons.clear();
     dialog = Dialog{}; answer = Answer{}; itemWin = ItemWin{}; itemActions.clear(); hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{};
-    playerMenu = PlayerMenu{}; playerSpots.clear(); playerSight.clear(); question = Question{}; aimedSpot = 0; aimedPlayer = -1; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
+    playerMenu = PlayerMenu{}; playerSpots.clear(); playerSight.clear(); question = Question{}; aimedSpot = 0; aimedPlayer = -1; downedHud = DownedHud{}; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
 }
 bool DialogOpen() { std::lock_guard g(lock); return dialog.open || itemWin.open; }
 void SetWorld(int w) { std::lock_guard g(lock); world = w; }
@@ -364,6 +365,7 @@ void OnAsk(uint16_t id, const std::string& text, float seconds) {
     question = {id, text, GetTickCount64() / 1000.0 + seconds};
 }
 bool AskPending() { std::lock_guard g(lock); return question.id != 0; }
+void SetDownedHud(bool on, float bleed, float giveUp, float hold, bool helpCalled) { std::lock_guard g(lock); downedHud = {on, bleed, giveUp, hold, helpCalled}; }
 void SetIcons(std::vector<WorldIcon> list) { std::lock_guard g(lock); icons = std::move(list); }
 void SetCarryPrompt(const std::string& text, float progress, bool inHands) { std::lock_guard g(lock); carryPrompt = {text, progress, inHands}; }
 bool CarryPromptShown() { std::lock_guard g(lock); return prompt.carry; }
@@ -382,7 +384,7 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
         // The interaction the player stands at (the nearest).
         prompt = Prompt{};
         const bool act = canAct && !open && !skins::CreatorOpen() && !overlay::CursorMode();
-        if (act) {
+        if (act && !downedHud.on) {
             // Of the interactions in range: the aimed one in sight nearest the middle of the view; else, when only
             // one is in range and roughly in front, that one; else the nearest of those that need no aim.
             const double now = GetTickCount64() / 1000.0;
@@ -404,7 +406,8 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
                 const float dx = at.X - ps.feet.X, dy = at.Y - ps.feet.Y, dz = at.Z - ps.feet.Z;
                 if (dx * dx + dy * dy > playerMenu.range * playerMenu.range || std::fabs(dz) > 250.f) continue;
                 // The point of the body's axis (40..150 above the feet) nearest the view's centre line.
-                const float t = std::clamp((view.cam.Z + view.fwd.Z * std::sqrt((ps.feet.X - view.cam.X) * (ps.feet.X - view.cam.X) + (ps.feet.Y - view.cam.Y) * (ps.feet.Y - view.cam.Y))) - ps.feet.Z, 40.f, 150.f);
+                const float t = std::clamp((view.cam.Z + view.fwd.Z * std::sqrt((ps.feet.X - view.cam.X) * (ps.feet.X - view.cam.X) + (ps.feet.Y - view.cam.Y) * (ps.feet.Y - view.cam.Y))) - ps.feet.Z,
+                                           ps.downed ? 10.f : 40.f, ps.downed ? 50.f : 150.f);  // a wounded one lies on the ground
                 const FVector p{ps.feet.X, ps.feet.Y, ps.feet.Z + t};
                 const float off = AimAngle(p, 40);
                 if (off <= (int(ps.id) == aimedPlayer ? kAimKeep : kAimCone)) aimed.push_back({kPlayerPrompt, nullptr, p, off + std::sqrt(dx * dx + dy * dy) * 0.002f, int(ps.id)});
@@ -622,6 +625,29 @@ void DrawHud() {
             DrawLine(dl, font, size, ImVec2(x, y), line, e.shadow);
             y += size;
         }
+    }
+    // Lying wounded: a red edge, the time left and the keys.
+    if (downedHud.on) {
+        const float pulse = 0.5f + 0.5f * std::sin(float(GetTickCount64() % 100000) / 1000.f * 3.f);
+        const ImU32 edge = IM_COL32(150, 0, 0, int(90 + 60 * pulse)), clear = IM_COL32(150, 0, 0, 0);
+        const float b = screen.y * 0.18f;
+        dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(screen.x, b), edge, edge, clear, clear);
+        dl->AddRectFilledMultiColor(ImVec2(0, screen.y - b), screen, clear, clear, edge, edge);
+        ImFont* big = static_cast<ImFont*>(overlay::LargeFont()); if (!big) big = small;
+        const int left = std::max(0, int(downedHud.bleed));
+        char line[128];
+        snprintf(line, sizeof line, "%s  %d:%02d", lang::Pick("Вы тяжело ранены", "You are badly wounded"), left / 60, left % 60);
+        const float size = 30, w = big->CalcTextSizeA(size, FLT_MAX, 0, line).x;
+        dl->AddText(big, size, ImVec2((screen.x - w) / 2 + 2, screen.y * 0.30f + 2), IM_COL32(0, 0, 0, 200), line);
+        dl->AddText(big, size, ImVec2((screen.x - w) / 2, screen.y * 0.30f), IM_COL32(235, 90, 80, 255), line);
+        std::string keys = downedHud.help ? std::string(lang::Pick("Помощь вызвана", "Help is called")) : std::string("[H] ") + lang::Pick("Позвать помощь", "Call for help");
+        if (downedHud.giveUp <= 0) keys += std::string("     ") + lang::Pick("Удерживайте [E] — сдаться", "Hold [E]: give up");
+        else { char t[64]; snprintf(t, sizeof t, "     %s %d", lang::Pick("Сдаться можно через", "Give up in"), int(downedHud.giveUp + 0.99f)); keys += t; }
+        const float ks = 22, kw = small->CalcTextSizeA(ks, FLT_MAX, 0, keys.c_str()).x;
+        const ImVec2 kp((screen.x - kw) / 2, screen.y * 0.30f + 42);
+        dl->AddRectFilled(ImVec2(kp.x - 12, kp.y - 6), ImVec2(kp.x + kw + 12, kp.y + ks + 8), IM_COL32(0, 0, 0, 150), 6);
+        dl->AddText(small, ks, kp, IM_COL32(240, 240, 240, 255), keys.c_str());
+        if (downedHud.hold > 0) dl->AddRectFilled(ImVec2(kp.x - 12, kp.y + ks + 5), ImVec2(kp.x - 12 + (kw + 24) * downedHud.hold, kp.y + ks + 8), IM_COL32(235, 90, 80, 255), 2);
     }
     // The mode's yes/no question, over the prompt: "text   [Y] Yes  [N] No  12".
     if (question.id) {

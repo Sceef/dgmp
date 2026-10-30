@@ -76,7 +76,10 @@ public:
     // the start when a handler refused it (nobody hears this talk).
     bool Voice(Player& p, bool on, const char* how);
     void VoiceIgnore(Player& p, Player& target, bool on);
-    void PlayerInteract(Player& p, Player& target);         // playerInteract: the player-menu key aimed at target
+    void PlayerInteract(Player& p, Player& target);
+    bool PlayerDowned(Player& p, Player* attacker);        // playerDowned: false — it dies at once instead
+    void PlayerBleedout(Player& p);
+    void PlayerHelp(Player& p);                            // playerHelp: a downed player calls for help (H)         // playerInteract: the player-menu key aimed at target
     void AskAnswer(Player& p, bool yes, const char* reason); // player:ask callback: "answer" or "timeout"  // voiceIgnore: p muted target for itself (on) or no longer
     void SaveStorage();  // flushes the mode's persistent storage (also done every few seconds)
     bool ChangedOnDisk() const;

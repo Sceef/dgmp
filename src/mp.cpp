@@ -23,6 +23,7 @@
 #include "overlay.h"
 #include "imgui.h"
 #include <atomic>
+#include <set>
 #include <mutex>
 #include "lang.h"
 #include <filesystem>
@@ -344,6 +345,17 @@ uint8_t collisions = 0;  // net::CollisionMask from the server
 
 bool localDead = false;  // the local player lies dead / waits for its respawn
 float wantedHealth = -1;  // the server set the health (percent; -1: nothing to do)
+// Death mode "downed" (docs/API.md "Ранение"): a lethal hit lays the player down instead; the server says how
+// long it may lie (DownedState) and ends it: revived (health back), or dead (SetHealth 0 next).
+struct Downed {
+    bool mode = false;          // the server's death mode is "downed"
+    bool pending = false;       // fell, the server's answer not here yet
+    bool on = false;            // lies wounded
+    double fellAt = 0, until = 0, giveUpAt = 0, holdSince = 0, helpAt = -100, hitAt = 0;
+    std::string anim;
+} downed;
+std::set<uint16_t> downedPlayers;  // other players lying wounded
+constexpr const char* kDownedAnim = "/Game/Animation/Boozer/ambient/bzr_injury_lay_down_pillow_loop.bzr_injury_lay_down_pillow_loop";
 bool spectatorHidden = false;  // spectating: the own body is hidden from everyone
 // A skin choice at a place of the mode: opens once the player has arrived there.
 struct PendingCreator { bool on = false; skins::Options options; FVector at{}; double since = 0; } pendingCreator;
@@ -1616,7 +1628,7 @@ void HookClient() {
         playeranim::Reset();
         blips::Reset();
         sounds::Reset();
-        voice::Reset(); players::Reset();
+        voice::Reset(); players::Reset(); downed = Downed{}; downedPlayers.clear(); policy::SetDownedInputBlock(false);
         webui::Reset();
         clientlua::Reset();
         traps::Reset();
@@ -1639,6 +1651,7 @@ void HookClient() {
         ghosts[p.id] = std::move(g);
     };
     client.on.playerQuit = [](uint16_t id, uint8_t) {
+        downedPlayers.erase(id);
         if (auto it = ghosts.find(id); it != ghosts.end()) { it->second->Despawn(); ghosts.erase(it); }
     };
     client.on.state = [](uint16_t id, const net::PlayerState& s) {
@@ -1685,6 +1698,21 @@ void HookClient() {
     client.on.playerList = [](const std::string& json) { players::OnList(json); };
     client.on.playerMenu = [](bool on, uint8_t key, const std::string& label, float range) { mpui::OnPlayerMenu(on, key, label, range); };
     client.on.ask = [](uint16_t id, const std::string& text, float seconds) { mpui::OnAsk(id, text, seconds); };
+    client.on.deathMode = [](bool d) { downed.mode = d; dg::Log("MP death mode: %s", d ? "downed" : "instant"); };
+    client.on.downedState = [](bool on, float bleed, float giveUp, const std::string& anim) {
+        const double now = GetTickCount64() / 1000.0;
+        if (on) {
+            downed.pending = false; downed.on = true; downed.until = now + bleed; downed.giveUpAt = now + giveUp;
+            if (!anim.empty() && anim != downed.anim) { downed.anim = anim; playeranim::OnPlay(anim, net::AnimLoop | net::AnimFreeze, 1); }
+            dg::Log("MP downed: %.0f s to bleed out, give up in %.0f s", bleed, giveUp);
+        } else if (downed.on || downed.pending) {
+            downed = Downed{true};
+            playeranim::OnPlay("", 0, 1);
+            policy::SetDownedInputBlock(false);
+            dg::Log("MP downed: over");
+        }
+    };
+    client.on.playerDowned = [](uint16_t id, bool on) { if (on) downedPlayers.insert(id); else downedPlayers.erase(id); };
     client.on.trap = [](const uint8_t* data, size_t size) { traps::OnMessage(data, size); };
     client.on.hud = [](const std::string& id, const std::string& json) { mpui::OnHud(id, json); };
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
@@ -2322,8 +2350,26 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         float& hp = Field<float>(pawn, kPawnHealth);
         const float maxHp = Field<float>(pawn, kPawnMaxHealth);
         // The server's setHealth / heal / kill: 0 goes the same way as a lethal hit.
-        if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? std::max(2.f, maxHp * wantedHealth / 100.f) : 0.f; wantedHealth = -1; }
-        const bool lethal = policy::TakeLethalHit() || traps::TakeBledOut();  // (a bear trap does not let the game kill)
+        bool forced = false;  // the server's kill: no falling down first
+        if (wantedHealth >= 0 && !deathPhase && maxHp > 0) { hp = wantedHealth > 0 ? std::max(2.f, maxHp * wantedHealth / 100.f) : 0.f; forced = wantedHealth == 0; wantedHealth = -1; }
+        bool lethal = policy::TakeLethalHit() || traps::TakeBledOut();  // (a bear trap does not let the game kill)
+        // Death mode "downed": fall instead of dying; hits on the fallen go to the server (finished off or not).
+        const bool fallen = downed.on || downed.pending;
+        if (!deathPhase && !forced && (hp <= 1.5f || lethal) && (downed.mode || fallen)) {
+            if (!fallen) {
+                downed.pending = true; downed.fellAt = now; downed.holdSince = 0; downed.anim = kDownedAnim;
+                if (CallBool(pawn, "IsInVehicle")) if (auto f = Fn(pawn, "TryExitVehicle")) { Params p(f); p.SetBool("bForce", true); Call(pawn, "TryExitVehicle", &p); }
+                playeranim::OnPlay(kDownedAnim, net::AnimLoop | net::AnimFreeze, 1);
+                policy::SetDownedInputBlock(true);
+                client.SendDowned();
+                dg::Log("MP downed (health %.1f of %.0f)", lastHp, maxHp);
+            } else if (now - downed.hitAt > 0.5) { downed.hitAt = now; client.SendDownedAct(net::DownedAction::Hit); }
+            hp = std::max(hp, maxHp * 0.05f); lethal = false;
+        }
+        if ((downed.on || downed.pending) && maxHp > 0) hp = std::max(hp, maxHp * 0.05f);
+        // An old server never answers: after 5 s it is an ordinary death.
+        if (downed.pending && now - downed.fellAt > 5) { downed = Downed{downed.mode}; playeranim::OnPlay("", 0, 1); policy::SetDownedInputBlock(false); forced = true; hp = 0; }
+        if (forced && (downed.on || downed.pending)) { downed = Downed{downed.mode}; playeranim::OnPlay("", 0, 1); policy::SetDownedInputBlock(false); }
         if (!deathPhase && (hp <= 1.5f || lethal)) {
             deathPhase = 1; deathAt = now;
             traps::OnLocalDeath(pawn);  // a bear trap holding the body lets go of it
@@ -2351,6 +2397,26 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         BoolArg(controller, "SetIgnoreMoveInput", "bNewMoveInput", false);
     }
     localDead = deathPhase != 0;
+    // Lying wounded: H calls for help, E held for 3 s gives up (when the server allows it).
+    {
+        const bool lying = downed.on && !localDead;
+        DWORD pid = 0; GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        const bool focus = pid == GetCurrentProcessId() && !hud::ChatOpen() && !overlay::CursorMode();
+        float hold = 0;
+        if (lying) {
+            static bool hWas = false;
+            const bool h = focus && (GetAsyncKeyState('H') & 0x8000);
+            if (h && !hWas && now - downed.helpAt > 10) { downed.helpAt = now; client.SendDownedAct(net::DownedAction::CallHelp); }
+            hWas = h;
+            const bool e = focus && (GetAsyncKeyState('E') & 0x8000) && now >= downed.giveUpAt;
+            if (e && !downed.holdSince) downed.holdSince = now;
+            if (!e) downed.holdSince = 0;
+            if (downed.holdSince) hold = float(std::min(1.0, (now - downed.holdSince) / 3.0));
+            if (hold >= 1) { downed.holdSince = 0; client.SendDownedAct(net::DownedAction::GiveUp); }
+            policy::SetDownedInputBlock(true);
+        }
+        mpui::SetDownedHud(lying, float(downed.until - now), float(std::max(0.0, downed.giveUpAt - now)), hold, now - downed.helpAt < 10);
+    }
     UpdateSpectator(pawn);
     static bool flashlightMoved = false;
     if (!flashlightMoved && gameplay) { static double nextTry = 0; if (now >= nextTry) { nextTry = now + 2; flashlightMoved = MoveFlashlightToL(); } }
@@ -2379,7 +2445,7 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
             }
             mpui::SetView(std::move(view));
             std::vector<mpui::PlayerSpot> others;
-            for (const auto& b : RemoteBodies()) if (b.alive) others.push_back({b.id, b.pos});
+            for (const auto& b : RemoteBodies()) if (b.alive) others.push_back({b.id, b.pos, downedPlayers.count(b.id) != 0});
             mpui::SetPlayerSpots(std::move(others));
         }
         mpui::Update(client, at, canAct, playing && !spec.on);

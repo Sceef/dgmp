@@ -179,6 +179,7 @@ struct Api {
             if (!p || p->look.empty()) { lua_pushnil(L); return 1; }
             const auto dot = p->look.rfind('.'); lua_pushstring(L, p->look.substr(dot == std::string::npos ? 0 : dot + 1).c_str()); return 1;
         }
+        if (std::strcmp(key, "downed") == 0) { lua_pushboolean(L, p && p->downed); return 1; }
         if (std::strcmp(key, "hasBike") == 0) { lua_pushboolean(L, p && (p->state.flags & net::StateOwnsBike)); return 1; }
         if (std::strcmp(key, "ping") == 0) { lua_pushinteger(L, p && p->peer ? static_cast<lua_Integer>(p->peer->roundTripTime) : 0); return 1; }
         if (std::strcmp(key, "data") == 0) {
@@ -674,6 +675,34 @@ struct Api {
         Srv(L).SetPlayerMenu(std::move(m));
         return 0;
     }
+    // setDeathMode("downed", {bleedout = 300, giveUpAfter = 30, finish = true, anim = "lie"}) | setDeathMode("instant")
+    static int SetDeathMode(lua_State* L) {
+        const std::string mode = luaL_checkstring(L, 1);
+        Server::DeathMode m;
+        if (mode == "downed") {
+            m.downed = true;
+            if (lua_istable(L, 2)) {
+                lua_getfield(L, 2, "bleedout"); m.bleedout = float(std::clamp(luaL_optnumber(L, -1, 300), 5.0, 3600.0)); lua_pop(L, 1);
+                lua_getfield(L, 2, "giveUpAfter"); m.giveUpAfter = float(std::clamp(luaL_optnumber(L, -1, 30), 0.0, 3600.0)); lua_pop(L, 1);
+                lua_getfield(L, 2, "finish"); m.finish = lua_isnil(L, -1) || lua_toboolean(L, -1); lua_pop(L, 1);
+                lua_getfield(L, 2, "anim");
+                if (lua_isstring(L, -1)) { m.anim = Srv(L).ResolveAnim(lua_tostring(L, -1)); if (m.anim.empty()) luaL_error(L, "setDeathMode: unknown animation '%s'", lua_tostring(L, -1)); }
+                lua_pop(L, 1);
+            }
+        } else if (mode != "instant") return luaL_error(L, "setDeathMode: \"downed\" or \"instant\"");
+        Srv(L).SetDeathMode(std::move(m));
+        return 0;
+    }
+    static int PRevive(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).Revive(p, float(luaL_optnumber(L, 2, 30))); return 0; }
+    // player:setDowned({bleedout = seconds, giveUp = seconds}): new times from now for a downed player
+    static int PSetDowned(lua_State* L) {
+        auto& p = CheckPlayer(L, 1); luaL_checktype(L, 2, LUA_TTABLE);
+        lua_getfield(L, 2, "bleedout"); const float bleed = lua_isnil(L, -1) ? -1.f : float(luaL_checknumber(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, 2, "giveUp"); const float give = lua_isnil(L, -1) ? -1.f : std::max(0.f, float(luaL_checknumber(L, -1))); lua_pop(L, 1);
+        Srv(L).SetDownedTimes(p, bleed, give);
+        return 0;
+    }
+    static int PFinish(lua_State* L) { auto& p = CheckPlayer(L, 1); Srv(L).KillDowned(p, "code"); return 0; }
     static int PCloseDialog(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
         Srv(L).CloseDialog(&p);
@@ -2009,7 +2038,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
                                 {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
                                 {"voiceChannels", &Api::PVoiceChannels}, {"setVoiceRange", &Api::PSetVoiceRange}, {"voiceRange", &Api::PVoiceRange},
-                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"ask", &Api::PAsk}, {"cancelAsk", &Api::PCancelAsk}, {"isAsked", &Api::PIsAsked}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
+                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"revive", &Api::PRevive}, {"setDowned", &Api::PSetDowned}, {"finishDowned", &Api::PFinish}, {"ask", &Api::PAsk}, {"cancelAsk", &Api::PCancelAsk}, {"isAsked", &Api::PIsAsked}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
                                 {"giveCarry", &Api::PGiveCarry}, {"dropCarry", &Api::PDropCarry}, {"giveMoney", &Api::PGiveMoney}, {"setMoney", &Api::PSetMoney}, {nullptr, nullptr}};
     luaL_newlib(L_, methods); lua_setfield(L_, -2, "methods");
     lua_pop(L_, 1);
@@ -2022,7 +2051,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
                                 {"playSound", &Api::PlaySoundAll},
-                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"setVoiceEnabled", &Api::SetVoiceEnabled}, {"voiceEnabled", &Api::VoiceEnabled}, {"setScoreboard", &Api::SetScoreboard}, {"setPlayerMenu", &Api::SetPlayerMenu}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
+                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"setVoiceEnabled", &Api::SetVoiceEnabled}, {"voiceEnabled", &Api::VoiceEnabled}, {"setScoreboard", &Api::SetScoreboard}, {"setPlayerMenu", &Api::SetPlayerMenu}, {"setDeathMode", &Api::SetDeathMode}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
                                 {"getDoor", &Api::GetDoor}, {"doors", &Api::DoorsList}, {"setDoor", &Api::SetDoor}, {"getVehicle", &Api::GetVehicleByKey}, {"loot", &Api::LootList},
                                 {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
                                 {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
@@ -2287,6 +2316,15 @@ void Script::PlayerInteract(Player& p, Player& target) {
     Api::PushPlayer(L_, p); Api::PushPlayer(L_, target);
     Fire("playerInteract", 2, nullptr);
 }
+bool Script::PlayerDowned(Player& p, Player* attacker) {
+    if (!L_) return true;
+    Api::PushPlayer(L_, p); if (attacker) Api::PushPlayer(L_, *attacker); else lua_pushnil(L_);
+    int result = 0;
+    Fire("playerDowned", 2, &result);
+    return !(result & 1);
+}
+void Script::PlayerBleedout(Player& p) { if (!L_) return; Api::PushPlayer(L_, p); Fire("playerBleedout", 1, nullptr); }
+void Script::PlayerHelp(Player& p) { if (!L_) return; Api::PushPlayer(L_, p); Fire("playerHelp", 1, nullptr); }
 void Script::AskAnswer(Player& p, bool yes, const char* reason) {
     if (!L_) return;
     lua_pushboolean(L_, yes); lua_pushstring(L_, reason);

@@ -40,12 +40,15 @@ struct View { ue::FVector cam{}, fwd{}; bool valid = false; std::function<bool(c
 void SetView(View view);
 // Other players (feet) the player menu may aim at (game thread, every frame), and the menu itself
 // (setPlayerMenu: "[key] label" at an aimed player within range units; the press sends PlayerInteract).
-struct PlayerSpot { uint16_t id; ue::FVector feet; };
+struct PlayerSpot { uint16_t id; ue::FVector feet; bool downed = false; };  // downed: lies on the ground
 void SetPlayerSpots(std::vector<PlayerSpot> list);
 void OnPlayerMenu(bool on, uint8_t key, const std::string& label, float range);
 // A yes/no question of the mode (player:ask): Y yes, N no, at the bottom of the screen ("" withdraws it).
 void OnAsk(uint16_t id, const std::string& text, float seconds);
 bool AskPending();  // (the talk key N does not talk meanwhile)
+// The local player lies wounded: no prompts; the screen shows the bleeding timer, help and give-up keys.
+// bleed: seconds left (<0: off), giveUp: seconds until it may (0: now), hold: the give-up key's progress 0..1.
+void SetDownedHud(bool on, float bleed, float giveUp, float hold, bool helpCalled);
 // Every frame while connected. `at`: the player (actor root); `canAct`: it plays (no menu, chat or
 // death). Sends the dialog answer, interaction uses and watched key presses.
 void Update(net::Client& client, const ue::FVector& at, bool canAct, bool hudShown);

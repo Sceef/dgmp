@@ -397,6 +397,13 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (r.ok() && on.scriptData) on.scriptData(path, part, parts, bytes);
         break;
     }
+    case Msg::DeathMode: { const bool d = r.U8() != 0; if (r.ok() && on.deathMode) on.deathMode(d); break; }
+    case Msg::DownedState: {
+        const bool d = r.U8() != 0; const float bleed = r.F32(), giveUp = r.F32(); const auto anim = r.Str(512);
+        if (r.ok() && on.downedState) on.downedState(d, bleed, giveUp, anim);
+        break;
+    }
+    case Msg::PlayerDowned: { const uint16_t id = r.U16(); const bool d = r.U8() != 0; if (r.ok() && on.playerDowned) on.playerDowned(id, d); break; }
     case Msg::PlayerMenu: {
         const bool enabled = r.U8() != 0; const uint8_t key = r.U8(); const auto label = r.Str(256); const float range = r.F32();
         if (r.ok() && on.playerMenu) on.playerMenu(enabled, key, label, range);
@@ -657,6 +664,16 @@ void Client::SendScriptMessage(const std::string& name, const std::string& json)
 void Client::SendItemAction(uint16_t window, const std::string& json) {
     if (status_ != Status::Connected || json.size() > kItemActionMax) return;
     Writer w; w.Op(Msg::ItemAction); w.U16(window); w.Str(json);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendDowned() {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::Downed);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendDownedAct(DownedAction act) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::DownedAct); w.U8(uint8_t(act));
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendPlayerInteract(uint16_t player) {
