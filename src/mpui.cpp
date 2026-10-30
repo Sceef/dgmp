@@ -240,14 +240,40 @@ std::vector<WorldIcon> icons;  // createIcon pictures on screen this frame
 bool hudShown = false;
 
 // ---------------------------------------------------------------- interactions and keys
-struct Spot { net::Client::Events::InteractionInfo info; };
+struct Spot { net::Client::Events::InteractionInfo info; double sightAt = -1; bool sight = true; };  // sight: checked then
 std::map<uint16_t, Spot> spots;
 std::set<uint8_t> watched;
 int world = 0;
-struct Prompt { uint16_t id = 0; uint8_t key = 0; std::string text; bool vehicle = false, carry = false; float progress = 0; } prompt;  // id 0: none
+struct Prompt { uint16_t id = 0; uint8_t key = 0; std::string text; bool vehicle = false, carry = false; float progress = 0; int player = -1; } prompt;  // id 0: none; a player's: id 0xFFFE
+struct PlayerMenu { bool on = false; uint8_t key = 'F'; std::string label; float range = 250; } playerMenu;
+std::vector<PlayerSpot> playerSpots;
+int aimedPlayer = -1;
+struct Question { uint16_t id = 0; std::string text; double until = 0; } question;  // id 0: none
+constexpr uint16_t kPlayerPrompt = 0xFFFE;
+std::map<uint16_t, Spot> playerSight;  // sight checks of aimed players
 struct CarryPrompt { std::string text; float progress = 0; bool inHands = false; } carryPrompt;
 struct VehiclePrompt { uint16_t id = 0; std::string text; } vehiclePrompt;
 bool owned = false;  // the overlay is shown for a dialog
+View view;
+uint16_t aimedSpot = 0;  // the interaction picked by the aim last frame (it keeps a wider cone)
+constexpr float kAimCone = 25, kAimKeep = 35, kLoneCone = 90;  // degrees
+// How far off the middle of the view a sphere of `radius` at `p` is, in degrees (0: the view's centre
+// line passes through it); 180 when the view is unknown.
+float AimAngle(const FVector& p, float radius) {
+    if (!view.valid) return 180;
+    const float dx = p.X - view.cam.X, dy = p.Y - view.cam.Y, dz = p.Z - view.cam.Z, d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (d < 1) return 0;
+    const float c = std::clamp((dx * view.fwd.X + dy * view.fwd.Y + dz * view.fwd.Z) / d, -1.f, 1.f);
+    const float off = std::acos(c) * 57.2957795f - std::asin(std::min(1.f, radius / d)) * 57.2957795f;
+    return std::max(0.f, off);
+}
+// Nothing between the camera and the spot's aim point (checked five times a second per spot).
+bool InSight(Spot& s, const FVector& p, double now) {
+    if (!view.clear) return true;
+    if (now - s.sightAt < 0.2) return s.sight;
+    s.sightAt = now; s.sight = view.clear(view.cam, p);
+    return s.sight;
+}
 
 std::string KeyLabel(uint8_t vk) {
     if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return std::string(1, char(vk));
@@ -324,10 +350,20 @@ void Reset() {
     overlay::SetBlockedKey(0);
     std::lock_guard g(lock);
     icons.clear();
-    dialog = Dialog{}; answer = Answer{}; itemWin = ItemWin{}; itemActions.clear(); hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{}; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
+    dialog = Dialog{}; answer = Answer{}; itemWin = ItemWin{}; itemActions.clear(); hud.clear(); spots.clear(); watched.clear(); prompt = Prompt{};
+    playerMenu = PlayerMenu{}; playerSpots.clear(); playerSight.clear(); question = Question{}; aimedSpot = 0; aimedPlayer = -1; world = 0; vehiclePrompt = VehiclePrompt{}; carryPrompt = CarryPrompt{};
 }
 bool DialogOpen() { std::lock_guard g(lock); return dialog.open || itemWin.open; }
 void SetWorld(int w) { std::lock_guard g(lock); world = w; }
+void SetView(View v) { std::lock_guard g(lock); view = std::move(v); }
+void SetPlayerSpots(std::vector<PlayerSpot> list) { std::lock_guard g(lock); playerSpots = std::move(list); }
+void OnPlayerMenu(bool on, uint8_t key, const std::string& label, float range) { std::lock_guard g(lock); playerMenu = {on, key, label, range}; }
+void OnAsk(uint16_t id, const std::string& text, float seconds) {
+    std::lock_guard g(lock);
+    if (text.empty()) { if (question.id == id) question = Question{}; return; }
+    question = {id, text, GetTickCount64() / 1000.0 + seconds};
+}
+bool AskPending() { std::lock_guard g(lock); return question.id != 0; }
 void SetIcons(std::vector<WorldIcon> list) { std::lock_guard g(lock); icons = std::move(list); }
 void SetCarryPrompt(const std::string& text, float progress, bool inHands) { std::lock_guard g(lock); carryPrompt = {text, progress, inHands}; }
 bool CarryPromptShown() { std::lock_guard g(lock); return prompt.carry; }
@@ -347,12 +383,45 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
         prompt = Prompt{};
         const bool act = canAct && !open && !skins::CreatorOpen() && !overlay::CursorMode();
         if (act) {
-            float best = 1e30f;
+            // Of the interactions in range: the aimed one in sight nearest the middle of the view; else, when only
+            // one is in range and roughly in front, that one; else the nearest of those that need no aim.
+            const double now = GetTickCount64() / 1000.0;
+            struct Cand { uint16_t id; Spot* s; FVector p; float score; int player = -1; };
+            std::vector<Cand> aimed;
+            Cand lone{}, loose{}; int inRange = 0; float looseD2 = 1e30f; bool haveLone = false;
             for (auto& [id, s] : spots) {
                 const float dx = at.X - s.info.x, dy = at.Y - s.info.y, dz = at.Z - s.info.z, d2 = dx * dx + dy * dy;
-                if ((s.info.world >= 0 && s.info.world != world) || d2 > s.info.radius * s.info.radius || std::fabs(dz) > 300.f || d2 >= best) continue;
-                best = d2; prompt = {id, s.info.key, s.info.text};
+                if ((s.info.world >= 0 && s.info.world != world) || d2 > s.info.radius * s.info.radius || std::fabs(dz) > 300.f) continue;
+                ++inRange;
+                const FVector p{s.info.x, s.info.y, s.info.z + s.info.aimHeight};
+                if (!s.info.aim || !view.valid) { if (d2 < looseD2) { looseD2 = d2; loose = {id, &s, p, 0}; } continue; }
+                const float off = AimAngle(p, s.info.aimRadius);
+                if (off <= (id == aimedSpot ? kAimKeep : kAimCone)) aimed.push_back({id, &s, p, off - s.info.priority * 2.f + std::sqrt(d2) * 0.002f});
+                else if (off <= kLoneCone) { lone = {id, &s, p, off}; haveLone = true; }
             }
+            // Other players, for the player menu: aimed only (a capsule from the feet up), in range.
+            if (playerMenu.on && view.valid) for (auto& ps : playerSpots) {
+                const float dx = at.X - ps.feet.X, dy = at.Y - ps.feet.Y, dz = at.Z - ps.feet.Z;
+                if (dx * dx + dy * dy > playerMenu.range * playerMenu.range || std::fabs(dz) > 250.f) continue;
+                // The point of the body's axis (40..150 above the feet) nearest the view's centre line.
+                const float t = std::clamp((view.cam.Z + view.fwd.Z * std::sqrt((ps.feet.X - view.cam.X) * (ps.feet.X - view.cam.X) + (ps.feet.Y - view.cam.Y) * (ps.feet.Y - view.cam.Y))) - ps.feet.Z, 40.f, 150.f);
+                const FVector p{ps.feet.X, ps.feet.Y, ps.feet.Z + t};
+                const float off = AimAngle(p, 40);
+                if (off <= (int(ps.id) == aimedPlayer ? kAimKeep : kAimCone)) aimed.push_back({kPlayerPrompt, nullptr, p, off + std::sqrt(dx * dx + dy * dy) * 0.002f, int(ps.id)});
+            }
+            std::sort(aimed.begin(), aimed.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
+            const Cand* pick = nullptr;
+            int traced = 0;
+            for (auto& c : aimed) {
+                if (traced++ >= 3) break;
+                if (InSight(c.s ? *c.s : playerSight[uint16_t(c.player)], c.p, now)) { pick = &c; break; }
+            }
+            if (!pick && inRange == 1 && haveLone) pick = &lone;
+            if (!pick && loose.s) pick = &loose;
+            aimedSpot = pick && pick->s ? pick->id : 0;
+            aimedPlayer = pick && pick->player >= 0 ? pick->player : -1;
+            if (pick && pick->player >= 0) { prompt = {kPlayerPrompt, playerMenu.key, playerMenu.label}; prompt.player = pick->player; }
+            else if (pick) prompt = {pick->id, pick->s->info.key, pick->s->info.text};
             if (!prompt.id && vehiclePrompt.id) prompt = {vehiclePrompt.id, 'E', vehiclePrompt.text, true};
             if (!prompt.id && !carryPrompt.text.empty()) prompt = {0xFFFF, 'F', carryPrompt.text, false, true, carryPrompt.progress};
             // Keep ownership during pickup/put-down acknowledgements too: a held F must not
@@ -381,14 +450,26 @@ void Update(net::Client& client, const FVector& at, bool canAct, bool shown) {
     for (int vk = 0; vk < 256; ++vk) {
         const bool now = focused && want.count(uint8_t(vk)) && (GetAsyncKeyState(vk) & 0x8000);
         if (now && !down[vk] && actNow) {
-            uint16_t use = 0; bool watchedKey, vehicle = false;
-            { std::lock_guard g(lock); if (prompt.id && !prompt.carry && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; } watchedKey = watched.count(uint8_t(vk)) != 0 && !(prompt.carry && prompt.key == vk); }
-            if (use && vehicle) client.SendVehicle(net::Msg::VehicleEnter, use);
+            uint16_t use = 0; bool watchedKey, vehicle = false; int player = -1;
+            { std::lock_guard g(lock); if (prompt.id && !prompt.carry && prompt.key == vk) { use = prompt.id; vehicle = prompt.vehicle; player = prompt.player; } watchedKey = watched.count(uint8_t(vk)) != 0 && !(prompt.carry && prompt.key == vk); }
+            if (player >= 0) client.SendPlayerInteract(uint16_t(player));
+            else if (use && vehicle) client.SendVehicle(net::Msg::VehicleEnter, use);
             else if (use) client.SendUse(use);
             else if (watchedKey) client.SendKey(uint8_t(vk));
         }
         down[vk] = now;
     }
+    // The mode's yes/no question: Y / N (not the game's: they are blocked meanwhile), or it runs out.
+    uint16_t asked = 0;
+    { std::lock_guard g(lock); if (question.id && GetTickCount64() / 1000.0 > question.until + 1) question = Question{}; asked = question.id; }
+    overlay::SetAskKeysBlocked(asked != 0);
+    static bool yDown = false, nDown = false;
+    const bool y = focused && (GetAsyncKeyState('Y') & 0x8000), n = focused && (GetAsyncKeyState('N') & 0x8000);
+    if (asked && actNow && !overlay::Typing() && ((y && !yDown) || (n && !nDown))) {
+        client.SendAskAnswer(asked, y && !yDown);
+        std::lock_guard g(lock); if (question.id == asked) question = Question{};
+    }
+    yDown = y; nDown = n;
 }
 
 // The item window: the panes side by side, the chosen item's actions and moving it under them.
@@ -541,6 +622,22 @@ void DrawHud() {
             DrawLine(dl, font, size, ImVec2(x, y), line, e.shadow);
             y += size;
         }
+    }
+    // The mode's yes/no question, over the prompt: "text   [Y] Yes  [N] No  12".
+    if (question.id) {
+        const float size = 21;
+        ImFont* font = small;
+        const auto lines = Lines(question.text, IM_COL32(240, 240, 240, 255));
+        const int left = std::max(0, int(question.until - GetTickCount64() / 1000.0 + 0.99));
+        const std::string keys = std::string("[Y] ") + lang::Pick("Да", "Yes") + "    [N] " + lang::Pick("Нет", "No") + "    " + std::to_string(left);
+        float w = font->CalcTextSizeA(size, FLT_MAX, 0, keys.c_str()).x;
+        for (auto& l : lines) w = std::max(w, LineSize(font, size, l).x);
+        const float h = (lines.size() + 1) * (size + 4);
+        const float x = (screen.x - w) / 2, y = screen.y * 0.74f - h - 26;
+        dl->AddRectFilled(ImVec2(x - 14, y - 10), ImVec2(x + w + 14, y + h + 8), IM_COL32(0, 0, 0, 170), 6);
+        float ly = y;
+        for (auto& l : lines) { DrawLine(dl, font, size, ImVec2(x, ly), l, true); ly += size + 4; }
+        dl->AddText(font, size, ImVec2(x, ly), IM_COL32(242, 209, 107, 255), keys.c_str());
     }
     // The prompt of the interaction the player stands at: "[E] Enter the house".
     if (prompt.id) {

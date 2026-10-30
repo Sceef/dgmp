@@ -401,7 +401,9 @@ void Update(net::Client& client, bool canTalk, const FVector& camPos, const FRot
     // Push-to-talk: in the game window only, never while typing in the chat or a dialog.
     const bool on = (setupFlags & net::VoiceOn) && settings.microphone && canTalk && !overlay::Typing();
     const bool radioHeld = on && down(settings.radioKey) && (setupFlags & net::VoiceRadio);
-    const bool talkHeld = on && !open && (down(settings.talkKey) || radioHeld || settings.openMic);
+    // While the mode asks a yes/no question, N answers it: it does not talk then.
+    const bool talkKey = down(settings.talkKey) && !(settings.talkKey == 'N' && mpui::AskPending());
+    const bool talkHeld = on && !open && (talkKey || radioHeld || settings.openMic);
     const int key = radioHeld ? int(net::VoiceKey::Radio) : int(net::VoiceKey::Talk);
     if (((talkHeld && !(setupFlags & net::VoiceMuted)) || test) && steamVoice.Ready()) {
         if (!cap.recording) {

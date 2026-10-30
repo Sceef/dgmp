@@ -36,7 +36,7 @@ std::atomic<ULONGLONG> lastPresent{0};
 ImFont* large = nullptr;
 std::atomic<bool> keepFocus{false};
 std::atomic<int> blockedKey{0};
-std::atomic<bool> tabOwned{false}, tabPressed{false};
+std::atomic<bool> tabOwned{false}, tabPressed{false}, askKeys{false};
 std::atomic<uint64_t> scriptBlocked[4];  // a bit per virtual key
 // The game hides the system cursor (ShowCursor counter below zero, WM_SETCURSOR); in cursor mode the
 // overlay shows it and gives the game back what it raised afterwards. Window thread only.
@@ -78,6 +78,7 @@ LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     if (nativeInput) return CallWindowProcW(gameProc, h, msg, w, l);
     // A key the multiplayer UI uses right now (an interaction's E): the game must not act on it too.
     if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && blockedKey && int(w) == blockedKey && !(visible && cursor)) return 0;
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && askKeys && (w == 'Y' || w == 'N') && !(visible && cursor)) return 0;
     if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && w < 256 && (scriptBlocked[w >> 6] & (1ull << (w & 63))) && !(visible && cursor)) return 0;
     // Multiplayer: Tab opens and closes the players panel; neither the game nor the cursor toggle gets it.
     if (tabOwned && w == VK_TAB && (msg == WM_KEYDOWN || msg == WM_KEYUP) && !(cursor && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput) && !PageFocused()) {
@@ -259,6 +260,7 @@ void* LargeFont() { return large; }
 void SetBlockedKey(int vk) { blockedKey = vk; }
 void SetTabOwned(bool owned) { tabOwned = owned; if (!owned) tabPressed = false; }
 bool TakeTabPress() { return tabPressed.exchange(false); }
+void SetAskKeysBlocked(bool on) { askKeys = on; }
 void SetScriptBlockedKeys(const bool keys[256]) {
     for (int part = 0; part < 4; ++part) {
         uint64_t bits = 0;

@@ -633,6 +633,47 @@ struct Api {
         Srv(L).ClientSend(&p, name, json);
         return 0;
     }
+    // player:ask(text, {seconds = 15} or seconds, function(player, yes, reason) end) -> true, or false when a
+    // question is already on its screen. Y answers yes, N no; reason "answer" or "timeout".
+    static int PAsk(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        const std::string text = luaL_checkstring(L, 2);
+        float seconds = 15;
+        if (lua_isnumber(L, 3)) seconds = float(lua_tonumber(L, 3));
+        else if (lua_istable(L, 3)) { lua_getfield(L, 3, "seconds"); seconds = float(luaL_optnumber(L, -1, 15)); lua_pop(L, 1); }
+        const int fn = lua_isfunction(L, 4) ? 4 : lua_isfunction(L, 3) ? 3 : 0;
+        const uint16_t id = Srv(L).Ask(p, text, seconds);
+        if (!id) { lua_pushboolean(L, false); return 1; }
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.asks");
+        if (fn) lua_pushvalue(L, fn); else lua_pushnil(L);
+        lua_rawseti(L, -2, p.id); lua_pop(L, 1);
+        lua_pushboolean(L, true); return 1;
+    }
+    static int PCancelAsk(lua_State* L) {
+        auto& p = CheckPlayer(L, 1);
+        Srv(L).CancelAsk(p);
+        lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.asks"); lua_pushnil(L); lua_rawseti(L, -2, p.id); lua_pop(L, 1);
+        return 0;
+    }
+    static int PIsAsked(lua_State* L) { lua_pushboolean(L, CheckPlayer(L, 1).askId != 0); return 1; }
+    // setPlayerMenu({key = "F", label = {ru =, en =}, range = 2.5}): "[F] label" at another player the camera
+    // aims at within range metres; the press is the playerInteract event. nil: off.
+    static int SetPlayerMenu(lua_State* L) {
+        Server::PlayerMenu m;
+        if (lua_istable(L, 1)) {
+            m.on = true;
+            lua_getfield(L, 1, "key"); const std::string key = luaL_optstring(L, -1, "F"); lua_pop(L, 1);
+            const int vk = KeyCode(key);
+            if (vk < 0) return luaL_error(L, "setPlayerMenu: unknown key '%s' (A-Z, 0-9, F1-F12)", key.c_str());
+            m.key = uint8_t(vk);
+            lua_getfield(L, 1, "label");
+            if (lua_isnil(L, -1)) m.label = "Interact", m.labels["ru"] = "Взаимодействие"; else LocalizedField(L, -1, m.label, m.labels);
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "range"); m.range = float(std::clamp(luaL_optnumber(L, -1, 2.5), 1.0, 10.0) * 100.0); lua_pop(L, 1);
+        }
+        Srv(L).SetPlayerMenu(std::move(m));
+        return 0;
+    }
     static int PCloseDialog(lua_State* L) {
         auto& p = CheckPlayer(L, 1);
         Srv(L).CloseDialog(&p);
@@ -692,6 +733,10 @@ struct Api {
         if (vk < 0) luaL_error(L, "createInteraction: unknown key '%s' (A-Z, 0-9, F1-F12)", key.c_str());
         in.key = uint8_t(vk);
         lua_getfield(L, 1, "world"); in.world = lua_isnil(L, -1) ? -1 : int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
+        lua_getfield(L, 1, "aim"); in.aim = lua_isnil(L, -1) || lua_toboolean(L, -1); lua_pop(L, 1);
+        lua_getfield(L, 1, "aimHeight"); in.aimHeight = float(std::clamp(luaL_optnumber(L, -1, 1.0), -10.0, 10.0) * 100.0); lua_pop(L, 1);
+        lua_getfield(L, 1, "aimRadius"); in.aimRadius = float(std::clamp(luaL_optnumber(L, -1, 0.5), 0.05, 10.0) * 100.0); lua_pop(L, 1);
+        lua_getfield(L, 1, "priority"); in.priority = int8_t(std::clamp<lua_Integer>(luaL_optinteger(L, -1, 0), -100, 100)); lua_pop(L, 1);
         const uint16_t id = Srv(L).AddInteraction(in);
         lua_getfield(L, LUA_REGISTRYINDEX, "dgmp.interactions");
         lua_getfield(L, 1, "onUse"); lua_rawseti(L, -2, id);
@@ -1940,6 +1985,7 @@ bool Script::Load(const std::string& modeId) {
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.playerdata");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.markers");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.dialogs");
+    lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.asks");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.itemwindows");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.traps");
     lua_newtable(L_); lua_setfield(L_, LUA_REGISTRYINDEX, "dgmp.interactions");
@@ -1959,7 +2005,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"setPvp", &Api::PSetPvp}, {"zones", &Api::PZones}, {"inZone", &Api::PInZone},
                                 {"setVoiceChannel", &Api::PSetVoiceChannel}, {"joinVoiceChannel", &Api::PJoinVoiceChannel}, {"leaveVoiceChannel", &Api::PLeaveVoiceChannel},
                                 {"voiceChannels", &Api::PVoiceChannels}, {"setVoiceRange", &Api::PSetVoiceRange}, {"voiceRange", &Api::PVoiceRange},
-                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
+                                {"setVoiceMuted", &Api::PSetVoiceMuted}, {"setScoreboard", &Api::PSetScoreboard}, {"ask", &Api::PAsk}, {"cancelAsk", &Api::PCancelAsk}, {"isAsked", &Api::PIsAsked}, {"isVoiceMuted", &Api::PIsVoiceMuted}, {"isTalking", &Api::PIsTalking},
                                 {"giveCarry", &Api::PGiveCarry}, {"dropCarry", &Api::PDropCarry}, {"giveMoney", &Api::PGiveMoney}, {"setMoney", &Api::PSetMoney}, {nullptr, nullptr}};
     luaL_newlib(L_, methods); lua_setfield(L_, -2, "methods");
     lua_pop(L_, 1);
@@ -1972,7 +2018,7 @@ bool Script::Load(const std::string& modeId) {
                                 {"createZone", &Api::CreateZone}, {"setZone", &Api::SetZone}, {"removeZone", &Api::RemoveZone}, {"zonesAt", &Api::ZonesAt},
                                 {"createCarry", &Api::CreateCarry}, {"setCarry", &Api::SetCarry}, {"removeCarry", &Api::RemoveCarry}, {"getCarry", &Api::GetCarry}, {"carries", &Api::Carries},
                                 {"playSound", &Api::PlaySoundAll},
-                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"setVoiceEnabled", &Api::SetVoiceEnabled}, {"voiceEnabled", &Api::VoiceEnabled}, {"setScoreboard", &Api::SetScoreboard}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
+                                {"setVoiceRange", &Api::SetVoiceRangeAll}, {"setVoiceEnabled", &Api::SetVoiceEnabled}, {"voiceEnabled", &Api::VoiceEnabled}, {"setScoreboard", &Api::SetScoreboard}, {"setPlayerMenu", &Api::SetPlayerMenu}, {"voiceRange", &Api::VoiceRangeAll}, {"voiceChannelPlayers", &Api::VoiceChannelPlayers},
                                 {"getDoor", &Api::GetDoor}, {"doors", &Api::DoorsList}, {"setDoor", &Api::SetDoor}, {"getVehicle", &Api::GetVehicleByKey}, {"loot", &Api::LootList},
                                 {"createBlip", &Api::CreateBlip}, {"setBlip", &Api::SetBlip}, {"removeBlip", &Api::RemoveBlip},
                                 {"createObject", &Api::CreateObject}, {"setObject", &Api::SetObject}, {"moveObject", &Api::MoveObject}, {"stopObject", &Api::StopObject},
@@ -2232,6 +2278,16 @@ bool Script::Voice(Player& p, bool on, const char* how) {
     return !(on && (result & 1));
 }
 
+void Script::PlayerInteract(Player& p, Player& target) {
+    if (!L_) return;
+    Api::PushPlayer(L_, p); Api::PushPlayer(L_, target);
+    Fire("playerInteract", 2, nullptr);
+}
+void Script::AskAnswer(Player& p, bool yes, const char* reason) {
+    if (!L_) return;
+    lua_pushboolean(L_, yes); lua_pushstring(L_, reason);
+    CallKept(L_, "dgmp.asks", p.id, true, p, 2, server_, mode_, "ask callback");
+}
 void Script::VoiceIgnore(Player& p, Player& target, bool on) {
     if (!L_) return;
     Api::PushPlayer(L_, p); Api::PushPlayer(L_, target); lua_pushboolean(L_, on);

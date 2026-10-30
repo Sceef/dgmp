@@ -43,6 +43,8 @@ void SetBlockedKey(int vk);
 // Multiplayer: Tab belongs to the players panel (the game and the cursor toggle do not get it) while set.
 void SetTabOwned(bool owned);
 bool TakeTabPress();  // Tab was pressed since the last call (while owned)
+// A yes/no question of the mode is on screen: Y and N are its, the game does not get them.
+void SetAskKeysBlocked(bool on);
 // Keys the mode's client scripts took from the game (bindKey with block = true) while their keys work.
 void SetScriptBlockedKeys(const bool keys[256]);
 

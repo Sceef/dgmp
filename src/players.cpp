@@ -48,7 +48,7 @@ std::wstring IniKey(const std::string& key) {
     return out;
 }
 std::string FromIniKey(const std::wstring& k) {
-    if (k.rfind(L"s:", 0) == 0) return std::string(k.begin(), k.end());
+    if (k.rfind(L"s:", 0) == 0) { std::string out; for (wchar_t c : k) out += char(c & 0x7F); return out; }
     if (k.rfind(L"n:", 0) != 0 || k.size() % 2) return {};
     std::string out = "n:";
     for (size_t i = 2; i + 1 < k.size(); i += 2) out += char(std::stoi(std::wstring(k.substr(i, 2)), nullptr, 16));

@@ -337,6 +337,7 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
         if (op == 1) {
             Events::InteractionInfo info;
             info.x = r.F32(); info.y = r.F32(); info.z = r.F32(); info.radius = r.F32(); info.key = r.U8(); info.text = r.Str(256); info.world = r.I32();
+            info.aim = r.U8() != 0; info.aimHeight = r.F32(); info.aimRadius = r.F32(); info.priority = int8_t(r.U8());
             if (r.ok() && on.interaction) on.interaction(id, &info);
         } else if (r.ok() && on.interaction) on.interaction(id, nullptr);
         break;
@@ -394,6 +395,16 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
     case Msg::ScriptData: {
         const auto path = r.Str(kScriptPathMax); const int part = r.U16(), parts = r.U16(); const auto bytes = r.Str();
         if (r.ok() && on.scriptData) on.scriptData(path, part, parts, bytes);
+        break;
+    }
+    case Msg::PlayerMenu: {
+        const bool enabled = r.U8() != 0; const uint8_t key = r.U8(); const auto label = r.Str(256); const float range = r.F32();
+        if (r.ok() && on.playerMenu) on.playerMenu(enabled, key, label, range);
+        break;
+    }
+    case Msg::Ask: {
+        const uint16_t id = r.U16(); const auto text = r.Str(1024); const float seconds = r.F32();
+        if (r.ok() && on.ask) on.ask(id, text, seconds);
         break;
     }
     case Msg::PlayerList: {
@@ -646,6 +657,16 @@ void Client::SendScriptMessage(const std::string& name, const std::string& json)
 void Client::SendItemAction(uint16_t window, const std::string& json) {
     if (status_ != Status::Connected || json.size() > kItemActionMax) return;
     Writer w; w.Op(Msg::ItemAction); w.U16(window); w.Str(json);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendPlayerInteract(uint16_t player) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::PlayerInteract); w.U16(player);
+    enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
+}
+void Client::SendAskAnswer(uint16_t ask, bool yes) {
+    if (status_ != Status::Connected) return;
+    Writer w; w.Op(Msg::AskAnswer); w.U16(ask); w.U8(yes);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendListRequest() {

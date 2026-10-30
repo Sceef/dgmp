@@ -90,6 +90,11 @@ struct Interaction {
     std::string text;                         // the prompt
     int32_t world = -1;                       // virtual world it is in (-1: every)
     std::map<std::string,std::string> texts;
+    // Aiming (the client picks the one the camera looks at among those in range): the point looked at is
+    // aimHeight above (x, y, z), a sphere of aimRadius; aim false: in range is enough (it loses to an aimed one).
+    bool aim = true;
+    float aimHeight = 100, aimRadius = 50;
+    int8_t priority = 0;                      // between two aimed equally well
 };
 
 // A vehicle (bike) of the mode: anyone may ride it unless locked; the owner may also when locked.
@@ -383,6 +388,8 @@ struct Player {
     std::set<uint16_t> voiceIgnored;               // players it muted for itself (VoiceIgnore): not sent to it
     std::vector<std::string> scoreCells;           // its row's cells in the Tab panel (player:setScoreboard)
     double listAt = 0;                             // it asked for the player list then (ListRequest rate limit)
+    uint16_t askId = 0; double askUntil = 0;      // the yes/no question on its screen (player:ask; 0: none)
+    double interactAt = 0;                         // its last PlayerInteract (rate limit)
     uint64_t voiceBytesIn = 0;                     // since it joined
 };
 
@@ -590,6 +597,13 @@ public:
     bool VoiceEnabled() const { return voiceOn_; }
     void SetScoreColumns(std::vector<std::string> columns) { scoreColumns_ = std::move(columns); }
     void SendPlayerList(Player& p);                // the Tab panel's list (ListRequest)
+    // The player menu (setPlayerMenu): "[key] label" at another player within range units the camera aims at.
+    struct PlayerMenu { bool on = false; uint8_t key = 'F'; std::string label; std::map<std::string, std::string> labels; float range = 250; };
+    void SetPlayerMenu(PlayerMenu menu);
+    void SendPlayerMenu(Player& p);
+    // A yes/no question at the bottom of its screen (player:ask): its id, 0 when one is already open.
+    uint16_t Ask(Player& p, const std::string& text, float seconds);
+    void CancelAsk(Player& p);
     void OnVoiceIgnore(Player& p, net::Reader& r);
     bool JoinVoiceChannel(Player& p, const std::string& name, VoiceJoin how);  // false: a bad name or too many
     void LeaveVoiceChannel(Player& p, const std::string& name);              // "": all of them
@@ -696,6 +710,10 @@ private:
     void VoiceStats();                             // console: voice
     float voiceRange_ = 2500;
     bool voiceOn_ = true;
+    PlayerMenu playerMenu_;
+    uint16_t nextAsk_ = 1;
+    void TickAsks();
+    void EndAsk(Player& p, bool yes, const char* reason);
     std::vector<std::string> scoreColumns_;        // the mode's columns in the Tab panel (setScoreboard)
     double voiceBudget_ = 0, voiceBudgetAt_ = 0;   // VoiceBandwidth
     uint64_t voiceBytesOut_ = 0, voiceDropped_ = 0;

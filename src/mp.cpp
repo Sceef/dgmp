@@ -1683,6 +1683,8 @@ void HookClient() {
     client.on.dialog = [](const net::Client::Events::DialogInfo& d) { mpui::OnDialog(d); };
     client.on.itemWindow = [](uint16_t id, const std::string& json) { mpui::OnItemWindow(id, json); };
     client.on.playerList = [](const std::string& json) { players::OnList(json); };
+    client.on.playerMenu = [](bool on, uint8_t key, const std::string& label, float range) { mpui::OnPlayerMenu(on, key, label, range); };
+    client.on.ask = [](uint16_t id, const std::string& text, float seconds) { mpui::OnAsk(id, text, seconds); };
     client.on.trap = [](const uint8_t* data, size_t size) { traps::OnMessage(data, size); };
     client.on.hud = [](const std::string& id, const std::string& json) { mpui::OnHud(id, json); };
     client.on.interaction = [](uint16_t id, const net::Client::Events::InteractionInfo* info) { mpui::OnInteraction(id, info); };
@@ -2364,6 +2366,22 @@ void Update(double, float dt, UObject* pawn, UObject* controller, bool inWorld, 
         const bool canAct = playing && phase == Phase::Joined && !hud::ChatOpen() && !localDead && !spec.on && !Respawning() && !traps::Caught();  // (in a bear trap F is the game's escape)
         voiceAllowed = playing && phase == Phase::Joined && !hud::ChatOpen() && !mpui::DialogOpen();
         scriptKeys = canAct; scriptHud = playing && !spec.on;
+        {
+            // The aim for the interaction prompts: the camera's place and forward direction, sight tests from it.
+            mpui::View view;
+            if (IsValid(controller)) if (UObject* mgr = Field<UObject*>(controller, off::PC_CameraManager); IsValid(mgr)) {
+                const FRotator r = Field<FRotator>(mgr, off::CamMgr_POV_Location + 12);
+                const float rad = 0.0174532925f, pitch = r.Pitch * rad, yaw = r.Yaw * rad;
+                view.cam = Field<FVector>(mgr, off::CamMgr_POV_Location);
+                view.fwd = {std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch)};
+                view.valid = true;
+                view.clear = [pawn](const FVector& from, const FVector& to) { return LineClear(pawn, from, to); };
+            }
+            mpui::SetView(std::move(view));
+            std::vector<mpui::PlayerSpot> others;
+            for (const auto& b : RemoteBodies()) if (b.alive) others.push_back({b.id, b.pos});
+            mpui::SetPlayerSpots(std::move(others));
+        }
         mpui::Update(client, at, canAct, playing && !spec.on);
         webui::Update(client);
         diagnostics::Phase("mp-vehicles"); vehicles::Update(now, pawn, controller, client);

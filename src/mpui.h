@@ -7,6 +7,7 @@
 // callbacks on the frame thread.
 #include "ue.h"
 #include "shared/netclient.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,20 @@ bool CarryPromptShown();
 struct WorldIcon { float x, y, size, scale; unsigned color; std::string image, text; };
 void SetIcons(std::vector<WorldIcon> list);
 
+// Where the camera looks from and along (game thread, every frame before Update) and a sight test (true:
+// nothing stands between the two points). The prompt goes to what the camera looks at: of the
+// interactions in range, the one nearest the middle of the view within a cone, in sight (docs/API.md
+// "Взаимодействия и клавиши").
+struct View { ue::FVector cam{}, fwd{}; bool valid = false; std::function<bool(const ue::FVector&, const ue::FVector&)> clear; };
+void SetView(View view);
+// Other players (feet) the player menu may aim at (game thread, every frame), and the menu itself
+// (setPlayerMenu: "[key] label" at an aimed player within range units; the press sends PlayerInteract).
+struct PlayerSpot { uint16_t id; ue::FVector feet; };
+void SetPlayerSpots(std::vector<PlayerSpot> list);
+void OnPlayerMenu(bool on, uint8_t key, const std::string& label, float range);
+// A yes/no question of the mode (player:ask): Y yes, N no, at the bottom of the screen ("" withdraws it).
+void OnAsk(uint16_t id, const std::string& text, float seconds);
+bool AskPending();  // (the talk key N does not talk meanwhile)
 // Every frame while connected. `at`: the player (actor root); `canAct`: it plays (no menu, chat or
 // death). Sends the dialog answer, interaction uses and watched key presses.
 void Update(net::Client& client, const ue::FVector& at, bool canAct, bool hudShown);

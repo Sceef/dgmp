@@ -146,7 +146,7 @@ void Server::Run() {
         TickVehicles();
         TickObjects();
         if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
-        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); TickTraps(); }
+        if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); TickTraps(); TickAsks(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
         if (now >= nextReloadCheck) {
@@ -282,6 +282,22 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
         if (Now() - p->listAt >= 0.5) { p->listAt = Now(); SendPlayerList(*p); }
         break;
     case net::Msg::VoiceIgnore: OnVoiceIgnore(*p, r); break;
+    case net::Msg::PlayerInteract: {
+        const uint16_t id = r.U16();
+        Player* t = r.ok() ? Find(id) : nullptr;
+        if (!t || t == p || !t->ready || !playerMenu_.on || Apart(*p, *t) || Now() - p->interactAt < 0.3) break;
+        if (p->spectating) break;
+        const float dx = t->state.x - p->state.x, dy = t->state.y - p->state.y, dz = t->state.z - p->state.z, reach = playerMenu_.range + 300.f;
+        if (dx * dx + dy * dy > reach * reach || std::fabs(dz) > 400.f) break;  // not there
+        p->interactAt = Now();
+        script_->PlayerInteract(*p, *t);
+        break;
+    }
+    case net::Msg::AskAnswer: {
+        const uint16_t id = r.U16(); const bool yes = r.U8() != 0;
+        if (r.ok() && p->askId && id == p->askId) EndAsk(*p, yes, "answer");
+        break;
+    }
     case net::Msg::Use: {
         const uint16_t id = r.U16();
         auto it = interactions_.find(id);
@@ -696,6 +712,7 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     }
     { net::Writer t; t.Op(net::Msg::Settings); t.U8(static_cast<uint8_t>(cfg_.nametags)); t.U8(cfg_.collisions); SendTo(peer, t, true); }
     SendVoiceSetup(*p);
+    SendPlayerMenu(*p);
     for (auto& [mid, m] : markers_) if (m.only == 0xFFFF && Shows(m, *p)) SendMarker(peer, m);
     for (auto& [iid, item] : items_) if (item.only == 0xFFFF && Shows(item, *p)) SendWorldItem(peer, item);
     for (auto& [iid, in] : interactions_) SendInteraction(peer, in);
@@ -1218,7 +1235,45 @@ void Server::SendInteraction(ENetPeer* peer, const Interaction& in) {
     const auto& text=translated!=in.texts.end()?translated->second:in.text;
     net::Writer w; w.Op(net::Msg::Interaction); w.U16(in.id); w.U8(1);
     w.F32(in.x); w.F32(in.y); w.F32(in.z); w.F32(in.radius); w.U8(in.key); w.Str(text.substr(0, 256)); w.I32(in.world);
+    w.U8(in.aim); w.F32(in.aimHeight); w.F32(in.aimRadius); w.U8(uint8_t(in.priority));
     SendTo(peer, w, true);
+}
+void Server::SetPlayerMenu(PlayerMenu menu) {
+    playerMenu_ = std::move(menu);
+    for (auto& [id, p] : players_) SendPlayerMenu(*p);
+}
+void Server::SendPlayerMenu(Player& p) {
+    if (!p.peer || !p.ready || p.bot) return;
+    const auto it = playerMenu_.labels.find(p.lang);
+    const std::string& label = it != playerMenu_.labels.end() ? it->second : playerMenu_.label;
+    net::Writer w; w.Op(net::Msg::PlayerMenu); w.U8(playerMenu_.on); w.U8(playerMenu_.key); w.Str(label.substr(0, 128)); w.F32(playerMenu_.range);
+    SendTo(p.peer, w, true);
+}
+uint16_t Server::Ask(Player& p, const std::string& text, float seconds) {
+    if (p.askId || text.empty()) return 0;
+    if (!nextAsk_) ++nextAsk_;
+    p.askId = nextAsk_++; p.askUntil = Now() + std::clamp(seconds, 3.f, 120.f);
+    if (p.peer && !p.bot) {
+        net::Writer w; w.Op(net::Msg::Ask); w.U16(p.askId); w.Str(text.substr(0, 512)); w.F32(float(p.askUntil - Now()));
+        SendTo(p.peer, w, true);
+    }
+    return p.askId;
+}
+void Server::CancelAsk(Player& p) {
+    if (!p.askId) return;
+    if (p.peer && !p.bot) { net::Writer w; w.Op(net::Msg::Ask); w.U16(p.askId); w.Str(""); w.F32(0); SendTo(p.peer, w, true); }
+    p.askId = 0; p.askUntil = 0;
+}
+void Server::EndAsk(Player& p, bool yes, const char* reason) {
+    if (!p.askId) return;
+    CancelAsk(p);
+    script_->AskAnswer(p, yes, reason);
+}
+void Server::TickAsks() {
+    const double now = Now();
+    std::vector<uint16_t> late;
+    for (auto& [id, p] : players_) if (p->askId && now >= p->askUntil) late.push_back(id);
+    for (auto id : late) if (Player* p = Find(id)) EndAsk(*p, false, "timeout");
 }
 uint16_t Server::AddInteraction(Interaction in) {
     while (interactions_.count(nextInteraction_) || !nextInteraction_) ++nextInteraction_;
@@ -2471,6 +2526,8 @@ bool Server::ReloadMode() {
     for (auto& [id, p] : players_) { p->pvp = -1; p->zones.clear(); p->zoneHud.clear(); p->money = 0; }
     // Voice channels, ranges and mutes are the mode's: the new code sets them again.
     voiceRange_ = cfg_.voiceRange; voiceOn_ = cfg_.voice; scoreColumns_.clear();
+    SetPlayerMenu({});
+    for (auto& [id, p] : players_) CancelAsk(*p);
     for (auto& [id, p] : players_) { p->voiceChannels.clear(); p->voiceRange = -1; p->voiceMuted = false; p->scoreCells.clear(); SendVoiceSetup(*p); }  // money too: the new code sets it again (playerJoin)  // zones and PvP come again from the file and the new code
     ids.clear();
     for (auto& [id, z] : zombies_) ids.push_back(id);

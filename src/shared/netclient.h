@@ -85,7 +85,7 @@ public:
         struct DialogInfo { uint16_t id = 0; DialogStyle style = DialogStyle::MsgBox; std::string title, text, button1, button2, defaultText, headers; std::vector<std::string> items; };
         std::function<void(const DialogInfo& d)> dialog;                           // style Close: close dialog d.id
         std::function<void(const std::string& id, const std::string& json)> hud;  // json "": remove (id "": all)
-        struct InteractionInfo { float x, y, z, radius; uint8_t key; std::string text; int world = -1; };
+        struct InteractionInfo { float x, y, z, radius; uint8_t key; std::string text; int world = -1; bool aim = true; float aimHeight = 100, aimRadius = 50; int8_t priority = 0; };
         std::function<void(uint16_t id, const InteractionInfo* info)> interaction;  // info null = removed
         std::function<void(const std::vector<uint8_t>& keys)> watchKeys;
         std::function<void(int world)> setWorld;
@@ -109,6 +109,8 @@ public:
         std::function<void(const std::string& name, const std::string& json)> scriptEvent;
         std::function<void(uint16_t id, const std::string& json)> itemWindow;  // json "": close it
         std::function<void(const std::string& json)> playerList;               // the Tab panel's list (answer to SendListRequest)
+        std::function<void(bool on, uint8_t key, const std::string& label, float range)> playerMenu;  // "[key] label" at an aimed player
+        std::function<void(uint16_t id, const std::string& text, float seconds)> ask;                  // a yes/no question (text "": withdrawn)
         std::function<void(const uint8_t* payload, size_t size)> trap;          // Msg::Trap without the op (src/traps.cpp parses it)
         struct IconInfo { float x, y, z, size, distance; int world; uint32_t color; std::string image, text; bool throughWalls = false; };
         std::function<void(uint16_t id, const IconInfo* info)> icon;  // info null = removed
@@ -153,6 +155,8 @@ public:
     void SendScriptError(const std::string& text);
     void SendItemAction(uint16_t window, const std::string& json);
     void SendListRequest();
+    void SendPlayerInteract(uint16_t player);
+    void SendAskAnswer(uint16_t ask, bool yes);
     void SendVoiceIgnore(const std::vector<uint16_t>& ids);  // the players muted here (their voices are not sent)
     void SendVehicle(Msg op, uint16_t id, const VehicleState* state = nullptr);  // VehicleEnter / VehicleExit / VehicleState
     void SendCarry(uint16_t id, CarryOp op, float x = 0, float y = 0, float z = 0, float yaw = 0);
