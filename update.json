@@ -2,8 +2,8 @@
   "version": "0.8.1",
   "protocol": 11,
   "zip": "https://github.com/Sceef/dgmp/releases/download/v0.8.1/DGMP-client-0.8.1.zip",
-  "sha256": "cfc451945da24c914c5daa0d634b57ed91372d7a79240ac56122ec3de14df50b",
-  "bytes": 2968227,
+  "sha256": "78a1cd4ffddcf239036ad43db8c799b101ffc38e2b4d7caf6a8278f54053866e",
+  "bytes": 2980476,
   "url": "https://github.com/Sceef/dgmp/releases/tag/v0.8.1",
   "notes": {
     "ru": "DGMP 0.8.1: меню игрока (F на игроке: отряд, обмен, рация, медик, охрана, дуэли), ранение вместо смерти, список игроков на Tab с личным мутом, версия сервера в списке, обновление из лаунчера. Рубеж: свои вылазки со своим слоем, медикаменты NERO для медпункта, обучение до экспедиции.",
