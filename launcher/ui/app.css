@@ -116,6 +116,8 @@ table.servers { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .servers tbody tr.sel { background: #d2652d1f; box-shadow: inset 3px 0 0 var(--accent); }
 .c-lock { width: 34px; text-align: center; }
 .c-mode { width: 22%; }
+.c-ver { width: 84px; color: var(--muted, #9a9388); }
+.servers td.ver-bad { color: #e07070; }
 .c-players { width: 92px; }
 .c-ping { width: 104px; }
 .c-act { width: 46px; }

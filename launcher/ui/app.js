@@ -5,14 +5,14 @@ const bridge = (() => {
   if (wv) return { send: (m) => wv.postMessage(JSON.stringify(m)), listen: (fn) => wv.addEventListener("message", (e) => fn(e.data)) };
   let handler = () => {};
   const sample = {
-    "127.0.0.1:7777": { name: "Фарвелл Фрирум", mode: "Freeroam", players: 3, maxPlayers: 16, password: false, ping: 4, compatible: true },
-    "203.0.113.18:7777": { name: "[RU] Орда — выживание", mode: "Horde", players: 15, maxPlayers: 16, password: true, ping: 48, compatible: true },
+    "127.0.0.1:7777": { name: "Фарвелл Фрирум", mode: "Freeroam", players: 3, maxPlayers: 16, password: false, ping: 4, compatible: true, version: "0.8.0", protocol: 11 },
+    "203.0.113.18:7777": { name: "[RU] Орда — выживание", mode: "Horde", players: 15, maxPlayers: 16, password: true, ping: 48, compatible: false, version: "0.7.0", protocol: 10 },
   };
   const later = (m, ms = 250) => setTimeout(() => handler(m), ms);
   return {
     listen: (fn) => (handler = fn),
     send: (m) => {
-      if (m.cmd === "init") later({ type: "state", nick: "Sceef", lang: storedLang(), version: "0.6.0", protocol: 1, gameFound: true, serverAvailable: true,
+      if (m.cmd === "init") later({ type: "state", nick: "Sceef", lang: storedLang(), version: "0.8.0", protocol: 11, gameFound: true, serverAvailable: true,
         favorites: [{ address: "127.0.0.1:7777", name: "Фарвелл Фрирум" }, { address: "203.0.113.18:7777", name: "[RU] Орда — выживание" }, { address: "10.0.0.5:7777", name: "Старый сервер" }],
         recent: [{ address: "127.0.0.1:7777", name: "Фарвелл Фрирум" }], host: { name: "Мой сервер", mode: "freeroam", port: 7777, maxPlayers: 16 },
         modes: [{ id: "freeroam", name: "Freeroam", description: "Свободная езда, чат, телепорты, время и погода." }],
@@ -42,7 +42,7 @@ const I18N = {
     "list.favorites": "Favorites", "list.recent": "Recent", "list.lan": "LAN", "list.internet": "Internet",
     "address.placeholder": "IP:port, e.g. 192.168.1.20:7777", "fav.add": "Add to favorites", "fav.remove": "Remove from favorites",
     "connect": "Connect", "refresh": "Refresh (F5)", "play": "Play",
-    "th.name": "Name", "mode": "Mode", "th.players": "Players", "th.ping": "Ping",
+    "th.name": "Name", "mode": "Mode", "th.version": "Version", "ver.other": "Another protocol: this launcher ({v}) cannot join it", "th.players": "Players", "th.ping": "Ping",
     "copy.title": "Copy the address", "copy.done": "Address {a} copied",
     "ping.ms": "{n} ms", "ping.none": "no response", "tag.version": "other version",
     "empty.favorites": "No favorites yet.<br>Enter a server address above and press “Add to favorites”.",
@@ -78,7 +78,7 @@ const I18N = {
     "connect": "Подключиться", "refresh": "Обновить (F5)", "play": "Играть",
     "th.name": "Название", "mode": "Режим", "th.players": "Игроки", "th.ping": "Пинг",
     "copy.title": "Скопировать адрес", "copy.done": "Адрес {a} скопирован",
-    "ping.ms": "{n} мс", "ping.none": "нет ответа", "tag.version": "другая версия",
+    "th.version": "Версия", "ver.other": "Другой протокол: с этим лаунчером ({v}) не подключиться", "ping.ms": "{n} мс", "ping.none": "нет ответа", "tag.version": "другая версия",
     "empty.favorites": "В избранном пока пусто.<br>Введите адрес сервера сверху и нажмите «В избранное».",
     "empty.recent": "Здесь появятся серверы, на которых вы играли.",
     "empty.lanSearch": "Поиск серверов в локальной сети…", "empty.lan": "Серверы в локальной сети не найдены.<br>Порты 7777–7786.",
@@ -163,6 +163,7 @@ function renderServers() {
       <td class="c-lock">${online && i.password ? "🔒" : ""}</td>
       <td><span class="srv-name">${esc(name)}</span>${tags}<span class="srv-addr">${copyButton(e.address)}</span></td>
       <td class="c-mode">${online ? esc(i.mode) : ""}</td>
+      <td class="c-ver ${online && !i.compatible ? "ver-bad" : ""}" title="${online && !i.compatible ? esc(t("ver.other", { v: app.state?.version || "" })) : ""}">${online ? esc(i.version || "?") : ""}</td>
       <td class="c-players">${players}</td>
       <td class="c-ping ${i ? pingClass(i.ping) : "ping-none"}">${ping}</td>
       <td class="c-act"><button class="star ${isFavorite(e.address) ? "on" : ""}" data-star="${esc(e.address)}" title="${t("list.favorites")}">★</button></td>
@@ -185,7 +186,7 @@ function renderDetail() {
   d.hidden = false;
   $("#d-name").textContent = online ? i.name : (entries().find((e) => e.address === address)?.name || address);
   $("#d-meta").innerHTML = copyButton(address) + esc(online
-    ? ` · ${i.mode} · ${t("detail.players", { n: i.players, max: i.maxPlayers })} · ${t("ping.ms", { n: i.ping })}`
+    ? ` · ${i.mode} · ${i.version ? "v" + i.version + " · " : ""}${t("detail.players", { n: i.players, max: i.maxPlayers })} · ${t("ping.ms", { n: i.ping })}`
       + (i.password ? " · " + t("detail.password") : "") + (i.compatible ? "" : " · " + t("detail.incompatible"))
     : ` · ${t("detail.offline")}`);
   $("#d-fav").textContent = t(isFavorite(address) ? "fav.remove" : "fav.add");
