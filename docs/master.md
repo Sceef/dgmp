@@ -1,22 +1,24 @@
-# Мастер-сервер: общий список серверов
+**English** · [Русский](master.ru.md)
 
-Вкладка лаунчера **«Интернет»** показывает серверы, которые объявили себя на мастер-сервере. Мастер-сервер — это тот же `dgmp-server` в отдельном режиме. Он хранит только адреса и сам опрашивает каждый сервер, поэтому в список нельзя добавить чужой или несуществующий адрес.
+# Master server: the shared server list
 
-## Как это работает
+The launcher's **"Internet"** tab shows the servers that have announced themselves to the master server. The master server is the same `dgmp-server` in a separate mode. It stores only addresses and queries every server itself, so a foreign or non-existent address cannot be added to the list.
 
-1. Сервер с `Master=` в `server.ini` раз в минуту (в первую минуту — чаще) отправляет мастеру heartbeat со своего игрового порта (UDP).
-2. Мастер опрашивает его обычным запросом статуса. Ответил — сервер попадает в список; перестал отвечать или нет heartbeat 3 минуты — исчезает.
-3. Лаунчер берёт у мастера список адресов и сам опрашивает каждый сервер: название, режим, игроки, пинг.
+## How it works
 
-Ограничения мастера: до 5000 серверов, до 32 с одного IP, heartbeat не чаще двух раз в секунду с адреса. В списке только серверы с той же версией протокола, что у лаунчера.
+1. A server with `Master=` in `server.ini` sends the master a heartbeat from its game port (UDP) once a minute (more often during the first minute).
+2. The master queries it with the ordinary status request. If it answers, the server goes into the list; if it stops answering or there is no heartbeat for 3 minutes, it disappears.
+3. The launcher takes the list of addresses from the master and queries every server itself: name, mode, players, ping.
 
-## Запуск мастер-сервера
+Master limits: up to 5000 servers, up to 32 per IP, heartbeats no more than twice a second per address. The list contains only servers with the same protocol version as the launcher.
+
+## Running a master server
 
 ```
 dgmp-server --master [--port 7700]
 ```
 
-Порт по умолчанию — **UDP 7700**, его нужно открыть в файрволе. Лог — `logs/master.log`. На Linux-VPS — юнит [`tools/dgmp-master.service`](../tools/dgmp-master.service) (рядом с обычным `dgmp-server.service`, тот же двоичный файл):
+The default port is **UDP 7700**; it must be opened in the firewall. The log is `logs/master.log`. On a Linux VPS — the unit [`tools/dgmp-master.service`](../tools/dgmp-master.service) (next to the regular `dgmp-server.service`, the same binary):
 
 ```
 sudo cp tools/dgmp-master.service /etc/systemd/system/ && sudo systemctl daemon-reload
@@ -24,26 +26,26 @@ sudo systemctl enable --now dgmp-master
 sudo ufw allow 7700/udp
 ```
 
-## Сервер: попасть в список
+## Server: getting into the list
 
 `server.ini`:
 
 ```ini
-Master=master.example.com        ; или IP; порт 7700 по умолчанию, свой — master.example.com:7701
+Master=master.example.com        ; or an IP; port 7700 by default, your own — master.example.com:7701
 ```
 
-Или ключом командной строки `--master-server master.example.com`. Пустое значение — сервер не объявляется (по умолчанию). Серверы с паролем тоже попадают в список, с замком.
+Or with the command-line key `--master-server master.example.com`. An empty value — the server does not announce itself (default). Password-protected servers also get into the list, with a lock.
 
-## Лаунчер
+## Launcher
 
-Адрес мастера по умолчанию задаётся в коде лаунчера (`kDefaultMaster` в `src/launcher/main.cpp`), свой — в `profiles/launcher.json`:
+The default master address is set in the launcher code (`kDefaultMaster` in `src/launcher/main.cpp`); your own — in `profiles/launcher.json`:
 
 ```json
 { "master": "master.example.com:7700" }
 ```
 
-## Проверка
+## Verification
 
 ```
-build\dgmp-probe.exe master 127.0.0.1        список мастера и опрос каждого сервера
+build\dgmp-probe.exe master 127.0.0.1        the master's list and a query to every server
 ```

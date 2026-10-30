@@ -1,6 +1,8 @@
-# Выпуск версии и обновление из лаунчера
+**English** · [Русский](releases.ru.md)
 
-Сборки клиента хранятся не в git, а в **GitHub Releases**: к тегу `v0.8.0` прикрепляется `DGMP-client-0.8.0.zip`. В корне репозитория лежит маленький файл [`update.json`](../update.json): он сообщает лаунчерам, какая версия последняя и где её взять.
+# Releasing a version and updating from the launcher
+
+Client builds are stored not in git but in **GitHub Releases**: `DGMP-client-0.8.0.zip` is attached to the tag `v0.8.0`. The repository root contains a small file [`update.json`](../update.json): it tells launchers which version is the latest and where to get it.
 
 ```json
 {
@@ -14,41 +16,41 @@
 }
 ```
 
-## Как лаунчер обновляется
+## How the launcher updates
 
-1. При каждом запуске `DGMP.exe` читает `https://raw.githubusercontent.com/Sceef/dgmp/main/update.json`. Свой адрес можно задать в `profiles/launcher.json` → `"updateUrl"`, пустая строка отключает проверку.
-2. Если `version` новее своей, слева появляется «Вышла версия X — обновить».
-3. По нажатию лаунчер:
-   - скачивает ZIP и сверяет размер и SHA-256 с манифестом;
-   - распаковывает архив встроенным в Windows `tar` и проверяет, что в `build-info.json` та же версия;
-   - копирует файлы поверх своей папки.
+1. On every start `DGMP.exe` reads `https://raw.githubusercontent.com/Sceef/dgmp/main/update.json`. You can set your own address in `profiles/launcher.json` → `"updateUrl"`; an empty string disables the check.
+2. If `version` is newer than its own, "Version X is out — update" appears on the left.
+3. On click the launcher:
+   - downloads the ZIP and checks the size and SHA-256 against the manifest;
+   - unpacks the archive with the `tar` built into Windows and checks that `build-info.json` has the same version;
+   - copies the files over its folder.
 
-   `DGMP.ini` и `editor.ini` игрока не заменяются, `profiles/` и `runtime/` в архив не входят. Запущенный `DGMP.exe` переименовывается в `DGMP.exe.old`: его удалит следующий запуск.
-4. Новый лаунчер запускается сам. Новая `version.dll` попадает в `runtime/` при следующем входе в игру (`prepare.ps1`).
+   The player's `DGMP.ini` and `editor.ini` are not replaced; `profiles/` and `runtime/` are not in the archive. The running `DGMP.exe` is renamed to `DGMP.exe.old`: the next start deletes it.
+4. The new launcher starts by itself. The new `version.dll` goes into `runtime/` on the next entry into the game (`prepare.ps1`).
 
-Пока запущена Days Gone или свой сервер из лаунчера, обновление не ставится: лаунчер просит их закрыть. Если в манифесте нет `zip` и `sha256`, кнопка просто открывает страницу `url`.
+While Days Gone or your own server from the launcher is running, the update is not installed: the launcher asks you to close them. If the manifest has no `zip` and `sha256`, the button just opens the `url` page.
 
-Скачивать без входа в GitHub можно только из **публичного** репозитория. Пока он закрыт, проверка обновлений молча ничего не находит.
+Downloading without a GitHub login is possible only from a **public** repository. While it is private, the update check silently finds nothing.
 
-## Как выпустить версию
+## How to release a version
 
-1. Поднять `kVersion` в [`src/shared/version.h`](../src/shared/version.h). При изменении сетевых сообщений поднять и `kProtocolVersion` в `src/shared/protocol.h`: клиенты и серверы разных протоколов не играют вместе, поэтому обновите и сервер.
-2. Собрать: `build.bat`.
-3. Проверить сборку: `python tests/outpost_smoke.py`, `build/lua-test.exe tests/outpost.lua`, игра.
-4. Закоммитить и запушить изменения.
-5. Выпустить:
+1. Bump `kVersion` in [`src/shared/version.h`](../src/shared/version.h). If network messages changed, also bump `kProtocolVersion` in `src/shared/protocol.h`: clients and servers of different protocols do not play together, so update the server too.
+2. Build: `build.bat`.
+3. Check the build: `python tests/outpost_smoke.py`, `build/lua-test.exe tests/outpost.lua`, the game.
+4. Commit and push the changes.
+5. Release:
 
    ```
    python tools/release.py --notes-ru "Что нового" --notes-en "What is new" --publish
    ```
 
-   Скрипт:
-   - собирает ZIP (`tools/package-client.py`) и копирует его в `build/releases/DGMP-client-<версия>.zip`;
-   - записывает `update.json`;
-   - создаёт релиз `v<версия>` с ZIP через `gh` (если релиз уже есть, заменяет файл);
-   - коммитит и пушит `update.json`.
+   The script:
+   - builds the ZIP (`tools/package-client.py`) and copies it to `build/releases/DGMP-client-<version>.zip`;
+   - writes `update.json`;
+   - creates the release `v<version>` with the ZIP via `gh` (if the release already exists, replaces the file);
+   - commits and pushes `update.json`.
 
-   Без `--publish` только собирает ZIP и пишет `update.json`, ничего не публикуя.
-6. Обновить свои серверы (например, VPS: [`docs/server-linux.md`](server-linux.md)).
+   Without `--publish` it only builds the ZIP and writes `update.json`, publishing nothing.
+6. Update your servers (for example, a VPS: [`docs/server-linux.md`](server-linux.md)).
 
-Порядок важен: сначала релиз с ZIP, потом `update.json`, иначе лаунчеры получат ссылку на несуществующий файл. `release.py` делает именно так. Под уже опубликованной версией другой ZIP не выкладывается: лаунчеры с закэшированным `update.json` знают размер и SHA-256 старого файла и откажутся ставить новый. Нужна новая версия. Сразу после выпуска лаунчеры до 5 минут могут видеть прошлый `update.json` (кэш `raw.githubusercontent.com`).
+The order matters: first the release with the ZIP, then `update.json`, otherwise launchers get a link to a non-existent file. `release.py` does exactly that. A different ZIP is not uploaded under an already published version: launchers with a cached `update.json` know the size and SHA-256 of the old file and will refuse to install the new one. A new version is needed. Right after a release, launchers may see the previous `update.json` for up to 5 minutes (the `raw.githubusercontent.com` cache).

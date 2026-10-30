@@ -1,10 +1,12 @@
-# Сервер DGMP на Linux
+**English** · [Русский](server-linux.ru.md)
 
-`dgmp-server` собирается и работает на Linux (x86-64, дистрибутивы с glibc: Ubuntu 22.04+, Debian 11+, Fedora, Rocky/Alma 9). Поведение, консольные команды, Lua-режимы и сетевой протокол те же, что у `dgmp-server.exe`: клиенты на Windows подключаются к нему как обычно.
+# DGMP server on Linux
 
-## Зависимости
+`dgmp-server` builds and runs on Linux (x86-64, glibc distributions: Ubuntu 22.04+, Debian 11+, Fedora, Rocky/Alma 9). Behavior, console commands, Lua modes and the network protocol are the same as `dgmp-server.exe`: Windows clients connect to it as usual.
 
-Нужен компилятор с C++20 (g++ 10+ или clang 12+) и CMake 3.16+. ENet и Lua лежат в `third_party/` и собираются статически вместе с сервером, отдельно ставить их не нужно.
+## Dependencies
+
+You need a C++20 compiler (g++ 10+ or clang 12+) and CMake 3.16+. ENet and Lua are in `third_party/` and are built statically together with the server; there is no need to install them separately.
 
 ```bash
 # Ubuntu / Debian
@@ -13,15 +15,15 @@ sudo apt install build-essential cmake
 sudo dnf install gcc-c++ make cmake
 ```
 
-## Что скопировать на VPS
+## What to copy to the VPS
 
-Из папки `dgmp/` нужны только:
+From the `dgmp/` folder you need only:
 
-- `CMakeLists.txt`, `src/server/`, `src/shared/`, `third_party/enet/`, `third_party/lua/` — для сборки;
-- `server.ini`, `modes/`, `quests/`, `data/looks.txt` — для работы;
-- `docs/server-linux.md`, `tools/dgmp-server.service` — эта инструкция и юнит systemd (`cmake --install` кладёт их в `docs/`).
+- `CMakeLists.txt`, `src/server/`, `src/shared/`, `third_party/enet/`, `third_party/lua/` — for the build;
+- `server.ini`, `modes/`, `quests/`, `data/looks.txt` — for running;
+- `docs/server-linux.md`, `tools/dgmp-server.service` — this guide and the systemd unit (`cmake --install` puts them in `docs/`).
 
-Например, из Git Bash на Windows-машине (структура папок сохраняется):
+For example, from Git Bash on a Windows machine (the folder structure is preserved):
 
 ```bash
 tar czf dgmp-server-src.tgz CMakeLists.txt src/server src/shared third_party/enet third_party/lua server.ini modes quests data/looks.txt docs/server-linux.md tools/dgmp-server.service
@@ -29,7 +31,7 @@ scp dgmp-server-src.tgz user@vps:~
 ssh user@vps 'mkdir -p ~/dgmp && tar xzf ~/dgmp-server-src.tgz -C ~/dgmp'
 ```
 
-## Сборка
+## Building
 
 ```bash
 cd ~/dgmp
@@ -37,35 +39,35 @@ cmake -S . -B build-linux
 cmake --build build-linux -j
 ```
 
-Бинарник `dgmp-server` появляется в корне `dgmp/`, рядом с `server.ini` и `modes/` — так же, как `dgmp-server.exe` в Windows. По умолчанию сборка `RelWithDebInfo` (`-O2 -g`), libstdc++ линкуется статически (`-DDGMP_STATIC_RUNTIME=OFF` отключает), поэтому собранный файл можно переносить на другие машины с тем же или более новым glibc.
+The `dgmp-server` binary appears in the root of `dgmp/`, next to `server.ini` and `modes/` — the same as `dgmp-server.exe` on Windows. The build is `RelWithDebInfo` (`-O2 -g`) by default, libstdc++ is linked statically (`-DDGMP_STATIC_RUNTIME=OFF` disables it), so the built file can be moved to other machines with the same or a newer glibc.
 
-Готовая папка сервера без исходников:
+A ready server folder without sources:
 
 ```bash
 sudo cmake --install build-linux --prefix /opt/dgmp
 ```
 
-Копируются `dgmp-server`, `modes/`, `quests/`, `data/looks.txt`, этот файл и `docs/dgmp-server.service`. `server.ini` кладётся только при первой установке — при обновлении ваш настроенный файл не перезаписывается. `data/<mode>/storage.json` (сохранения режимов) установка не трогает.
+`dgmp-server`, `modes/`, `quests/`, `data/looks.txt`, this file and `docs/dgmp-server.service` are copied. `server.ini` is put in only on the first install — on an update your configured file is not overwritten. The install does not touch `data/<mode>/storage.json` (the modes' saves).
 
-## Запуск
+## Running
 
 ```bash
 ./dgmp-server --mode freeroam --port 7777
-./dgmp-server --config /etc/dgmp/server.ini --name "Мой сервер" --max 32 --password secret --bind 0.0.0.0
+./dgmp-server --config /etc/dgmp/server.ini --name "My server" --max 32 --password secret --bind 0.0.0.0
 ```
 
-Флаги те же, что в Windows, и так же перекрывают `server.ini`. Консольные команды (`help`, `status`, `say`, `kick`, `bot`, `reload`, `mode`, `time`, `weather`, `quit`) читаются из stdin. Чтобы консоль оставалась доступной после отключения SSH, запускайте сервер в `tmux` или `screen`:
+The flags are the same as on Windows and override `server.ini` in the same way. Console commands (`help`, `status`, `say`, `kick`, `bot`, `reload`, `mode`, `time`, `weather`, `quit`) are read from stdin. To keep the console available after SSH disconnects, run the server in `tmux` or `screen`:
 
 ```bash
 tmux new -s dgmp './dgmp-server --mode race'
-# отсоединиться: Ctrl+B, затем D; вернуться: tmux attach -t dgmp
+# detach: Ctrl+B, then D; come back: tmux attach -t dgmp
 ```
 
-Ctrl+C, `kill` и `systemctl stop` (SIGINT/SIGTERM/SIGHUP) завершают сервер как команда `quit`: игроки получают сообщение о выключении. Если запустить сервер в фоне через `&`, он не останавливается при чтении stdin, просто работает без консоли.
+Ctrl+C, `kill` and `systemctl stop` (SIGINT/SIGTERM/SIGHUP) stop the server like the `quit` command: players get a shutdown message. If you run the server in the background with `&`, it does not stop on reading stdin, it just works without a console.
 
-Остальное как в Windows: режимы перезагружаются сами при изменении `.lua`/`.ini`/`.json`, журнал пишется в `logs/server.log`.
+The rest is as on Windows: modes reload themselves when `.lua`/`.ini`/`.json` change, the log is written to `logs/server.log`.
 
-`server.ini` и `meta.ini` читаются как UTF-8 (с BOM или без) или UTF-16 с BOM, поэтому название сервера по-русски задаётся прямо в файле. Имена ключей и секций нечувствительны к регистру, как в Windows.
+`server.ini` and `meta.ini` are read as UTF-8 (with or without BOM) or UTF-16 with BOM, so a server name in Russian can be set right in the file. Key and section names are case-insensitive, as on Windows.
 
 ## systemd
 
@@ -76,26 +78,26 @@ sudo chown -R dgmp:dgmp /opt/dgmp
 sudo cp /opt/dgmp/docs/dgmp-server.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now dgmp-server
-journalctl -u dgmp-server -f        # живой журнал
-sudo systemctl restart dgmp-server  # после смены режима в server.ini
+journalctl -u dgmp-server -f        # live log
+sudo systemctl restart dgmp-server  # after changing the mode in server.ini
 ```
 
-Режим и порт задаются в `ExecStart` юнита (`tools/dgmp-server.service`) или в `/opt/dgmp/server.ini`. Под systemd консоли нет; правки режимов подхватываются автоматически, для остального — перезапуск сервиса. Если нужна консоль, запускайте сервер в `tmux`, а не через systemd.
+The mode and port are set in the unit's `ExecStart` (`tools/dgmp-server.service`) or in `/opt/dgmp/server.ini`. Under systemd there is no console; mode edits are picked up automatically, for anything else restart the service. If you need a console, run the server in `tmux`, not through systemd.
 
-## Файрвол
+## Firewall
 
-Сервер слушает **UDP** (по умолчанию 7777; один и тот же порт для игры и для запросов статуса из лаунчера). TCP не нужен.
+The server listens on **UDP** (7777 by default; the same port for the game and for status queries from the launcher). TCP is not needed.
 
 ```bash
-sudo ufw allow 7777/udp                                                        # Ubuntu / Debian с ufw
+sudo ufw allow 7777/udp                                                        # Ubuntu / Debian with ufw
 sudo firewall-cmd --permanent --add-port=7777/udp && sudo firewall-cmd --reload  # Fedora / RHEL
 ```
 
-У многих провайдеров VPS есть свой сетевой фильтр (security group / firewall в панели) — там тоже откройте UDP 7777. Для нескольких серверов на одной машине у каждого свой `--port` и свой открытый порт.
+Many VPS providers have their own network filter (a security group / firewall in the panel) — open UDP 7777 there too. For several servers on one machine, each has its own `--port` and its own open port.
 
-## Падения
+## Crashes
 
-При падении в `logs/server.log` пишется `CRASH: signal ...` и стек вызовов. У кадров вида `dgmp-server(+0x1a2b3)` имени функции нет; функцию и строку исходника по смещению даёт:
+On a crash `CRASH: signal ...` and a call stack are written to `logs/server.log`. Frames like `dgmp-server(+0x1a2b3)` have no function name; the function and source line for the offset are given by:
 
 ```bash
 addr2line -f -C -e dgmp-server 0x1a2b3

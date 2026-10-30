@@ -1,10 +1,12 @@
-# Облики персонажей
+**English** · [Русский](looks.ru.md)
 
-Готовые облики игры для `player:setLook(имя)`. Сгенерировано из архива игры (926 шт.).
+# Character looks
 
-- `npc_male`, `npc_female` — обычные люди: префиксы `m_sur_`/`f_sur_` выжившие лагерей, `m_rip_` рипперы, `m_can_`/`f_can_` мародёры, `m_mil_` военные и т. д.
-- `Deacon` — варианты главного героя; именованные папки — сюжетные персонажи.
-- `Freaker`, `deadbody` — фрики и тела: как облик игрока они не предназначены.
+Ready-made game looks for `player:setLook(name)`. Generated from the game archive (926 items).
+
+- `npc_male`, `npc_female` — ordinary people: the prefixes `m_sur_`/`f_sur_` are camp survivors, `m_rip_` Rippers, `m_can_`/`f_can_` marauders, `m_mil_` military, etc.
+- `Deacon` — variants of the main character; named folders are story characters.
+- `Freaker`, `deadbody` — freakers and bodies: they are not meant to be a player's look.
 
 ## Addy (4)
 

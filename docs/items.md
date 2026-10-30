@@ -1,11 +1,13 @@
-# Ключи предметов Days Gone
+**English** · [Русский](items.ru.md)
 
-Список выгружен из игры (менеджер предметов `BP_InventoryItemMgr_C`, 1369 определений). Используйте ключи в `player:giveItem`, `takeItem`, `giveWeapon`, `setAmmo`, `itemCount` и в таблице `player:inventory()`.
-Регистр не важен: `kweaponid_ak47` тоже сработает.
+# Days Gone item keys
 
-## Оружие (giveWeapon / giveItem) (173)
+The list was dumped from the game (the item manager `BP_InventoryItemMgr_C`, 1369 definitions). Use the keys in `player:giveItem`, `takeItem`, `giveWeapon`, `setAmmo`, `itemCount` and in the `player:inventory()` table.
+Case does not matter: `kweaponid_ak47` works too.
 
-В списке есть и оружие NPC и фриков (когти, зубы и т. п.); игроку оно не подходит.
+## Weapons (giveWeapon / giveItem) (173)
+
+The list also includes the weapons of NPCs and freakers (claws, teeth, etc.); they are not suitable for a player.
 
 ```
 kWeaponID_1887  kWeaponID_2x4  kWeaponID_2x4_Axe  kWeaponID_2x4_Spiked  kWeaponID_AirbagConcBombTrap
@@ -49,9 +51,9 @@ kWeaponID_Thompson  kWeaponID_Torch  kWeaponID_TOZ194  kWeaponID_Tranquilizer  k
 kWeaponID_TurretMiniGun  kWeaponID_WessenPPC  kWeaponID_WolfTeeth
 ```
 
-## Боеприпасы и метательное (setAmmo / giveItem) (90)
+## Ammo and throwables (setAmmo / giveItem) (90)
 
-Количество ограничено вместимостью игрока.
+The amount is limited by the player's capacity.
 
 ```
 kAmmoID_1887  kAmmoID_AirbagBombTrap_Conc  kAmmoID_AirTaser  kAmmoID_AK47  kAmmoID_AS50
@@ -73,7 +75,7 @@ kAmmoID_SMP9  kAmmoID_SniperRifle  kAmmoID_SteyrAug  kAmmoID_SubMachineGun  kAmm
 kAmmoID_TheMayor  kAmmoID_Thompson  kAmmoID_TOZ194  kAmmoID_Tranquilizer
 ```
 
-## Расходники: аптечки, бинты, травы (46)
+## Consumables: medkits, bandages, herbs (46)
 
 ```
 kConsumableID_Bandage_Large  kConsumableID_Bandage_Small  kConsumableID_Berry  kConsumableID_Berry_Bearberry
@@ -93,9 +95,9 @@ kConsumableID_Mushroom_Horn_Of_Plenty  kConsumableID_Mushroom_Ink_Cap  kConsumab
 kConsumableID_Mushroom_Larch_Bolete  kConsumableID_Mushroom_Mica_Cap  kConsumableID_Mushroom_Scaly_Hedgehog
 ```
 
-## Прочие предметы: материалы для крафта, скрап, квестовые (174)
+## Other items: crafting materials, scrap, quest items (174)
 
-Материалы: kCraftComponentID_*, деньги лагерей и скрап: kUtilityID_*.
+Materials: kCraftComponentID_*, camp currency and scrap: kUtilityID_*.
 
 ```
 kCraftComponentID_AirBag  kCraftComponentID_AlarmClock  kCraftComponentID_Bottle_Beer
@@ -153,7 +155,7 @@ kUtilityID_Wedding_Ring_Pair  kUtilityID_Wheeler_PocketWatch  kUtilityID_WigWamM
 kUtilityID_Wristwatch
 ```
 
-## Рецепты крафта (33)
+## Crafting recipes (33)
 
 ```
 kRecipeID_2x4Axe  kRecipeID_AirbagBomb  kRecipeID_Attractor  kRecipeID_AttractorGrenade  kRecipeID_BatAxe
@@ -166,7 +168,7 @@ kRecipeID_SpikedFencePost  kRecipeID_SpikedStoolLeg  kRecipeID_StaminaCocktail  
 kRecipeID_SuperiorClub  kRecipeID_Taser
 ```
 
-## Детали оружия (глушители и т. п.) (99)
+## Weapon parts (silencers, etc.) (99)
 
 ```
 kWeaponPartID_226Magazine  kWeaponPartID_226Silencer  kWeaponPartID_AK47ScopeFixed
@@ -206,9 +208,9 @@ kWeaponPartID_SilencerMerchantOilCan  kWeaponPartID_SilencerMerchantOilCanBetter
 kWeaponPartID_SilencerSmall
 ```
 
-## Навыки (61)
+## Skills (61)
 
-Выдаются как предметы; поведение навыков в DGMP пока не проверялось.
+Granted as items; the behavior of skills in DGMP has not been verified yet.
 
 ```
 kSkillID_ACTNATURAL  kSkillID_ADRENALINERUSH  kSkillID_BOBANDWEAVE  kSkillID_CARRYMAXAMMO
@@ -228,9 +230,9 @@ kSkillID_THEREAREMANYLIKEITBUTTHISONEISMINE  kSkillID_THEWOLFWASHERE
 kSkillID_THINGSYOUNEVERKNEWYOUNEVERKNEW  kSkillID_TRACKQUARRY  kSkillID_WEAKHANDRELOADING  kSkillID_WHAMBAM
 ```
 
-## Детали мотоцикла (430)
+## Motorcycle parts (430)
 
-Выдача деталей мотоцикла пока не проверялась.
+Granting motorcycle parts has not been verified yet.
 
 ```
 kMotorcyclePartID_AirIntake1  kMotorcyclePartID_AirIntake2  kMotorcyclePartID_AirIntake3
@@ -418,7 +420,7 @@ kMotorcyclePartID_Windscreen1  kMotorcyclePartID_Windscreen2  kMotorcyclePartID_
 kMotorcyclePartID_Windscreen4
 ```
 
-## Коллекционные предметы (247)
+## Collectibles (247)
 
 ```
 kCollectibleID_45th_Parallel  kCollectibleID_Balloon_Bomb  kCollectibleID_Belknap_Caves

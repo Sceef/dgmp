@@ -179,7 +179,7 @@ Examples to start from:
 
 Shared libraries for modes (`logic`, `quest`, `jobs`, `rpchat`, `inventory`, `race`, `interact` — the player menu, `squad` — squads, `trade` — trading, `medic` — help for the wounded, `instance` — duels and arenas) are in `modes/_lib/`.
 
-Documentation (in Russian for now):
+Documentation (every page also has a Russian version, `*.ru.md`):
 
 - [`docs/API.md`](docs/API.md) — the server Lua API: events, players, vehicles, NPCs, objects, HUD, storage, HTTP, bans, anti-cheat, `server.ini`.
 - [`docs/client-lua.md`](docs/client-lua.md) — client scripts (`modes/<id>/client/`).

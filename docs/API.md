@@ -1,27 +1,29 @@
-# DGMP — Lua API для режимов
+**English** · [Русский](API.ru.md)
 
-Режим — это папка `modes/<id>/` с файлом `main.lua` и описанием `meta.ini`. Сервер (`dgmp-server.exe`) загружает выбранный режим, а все клиенты подключаются к нему. Скрипты выполняются на сервере, игроки видят результат: сообщения, подсказки, телепорты, выданные предметы. Часть режима может работать и в игре у каждого игрока: клиентские скрипты из `modes/<id>/client/` (свой HUD, клавиши, лучи из камеры — без задержки сети), см. [«Клиентские скрипты»](#клиентские-скрипты) и [`docs/client-lua.md`](client-lua.md).
+# DGMP — Lua API for modes
 
-Готовый пример — [`modes/freeroam/main.lua`](../modes/freeroam/main.lua). Список ключей предметов — [`docs/items.md`](items.md), обликов персонажей — [`docs/looks.md`](looks.md).
+A mode is a folder `modes/<id>/` with a `main.lua` file and a `meta.ini` description. The server (`dgmp-server.exe`) loads the selected mode, and all clients connect to it. Scripts run on the server; players see the result: messages, hints, teleports, issued items. Part of a mode can also run in the game on each player's machine: client scripts from `modes/<id>/client/` (your own HUD, keys, rays from the camera — without network delay), see ["Client scripts"](#client-scripts) and [`docs/client-lua.md`](client-lua.md).
 
-### Примеры режимов
+A ready-made example is [`modes/freeroam/main.lua`](../modes/freeroam/main.lua). The list of item keys is [`docs/items.md`](items.md), of character looks — [`docs/looks.md`](looks.md).
 
-| Режим | Что показывает |
+### Example modes
+
+| Mode | What it shows |
 |---|---|
-| [`freeroam`](../modes/freeroam/main.lua) | основа: чат и команды, скины, телепорты, время и погода, инвентарь, админ-команды |
-| [`rp`](../modes/rp/main.lua) | **основа RP-сервера**: аккаунты по Steam (деньги и место сохраняются), RP-чат `/me /do /try`, PayDay, оружейный магазин с защищёнными предметами, больница, анимации `/sit /hands`, `/pay`, админ-команды, работы из `quests/`. Магазин (`gunshop`), больницу (`hospital`) и точки `spawn` ставят в редакторе |
-| [`race`](../modes/race/main.lua) | гонки на мотоциклах по чекпоинтам из редактора (точки логики) |
-| [`loader`](../modes/loader/main.lua) | **работа грузчиком**: NPC-бригадир, форма, личные маркеры и строка на экране, ящики для переноски, сдача груза, оплата деньгами при сдаче смены (см. «Переноска» → «Работа: пример») |
-| [`htmlui`](../modes/htmlui/main.lua) | **HTML-интерфейс**: панель статуса поверх игры и «телефон» на F2 (`ui/index.html`, `app.js`): кнопки и поле ввода шлют сообщения в Lua, Lua отвечает странице |
-| [`clientdemo`](../modes/clientdemo) | **клиентские скрипты** (`client/main.lua` в игре у игрока): спидометр и компас поверх игры, имя игрока под прицелом и G — помахать ему (сервер проверяет расстояние), локальные `/fps` и `/ping` |
-| [`zombies`](../modes/zombies/main.lua) | **зомби** (`server.ini` `Zombies=1`): зона зомби у спавна (или из редактора), `/horde` — стая перед игроком, награда за убийство |
-| [`inventory`](../modes/inventory/main.lua) | **свой инвентарь и ловушки**: рюкзак 30 кг (сохраняется), багажник мотоцикла, канистры (F — взять, «Заправить»), мина, капкан и растяжка из рюкзака ставятся прицелом с призраком (клиентский скрипт), `/boom` — взрыв |
-| [`outpost`](../modes/outpost/README.md) | **Рубеж — RP-режим публичного тестового сервера**: регистрация, профессии и смены, магазин, склад, переноска, экспедиции; меню игрока (F на игроке): отряд, обмен, рация, деньги, медик, документы, обыск, связать, дуэль; ранение вместо смерти и медики (`modes/outpost/social.lua`) |
-| [`questtest`](../modes/questtest/main.lua) | запуск квеста из `quests/<id>.json` (кнопка «Проверить» в редакторе квестов) |
+| [`freeroam`](../modes/freeroam/main.lua) | the basics: chat and commands, skins, teleports, time and weather, inventory, admin commands |
+| [`rp`](../modes/rp/main.lua) | **the base of an RP server**: Steam accounts (money and position are saved), RP chat `/me /do /try`, PayDay, a gun shop with protected items, a hospital, animations `/sit /hands`, `/pay`, admin commands, jobs from `quests/`. The shop (`gunshop`), the hospital (`hospital`) and the `spawn` points are placed in the editor |
+| [`race`](../modes/race/main.lua) | motorcycle races through checkpoints from the editor (logic points) |
+| [`loader`](../modes/loader/main.lua) | **a loader job**: an NPC foreman, a uniform, personal markers and an on-screen line, crates to carry, cargo delivery, pay in money at the end of the shift (see "Carrying" → "A job: example") |
+| [`htmlui`](../modes/htmlui/main.lua) | **HTML interface**: a status panel over the game and a "phone" on F2 (`ui/index.html`, `app.js`): buttons and an input field send messages to Lua, Lua replies to the page |
+| [`clientdemo`](../modes/clientdemo) | **client scripts** (`client/main.lua` in the player's game): a speedometer and a compass over the game, the name of the player under the crosshair and G to wave at them (the server checks the distance), local `/fps` and `/ping` |
+| [`zombies`](../modes/zombies/main.lua) | **zombies** (`server.ini` `Zombies=1`): a zombie zone at the spawn (or from the editor), `/horde` — a pack in front of the player, a reward for kills |
+| [`inventory`](../modes/inventory/main.lua) | **the mode's own inventory and traps**: a 30 kg backpack (saved), a motorcycle trunk, fuel canisters (F — pick up, "Refuel"), a mine, a bear trap and a tripwire from the backpack are placed by aiming with a ghost preview (client script), `/boom` — an explosion |
+| [`outpost`](../modes/outpost/README.md) | **Rubezh — the RP mode of the public test server**: registration, professions and shifts, a shop, a warehouse, carrying, expeditions; the player menu (F on a player): squad, trade, radio, money, medic, documents, search, tie up, duel; the downed state instead of death, and medics (`modes/outpost/social.lua`) |
+| [`questtest`](../modes/questtest/main.lua) | runs a quest from `quests/<id>.json` (the "Test" button in the quest editor) |
 
-Запуск любого: `dgmp-server.exe --mode <id>` или «Создать сервер» в лаунчере.
+Run any of them: `dgmp-server.exe --mode <id>` or "Host a server" in the launcher.
 
-## Быстрый старт
+## Quick start
 
 ```
 modes/
@@ -34,241 +36,241 @@ modes/
 ```ini
 [Mode]
 Name=My RP
-Description=Лагерь выживших, вылазки и задания.
-Author=Ник
+Description=A camp of survivors, runs and objectives.
+Author=Nick
 Version=0.1
 ```
 
 `main.lua`:
 ```lua
 on("playerJoin", function(player)
-    player:message("Добро пожаловать, " .. player.name .. "!", "#7CD67C")
-    player:takeWeapons({ knife = true, rock = true })   -- старт без оружия
+    player:message("Welcome, " .. player.name .. "!", "#7CD67C")
+    player:takeWeapons({ knife = true, rock = true })   -- start unarmed
     player:giveItem("kConsumableID_Bandage_Small", 2)
-    player:hint("ЛАГЕРЬ", "Найдите старосту у костра, чтобы получить первое задание.")
+    player:hint("CAMP", "Find the elder by the campfire to get your first objective.")
 end)
 
 command("kit", function(player)
     player:giveWeapon("kWeaponID_M9", 30)
-    player:tip("Вы получили пистолет.", 4)
+    player:tip("You got a pistol.", 4)
 end)
 ```
 
-Запуск: в лаунчере выберите «Создать сервер» и режим или выполните `dgmp-server.exe --mode myrp`. Сохранили файл — режим **перезагрузился сам**, перезапускать сервер не нужно. Ошибки скриптов пишутся в консоль сервера и в `logs/server.log`.
+To run: in the launcher choose "Host a server" and the mode, or run `dgmp-server.exe --mode myrp`. Once you save the file, the mode **reloads by itself**; there is no need to restart the server. Script errors are written to the server console and to `logs/server.log`.
 
-## Единицы и соглашения
+## Units and conventions
 
-- Координаты — единицы Unreal: **100 = 1 метр**. Те же, что в оверлее редактора (F2 / F5).
-- `yaw` — поворот в градусах.
-- Цвет — строка `"#RRGGBB"` или число `0xRRGGBB`.
-- Время суток — часы `[0, 24)`: `18.5` = 18:30.
+- Coordinates are Unreal units: **100 = 1 meter**. The same as in the editor overlay (F2 / F5).
+- `yaw` is the rotation in degrees.
+- Color is a `"#RRGGBB"` string or a `0xRRGGBB` number.
+- Time of day is hours in `[0, 24)`: `18.5` = 18:30.
 
-## События — `on(name, fn)`
+## Events — `on(name, fn)`
 
-У одного события может быть несколько обработчиков, они вызываются по порядку.
+One event can have several handlers; they are called in order.
 
-| Событие | Аргументы | Примечание |
+| Event | Arguments | Note |
 |---|---|---|
-| `start` | — | режим загружен (в том числе после перезагрузки) |
-| `stop` | — | режим выгружается |
-| `playerConnecting` | `info` | игрок входит: пароль, баны и проверка Steam пройдены, но его ещё нет на сервере. `info`: `name`, `steamId` (только подтверждённый Steam), `verified`, `ip`. `return false` или строка — не пускать (строку он увидит как причину). Белый список, анкеты, лимит по IP |
-| `playerJoin` | `player` | после перезагрузки режима вызывается для всех, кто уже на сервере |
-| `playerQuit` | `player, reason` | `reason`: `"left"`, `"timeout"`, `"kicked"`. Методы игрока ещё работают |
-| `chat` | `player, text` | `return false` — сообщение не будет отправлено |
-| `tick` | `dt` | ~30 раз в секунду; `dt` в секундах |
-| `console` | `line` | строка из консоли сервера; `return true` — обработана режимом |
-| `inventoryChange` | `player` | инвентарь игрока изменился (клиент присылает снимок раз в 2 с) |
-| `gameEvent` | `player, ev` | игрок что-то сделал в мире (см. «Игровые события») |
-| `markerEnter` / `markerLeave` | `player, markerId` | игрок вошёл в радиус маркера / вышел (у маркера можно отключить: `track = false`) |
-| `playerDeath` | `player, inventory` | игрок погиб (без перезагрузки игры: экран «Возрождение», здоровье восстанавливается). Рюкзак остаётся; `inventory` — `{key = count}` на момент смерти. Чтобы что-то отнять: `player:restoreInventory(inventory, {drop = {"kWeaponID_", "kAmmoID_"}})` или `takeItem` |
-| `playerRespawn` | `player` | игрок погиб. Пока он под экраном «Возрождение», режим выбирает место: `player:setPosition(...)` и `return true` (больница, дом...). Без `return true` сервер ставит его на точку спавна |
-| `playerInteract` | `player, target` | игрок нажал клавишу меню игрока, глядя на `target` (см. «Меню игрока»; обычно его обрабатывает библиотека `interact`) |
-| `playerDowned` | `player, attacker` | смертельный удар при `setDeathMode("downed")`: игрок упал раненым (`attacker` — игрок или `nil`). `return false` — он сразу погибает, как обычно (см. «Ранение») |
-| `playerBleedout` | `player` | раненый истёк кровью; дальше `playerDeath` и `playerRespawn` |
-| `playerHelp` | `player` | раненый нажал H — зовёт помощь (не чаще раза в 10 с) |
-| `playerDamage` | `victim, attacker, damage, info` | игрок попал в другого (`info.zone`: `"body"`, `"head"`, `"arm"`, `"leg"`; `info.weapon`). Вызывается, только если урон разрешён правилами PvP (см. «PvP и зоны»). Вернуть число — новый урон, `false` — отменить |
-| `vehicleEnter` | `player, vehicleId, allowed, passenger` | игрок нажал E у транспорта режима. `allowed` — что решил замок; `passenger` — садится сзади (за рулём уже кто-то есть). `return false` — не пускать, `return true` — пустить даже в запертый (см. «Транспорт») |
-| `vehicleExit` | `player, vehicleId` | игрок слез с транспорта режима (водитель или пассажир) |
-| `vehicleArrive` | `vehicleId` | вертолёт долетел до последней точки и сел (см. «Вертолёт») |
-| `zoneEnter` / `zoneLeave` | `player, zone` | игрок вошёл в зону / вышел (в том числе когда зону выключили или убрали). `zone` — таблица зоны (см. «PvP и зоны») |
-| `cheat` | `player, kind, info` | античит поймал невозможное (см. «Античит»). `info`: `detail`, `strikes` — сколько за минуту. `return true` — режим разбирается сам, сервер не кикает |
-| `inventoryViolation` | `player, v` | у игрока больше защищённого предмета, чем выдал сервер (см. «Античит»). `v`: `item`, `have`, `allowed`, `pickedUp` (игра только что сообщила о подборе такого предмета). `return true` — оставить, иначе лишнее забирается |
-| `carryPick` | `player, carryId` | игрок зажал F у ящика и хочет его поднять. `return false` — не давать (см. «Переноска») |
-| `playerShot` | `player, shot` | игрок выстрелил (не чаще двух раз в секунду на игрока): `shot.weapon` — класс оружия, `x, y, z`. Например, тревога в городе или розыск |
-| `voice` | `player, talking, how` | игрок начал / перестал говорить: `how` — `"talk"` или `"radio"`. `return false` в начале — его не услышат (см. «Голосовой чат») |
-| `voiceIgnore` | `player, target, on` | игрок заглушил `target` у себя в списке Tab (`on = true`) или вернул звук (см. «Голосовой чат») |
-| `objectMoved` | `id` | объект доехал до цели `moveObject` (см. «Объекты») |
-| `animEnd` | `player, reason` | анимация `playAnim` кончилась: `"done"` — доиграла (или игрок погиб), `"moved"` — игрок пошёл (`stopOnMove`) |
-| `uiMessage` | `player, name, data` | страница режима прислала `dgmp.send(name, data)` (см. «HTML-интерфейс»). `data` — таблица/строка/число/`nil` из JSON. Не больше 30 в секунду от игрока |
-| `carryDrop` | `player, carryId, info` | ящик покинул руки игрока. `info`: `x, y, z`, `reason`: `"put"` — игрок сам кладёт его сюда (`return false` — не класть, ящик остаётся в руках); `"lost"` — игра выбила его из рук (удар, мотоцикл, паркур), `"roll"` — выпал при перекате, `"death"`, `"quit"` — сообщается уже после, ящик лежит там; `"break"` — разбился при перекате: после обработчика ящик удаляется (если обработчик не переставил его через `setCarry`) |
+| `start` | — | the mode is loaded (including after a reload) |
+| `stop` | — | the mode is being unloaded |
+| `playerConnecting` | `info` | a player is joining: password, bans and the Steam check are passed, but they are not on the server yet. `info`: `name`, `steamId` (only a verified Steam ID), `verified`, `ip`. `return false` or a string — refuse entry (the string is shown to them as the reason). Whitelist, applications, a per-IP limit |
+| `playerJoin` | `player` | after a mode reload it is called for everyone already on the server |
+| `playerQuit` | `player, reason` | `reason`: `"left"`, `"timeout"`, `"kicked"`. The player's methods still work |
+| `chat` | `player, text` | `return false` — the message will not be sent |
+| `tick` | `dt` | ~30 times a second; `dt` in seconds |
+| `console` | `line` | a line from the server console; `return true` — handled by the mode |
+| `inventoryChange` | `player` | the player's inventory changed (the client sends a snapshot once every 2 s) |
+| `gameEvent` | `player, ev` | the player did something in the world (see "Game events") |
+| `markerEnter` / `markerLeave` | `player, markerId` | the player entered / left the marker's radius (can be disabled per marker: `track = false`) |
+| `playerDeath` | `player, inventory` | the player died (without reloading the game: the "Respawning" screen, health is restored). The backpack stays; `inventory` is `{key = count}` at the moment of death. To take something away: `player:restoreInventory(inventory, {drop = {"kWeaponID_", "kAmmoID_"}})` or `takeItem` |
+| `playerRespawn` | `player` | the player died. While they are on the "Respawning" screen, the mode picks the place: `player:setPosition(...)` and `return true` (hospital, home...). Without `return true` the server puts them at the spawn point |
+| `playerInteract` | `player, target` | the player pressed the player-menu key while looking at `target` (see "Player menu"; usually handled by the `interact` library) |
+| `playerDowned` | `player, attacker` | a lethal hit with `setDeathMode("downed")`: the player went down wounded (`attacker` is a player or `nil`). `return false` — they die at once, as usual (see "Downed state") |
+| `playerBleedout` | `player` | the downed player bled out; `playerDeath` and `playerRespawn` follow |
+| `playerHelp` | `player` | the downed player pressed H — calls for help (no more than once per 10 s) |
+| `playerDamage` | `victim, attacker, damage, info` | a player hit another one (`info.zone`: `"body"`, `"head"`, `"arm"`, `"leg"`; `info.weapon`). Called only if the damage is allowed by the PvP rules (see "PvP and zones"). Return a number — the new damage, `false` — cancel |
+| `vehicleEnter` | `player, vehicleId, allowed, passenger` | the player pressed E at a mode vehicle. `allowed` is what the lock decided; `passenger` — they sit in the back (someone is already at the wheel). `return false` — do not let them in, `return true` — let them in even if it is locked (see "Vehicles") |
+| `vehicleExit` | `player, vehicleId` | the player got off a mode vehicle (driver or passenger) |
+| `vehicleArrive` | `vehicleId` | the helicopter reached the last point and landed (see "Helicopter") |
+| `zoneEnter` / `zoneLeave` | `player, zone` | the player entered / left a zone (including when the zone was disabled or removed). `zone` is the zone table (see "PvP and zones") |
+| `cheat` | `player, kind, info` | the anti-cheat caught something impossible (see "Anti-cheat"). `info`: `detail`, `strikes` — how many within a minute. `return true` — the mode handles it itself, the server does not kick |
+| `inventoryViolation` | `player, v` | the player has more of a protected item than the server issued (see "Anti-cheat"). `v`: `item`, `have`, `allowed`, `pickedUp` (the game has just reported picking up such an item). `return true` — keep it, otherwise the excess is taken away |
+| `carryPick` | `player, carryId` | the player held F at a crate and wants to pick it up. `return false` — do not allow (see "Carrying") |
+| `playerShot` | `player, shot` | the player fired a shot (no more than twice a second per player): `shot.weapon` is the weapon class, `x, y, z`. For example, a city alarm or a wanted level |
+| `voice` | `player, talking, how` | the player started / stopped talking: `how` is `"talk"` or `"radio"`. `return false` at the start — they will not be heard (see "Voice chat") |
+| `voiceIgnore` | `player, target, on` | the player muted `target` in their Tab list (`on = true`) or restored the sound (see "Voice chat") |
+| `objectMoved` | `id` | an object reached the target of `moveObject` (see "Objects") |
+| `animEnd` | `player, reason` | the `playAnim` animation ended: `"done"` — it finished playing (or the player died), `"moved"` — the player moved (`stopOnMove`) |
+| `uiMessage` | `player, name, data` | the mode's page sent `dgmp.send(name, data)` (see "HTML interface"). `data` is a table / string / number / `nil` from JSON. No more than 30 per second per player |
+| `carryDrop` | `player, carryId, info` | the crate left the player's hands. `info`: `x, y, z`, `reason`: `"put"` — the player puts it down here themselves (`return false` — do not put it down, the crate stays in their hands); `"lost"` — the game knocked it out of their hands (a hit, a motorcycle, parkour), `"roll"` — it fell out during a roll, `"death"`, `"quit"` — reported after the fact, the crate is lying there; `"break"` — it broke during a roll: after the handler the crate is deleted (unless the handler moved it with `setCarry`) |
 
-## Команды чата — `command(name, fn)`
+## Chat commands — `command(name, fn)`
 
 ```lua
 command("tp", function(player, args, target)   -- "/tp Raud"
-    -- args   = вся строка после команды
-    -- target = первое слово, дальше следуют остальные слова
+    -- args   = the whole string after the command
+    -- target = the first word, the rest of the words follow
 end)
 ```
 
-Имя без `/` и без учёта регистра. Неизвестная команда — игроку придёт «Unknown command».
+The name is without `/` and case-insensitive. For an unknown command the player gets "Unknown command".
 
-## Глобальные функции
+## Global functions
 
-| Функция | Описание |
+| Function | Description |
 |---|---|
-| `players()` | массив всех игроков, включая ботов |
-| `getPlayer(id or name)` | игрок или `nil` |
-| `broadcast(text [, color])` | сообщение в чат всем |
-| `hint(title, text [, image [, pause]])` | окно подсказки игры всем (см. «Подсказки») |
-| `tip(text [, seconds = 5])` | «Совет по выживанию» внизу экрана всем |
-| `setTime(hours [, paused])` | время суток у всех; игроки, вошедшие позже, тоже его получат |
-| `setWeather(id or "auto")` | погода: id пресета или автоматическая смена |
-| `setNametags("visible" or "walls" or "hidden")` | ники над игроками: скрываются за стенами / видны сквозь стены / скрыты |
-| `now()` | секунды с запуска сервера |
-| `after(ms, fn)` → id | один раз через `ms` миллисекунд |
-| `every(ms, fn)` → id | повторять каждые `ms` (не чаще 10 мс) |
-| `cancelTimer(id)` | отменить таймер |
-| `sha256(text)` | hex-хеш. Для паролей не годится — используйте `passwordHash` |
-| `passwordHash(password)` / `passwordCheck(password, hash)` | хеш пароля для хранения (PBKDF2-SHA256 с солью, ~30 мс) / проверка |
-| `http.get(url, cb)`, `http.post(url, body, cb [, type])`, `http.request{...}` | запросы в интернет (см. «HTTP и JSON») |
-| `json.encode(value)` / `json.decode(text)` | таблица ↔ текст JSON |
-| `ban(target [, minutes [, reason]])` | бан: игрок, SteamID, IP или ник (см. «Steam, админы и баны») |
-| `unban(text)` → число | снять баны по SteamID, IP или нику; вернёт, сколько снято |
-| `bans()` | список банов: `{steamId, ip, name, reason, by, at, expires}` (время Unix; `expires` 0 — навсегда) |
-| `protectItems(prefixes)` / `protectedItems()` | предметы, которые выдаёт только сервер (см. «Античит») |
-| `createMarker(opts)` → id | квестовый маркер в мире, на карте и радаре (см. «Маркеры») |
-| `removeMarker(id)` | убрать маркер |
-| `objective(opts)` | панель задания у всех (см. «Задания») |
-| `spawnItem(opts)` → id | положить предмет в мир (см. «Предметы в мире») |
-| `despawnItem(id)` | убрать предмет |
-| `createVehicle(opts)` → id | транспорт режима (см. «Транспорт») |
-| `setVehicle(id, opts)` / `removeVehicle(id)` | изменить / убрать транспорт |
-| `vehicleInfo(id)` / `vehicles()` | транспорт / все транспорты режима |
-| `driveVehicle(id, opts)` / `stopVehicle(id)` | полёт вертолёта по точкам / посадка там, где он сейчас (см. «Вертолёт») |
-| `createIcon(opts)` → id | картинка над точкой мира (см. «Картинки») |
-| `setIcon(id, opts)` / `removeIcon(id)` | изменить / убрать картинку |
-| `looks([filter])` | имена обликов из каталога; фильтр по пути, например `looks("npc_female")` или `looks("boozer")` |
-| `log(...)`, `print(...)` | вывод в консоль и лог сервера |
-| `require("name")` | модуль из папки режима или из общей папки `modes/_lib` |
+| `players()` | an array of all players, including bots |
+| `getPlayer(id or name)` | a player or `nil` |
+| `broadcast(text [, color])` | a chat message to everyone |
+| `hint(title, text [, image [, pause]])` | the game's hint window to everyone (see "Hints") |
+| `tip(text [, seconds = 5])` | a "Survival tip" at the bottom of the screen to everyone |
+| `setTime(hours [, paused])` | time of day for everyone; players who join later get it too |
+| `setWeather(id or "auto")` | weather: a preset id or automatic change |
+| `setNametags("visible" or "walls" or "hidden")` | nicknames over players: hidden behind walls / visible through walls / hidden |
+| `now()` | seconds since the server started |
+| `after(ms, fn)` → id | once after `ms` milliseconds |
+| `every(ms, fn)` → id | repeat every `ms` (no more often than 10 ms) |
+| `cancelTimer(id)` | cancel a timer |
+| `sha256(text)` | a hex hash. Not suitable for passwords — use `passwordHash` |
+| `passwordHash(password)` / `passwordCheck(password, hash)` | a password hash for storage (PBKDF2-SHA256 with salt, ~30 ms) / verification |
+| `http.get(url, cb)`, `http.post(url, body, cb [, type])`, `http.request{...}` | requests to the internet (see "HTTP and JSON") |
+| `json.encode(value)` / `json.decode(text)` | table ↔ JSON text |
+| `ban(target [, minutes [, reason]])` | a ban: a player, SteamID, IP or nickname (see "Steam, admins and bans") |
+| `unban(text)` → number | lift bans by SteamID, IP or nickname; returns how many were lifted |
+| `bans()` | the list of bans: `{steamId, ip, name, reason, by, at, expires}` (Unix time; `expires` 0 — permanent) |
+| `protectItems(prefixes)` / `protectedItems()` | items that only the server issues (see "Anti-cheat") |
+| `createMarker(opts)` → id | a quest marker in the world, on the map and the radar (see "Markers") |
+| `removeMarker(id)` | remove a marker |
+| `objective(opts)` | the objective panel for everyone (see "Objectives") |
+| `spawnItem(opts)` → id | put an item into the world (see "World items") |
+| `despawnItem(id)` | remove an item |
+| `createVehicle(opts)` → id | a mode vehicle (see "Vehicles") |
+| `setVehicle(id, opts)` / `removeVehicle(id)` | change / remove a vehicle |
+| `vehicleInfo(id)` / `vehicles()` | a vehicle / all of the mode's vehicles |
+| `driveVehicle(id, opts)` / `stopVehicle(id)` | fly a helicopter along points / land where it is now (see "Helicopter") |
+| `createIcon(opts)` → id | an image over a point in the world (see "Images") |
+| `setIcon(id, opts)` / `removeIcon(id)` | change / remove an image |
+| `looks([filter])` | look names from the catalog; a filter by path, for example `looks("npc_female")` or `looks("boozer")` |
+| `log(...)`, `print(...)` | output to the server console and log |
+| `require("name")` | a module from the mode's folder or from the shared folder `modes/_lib` |
 
-### Таблица `server`
+### The `server` table
 
-`server.name`, `server.mode`, `server.maxPlayers`, `server.spawn` (`{x, y, z, yaw}` из `server.ini`).
+`server.name`, `server.mode`, `server.maxPlayers`, `server.spawn` (`{x, y, z, yaw}` from `server.ini`).
 
-## Игрок
+## Player
 
-Объект игрока передаётся в события и команды. Если игрок вышел, обращение к методам вызывает ошибку «player has left». Проверить можно через `player.valid`.
+The player object is passed to events and commands. If the player has left, calling its methods raises the error "player has left". You can check with `player.valid`.
 
-### Поля
+### Fields
 
-| Поле | Тип | Описание |
+| Field | Type | Description |
 |---|---|---|
-| `id` | число | номер на сервере (освобождается после выхода) |
-| `name` | строка | ник |
-| `bot` | bool | бот сервера (команда консоли `bot`) |
-| `admin` | bool | SteamID в `Admins` в `server.ini`, вход с этого же компьютера, `/rcon login` или `setAdmin` |
-| `steamId` | строка | SteamID64, если Steam подтвердил аккаунт; иначе `nil` (см. «Steam, админы и баны») |
-| `verified` | bool | Steam подтвердил аккаунт игрока |
-| `ip` | строка | адрес, с которого он подключён |
-| `hasBike` | bool | у игрока есть свой мотоцикл |
-| `look` | строка | имя облика, который на игроке (`nil`, пока клиент его не сообщил) |
-| `ping` | число | мс |
-| `valid` | bool | игрок ещё на сервере |
-| `data` | таблица | хранилище режима для этого игрока; очищается при выходе |
-| `world` | число | виртуальный мир (см. «Виртуальные миры») |
-| `vehicle` | число | транспорт режима, на котором игрок сидит (за рулём или сзади), или `nil` |
-| `carrying` | число | ящик в руках (см. «Переноска») или `nil` |
-| `money` | число | деньги игрока (см. «Деньги») |
-| `anim` | строка | анимация, которую режим сейчас играет на игроке (`playAnim`), или `nil` |
-| `health` | число | здоровье в процентах полоски игры (0..100), как его прислал клиент. Полоска показывает здоровье выше «запаса под бронёй» (35 из 135): на её нуле игрок падает или погибает |
-| `passenger` | bool | игрок сидит сзади, а не за рулём |
-| `downed` | bool | лежит раненым (см. «Ранение») |
+| `id` | number | the number on the server (freed after the player leaves) |
+| `name` | string | nickname |
+| `bot` | bool | a server bot (the `bot` console command) |
+| `admin` | bool | SteamID in `Admins` in `server.ini`, joining from this same computer, `/rcon login` or `setAdmin` |
+| `steamId` | string | SteamID64 if Steam verified the account; otherwise `nil` (see "Steam, admins and bans") |
+| `verified` | bool | Steam verified the player's account |
+| `ip` | string | the address they are connected from |
+| `hasBike` | bool | the player has their own motorcycle |
+| `look` | string | the name of the look the player is wearing (`nil` until the client reports it) |
+| `ping` | number | ms |
+| `valid` | bool | the player is still on the server |
+| `data` | table | the mode's storage for this player; cleared on exit |
+| `world` | number | virtual world (see "Virtual worlds") |
+| `vehicle` | number | the mode vehicle the player is sitting in (at the wheel or in the back), or `nil` |
+| `carrying` | number | the crate in hands (see "Carrying") or `nil` |
+| `money` | number | the player's money (see "Money") |
+| `anim` | string | the animation the mode is currently playing on the player (`playAnim`), or `nil` |
+| `health` | number | health in percent of the game's bar (0..100), as the client sent it. The bar shows health above the "under-armor reserve" (35 of 135): at its zero the player goes down or dies |
+| `passenger` | bool | the player sits in the back, not at the wheel |
+| `downed` | bool | is lying wounded (see "Downed state") |
 
-### Методы
+### Methods
 
-| Метод | Описание |
+| Method | Description |
 |---|---|
-| `message(text [, color])` | личное сообщение в чат |
-| `position()` → `x, y, z, yaw` | позиция и направление взгляда |
-| `velocity()` → `vx, vy, vz` | скорость, единицы/с |
-| `setPosition(x, y, z [, yaw])` | телепорт; дальше 200 м или верхом — с загрузкой мира и вместе с мотоциклом |
-| `isOnBike()` | едет ли на мотоцикле |
-| `kick([reason])` | выгнать с сервера |
-| `setHealth(percent)` | здоровье в процентах полоски игры; `0` — смерть (как от любой причины: `playerDeath`, экран «Возрождение», `playerRespawn`) |
-| `heal([percent = 100])` / `kill()` | вылечить / убить |
-| `setTime(hours [, paused])` / `setWeather(id or "auto")` | время суток / погода только у этого игрока (интерьер, сон, сцена); общий `setTime`/`setWeather` потом заменит их |
-| `damage(amount [, attacker])` | урон через игру (реакция на попадание); `attacker` станет убийцей |
-| `ban([reason [, minutes]])` | забанить и выгнать: по нику и Steam-аккаунту, а без подтверждённого Steam — ещё и по IP; без `minutes` или 0 — навсегда |
-| `hint(title, text [, image [, pause]])` | окно подсказки |
-| `tip(text [, seconds = 5])` | совет внизу экрана |
-| `setAdmin(bool)` | выдать или снять права администратора на эту сессию |
-| `objective(opts)` | панель задания игры у этого игрока (см. «Задания») |
-| `objectiveMeter(title, percent)` | шкала под заданием, `percent` 0..1; без аргументов — скрыть |
-| `playAnim(name [, opts])` / `stopAnim()` | анимация на игроке (см. «Анимации игрока») |
-| `playSound(name [, opts])` | звук только этому игроку (см. «Звуки») |
-| `setLook(name)` | надеть облик: имя из [`docs/looks.md`](looks.md) или путь `/Game/...`. Все игроки видят его сразу, вошедшие позже — тоже |
-| `giveMoney(amount)` → сумма / `setMoney(amount)` | деньги игрока (см. «Деньги») |
-| `giveCarry(id)` / `dropCarry([x, y, z, yaw])` | ящик в руки / из рук (см. «Переноска») |
-| `setControls({move = false, weapons = false, actions = false})` | забрать у игрока ходьбу, оружие (стрельба, прицел, ближний бой) или все действия игры (подбор, перекат, взаимодействия игры); `setControls()` — вернуть всё. Связанные руки, катсцена, досмотр |
-| `ask(text, {seconds = 15}, fn(player, yes, reason))` / `cancelAsk()` / `isAsked()` | вопрос «да / нет» внизу экрана (см. «Взаимодействия и клавиши») |
-| `revive([percent = 30])` / `setDowned({bleedout =, giveUp =})` / `finishDowned()` | поднять раненого / новое время до смерти и до «сдаться» (секунды от сейчас) / добить (см. «Ранение») |
-| `setScoreboard({...})` | ячейки игрока в списке Tab (см. «Голосовой чат») |
+| `message(text [, color])` | a private chat message |
+| `position()` → `x, y, z, yaw` | position and view direction |
+| `velocity()` → `vx, vy, vz` | speed, units/s |
+| `setPosition(x, y, z [, yaw])` | teleport; farther than 200 m or while riding — with world loading and together with the motorcycle |
+| `isOnBike()` | whether they are riding a motorcycle |
+| `kick([reason])` | kick from the server |
+| `setHealth(percent)` | health in percent of the game's bar; `0` — death (as from any cause: `playerDeath`, the "Respawning" screen, `playerRespawn`) |
+| `heal([percent = 100])` / `kill()` | heal / kill |
+| `setTime(hours [, paused])` / `setWeather(id or "auto")` | time of day / weather for this player only (interior, sleep, scene); the global `setTime`/`setWeather` will replace them later |
+| `damage(amount [, attacker])` | damage through the game (a hit reaction); `attacker` becomes the killer |
+| `ban([reason [, minutes]])` | ban and kick: by nickname and Steam account, and without a verified Steam also by IP; without `minutes` or with 0 — permanent |
+| `hint(title, text [, image [, pause]])` | a hint window |
+| `tip(text [, seconds = 5])` | a tip at the bottom of the screen |
+| `setAdmin(bool)` | grant or revoke admin rights for this session |
+| `objective(opts)` | the game's objective panel for this player (see "Objectives") |
+| `objectiveMeter(title, percent)` | a meter under the objective, `percent` 0..1; without arguments — hide |
+| `playAnim(name [, opts])` / `stopAnim()` | an animation on the player (see "Player animations") |
+| `playSound(name [, opts])` | a sound for this player only (see "Sounds") |
+| `setLook(name)` | put on a look: a name from [`docs/looks.md`](looks.md) or a `/Game/...` path. All players see it at once, and so do those who join later |
+| `giveMoney(amount)` → amount / `setMoney(amount)` | the player's money (see "Money") |
+| `giveCarry(id)` / `dropCarry([x, y, z, yaw])` | a crate into the hands / out of the hands (see "Carrying") |
+| `setControls({move = false, weapons = false, actions = false})` | take away walking, weapons (shooting, aiming, melee) or all game actions (picking up, rolling, game interactions); `setControls()` — give everything back. Tied hands, a cutscene, a search |
+| `ask(text, {seconds = 15}, fn(player, yes, reason))` / `cancelAsk()` / `isAsked()` | a yes/no question at the bottom of the screen (see "Interactions and keys") |
+| `revive([percent = 30])` / `setDowned({bleedout =, giveUp =})` / `finishDowned()` | pick up a downed player / new time until death and until "give up" (seconds from now) / finish off (see "Downed state") |
+| `setScoreboard({...})` | the player's cells in the Tab list (see "Voice chat") |
 
-### Инвентарь
+### Inventory
 
-| Метод | Описание |
+| Method | Description |
 |---|---|
-| `giveItem(key [, count = 1])` | выдать предмет |
-| `takeItem(key [, count = 1])` | забрать предмет |
-| `giveWeapon(key [, ammo [, {replace = true}]])` | выдать оружие и установить патроны к нему. Без `replace` оружие, вытесненное из слота, падает на землю, как в игре; с `replace` оно исчезает |
-| `setAmmo(key, count)` | установить количество боеприпасов. `key` — ключ патронов (`kAmmoID_*`) или оружия (тогда его тип патронов). Ограничено вместимостью |
-| `takeWeapons([opts])` | забрать всё оружие; `opts`: `{knife = true, rock = true, taser = true}` — забрать и встроенные инструменты |
-| `takeTools(opts)` | забрать только инструменты, например `{rock = true}`; без аргумента — нож, камень и шокер |
-| `clearInventory()` | очистить инвентарь полностью |
-| `inventory()` → `{key = count, ...}` | последний снимок инвентаря |
-| `itemCount(key)` | количество из снимка |
-| `restoreInventory(inv [, {drop = {...}}])` | очистить рюкзак и выдать `inv` (`{key = count}`), кроме ключей, начинающихся с префиксов из `drop` |
+| `giveItem(key [, count = 1])` | give an item |
+| `takeItem(key [, count = 1])` | take an item away |
+| `giveWeapon(key [, ammo [, {replace = true}]])` | give a weapon and set its ammo. Without `replace`, a weapon pushed out of its slot falls to the ground, as in the game; with `replace` it disappears |
+| `setAmmo(key, count)` | set the amount of ammo. `key` is an ammo key (`kAmmoID_*`) or a weapon key (then its ammo type). Limited by capacity |
+| `takeWeapons([opts])` | take away all weapons; `opts`: `{knife = true, rock = true, taser = true}` — take the built-in tools too |
+| `takeTools(opts)` | take away only the tools, for example `{rock = true}`; without an argument — the knife, the rock and the taser |
+| `clearInventory()` | clear the inventory completely |
+| `inventory()` → `{key = count, ...}` | the last inventory snapshot |
+| `itemCount(key)` | the count from the snapshot |
+| `restoreInventory(inv [, {drop = {...}}])` | clear the backpack and give `inv` (`{key = count}`), except keys that start with the prefixes from `drop` |
 
-Снимок инвентаря клиент присылает при изменениях, но не чаще раза в 2 секунды. Сразу после `giveItem` значение `itemCount` ещё старое; следите за событием `inventoryChange`.
+The client sends an inventory snapshot on changes, but no more than once every 2 seconds. Right after `giveItem`, the value of `itemCount` is still old; watch the `inventoryChange` event.
 
-### Мотоцикл
+### Motorcycle
 
-| Метод | Описание |
+| Method | Description |
 |---|---|
-| `giveBike([x, y, z, yaw])` | выдать мотоцикл игрока: рядом с ним или в указанной точке. Если мотоцикл уже есть, ничего не происходит |
-| `takeBike()` | забрать мотоцикл; если игрок за рулём, его сначала высадит. Пока мотоцикл не выдан снова, игра не вернёт его даже после быстрого перемещения |
+| `giveBike([x, y, z, yaw])` | give the player's motorcycle: next to them or at the given point. If the motorcycle already exists, nothing happens |
+| `takeBike()` | take the motorcycle away; if the player is riding, they are dismounted first. Until the motorcycle is given again, the game will not return it even after fast travel |
 
-## Облик персонажа
+## Character look
 
-В игре 926 готовых обликов: обычные люди (мужчины и женщины), варианты Дикона и сюжетные персонажи (Бузер, Сара, Рикки, Коупленд...). Облик меняется на лету: при выдаче персонажа, смене работы и т. п.
+The game has 926 ready-made looks: ordinary people (men and women), Deacon variants and story characters (Boozer, Sarah, Ricky, Copeland...). The look changes on the fly: when handing out a character, changing a job, and so on.
 
 ```lua
 on("playerJoin", function(player)
-    player:setLook("m_sur_copeland_guard_08")     -- охрана лагеря
+    player:setLook("m_sur_copeland_guard_08")     -- camp guard
 end)
 ```
 
-Ограничения:
-- Анимации у всех обликов — от Дикона, в том числе у женских.
-- Обликы фриков и тел (`Freaker`, `deadbody`) для игрока не предназначены.
-- Оружие на спине висит в точках крепления Дикона и может проходить сквозь объёмную одежду.
+Limitations:
+- Animations for all looks are Deacon's, female ones included.
+- Freaker and body looks (`Freaker`, `deadbody`) are not meant for players.
+- A weapon on the back hangs at Deacon's attachment points and may clip through bulky clothing.
 
-## Скины: свой персонаж и форма
+## Skins: your own character and uniforms
 
-У игрока два слоя облика:
-- **скин** — его персонаж. Сервер хранит скин по нику в `data/skins.json` и надевает при каждом входе;
-- **форма** — облик поверх скина (работа, фракция). Её надевают и снимают, скин при этом не меняется.
+A player has two layers of look:
+- **skin** — their character. The server stores the skin by nickname in `data/skins.json` and puts it on at every join;
+- **uniform** — a look on top of the skin (a job, a faction). It is put on and taken off; the skin does not change.
 
-Виден форма, если она надета, иначе скин.
+The uniform is visible if it is worn, otherwise the skin.
 
-### Списки режима (редактор → «Персонажи»)
+### The mode's lists (editor → "Characters")
 
-Разработчик режима сам составляет, во что могут одеться игроки: в редакторе DGMP раздел **«Персонажи»**, режим, две вкладки:
-- **«Скины на старте»** — из них игрок выбирает персонажа (`player:customize()`);
-- **«Формы»** — их режим надевает поверх скина (`player:setUniform("id")`) или даёт выбрать (`customize{list = "uniforms"}`).
+The mode developer decides what players can dress in: in the DGMP editor, the **"Characters"** section, the mode, two tabs:
+- **"Starting skins"** — the player picks a character from them (`player:customize()`);
+- **"Uniforms"** — the mode puts them on over the skin (`player:setUniform("id")`) or lets the player choose (`customize{list = "uniforms"}`).
 
-У каждой записи есть `id`, название (EN/RU) и облик. Облик собирается в редакторе персонажа на манекене перед камерой: пресет игры как есть или своя сборка из частей. Списки хранятся в `modes/<режим>/skins.json`:
+Each entry has an `id`, a name (EN/RU) and a look. The look is assembled in the character editor on a mannequin in front of the camera: a game preset as is, or your own assembly from parts. The lists are stored in `modes/<mode>/skins.json`:
 
 ```json
 {
@@ -277,263 +279,261 @@ end)
 }
 ```
 
-### Место выбора
+### The choosing place
 
-В «Персонажах» (или в «Мире» → «Логика режима» → `wardrobe`) можно поставить **место выбора скина**: точку в мире, стрелка — куда смотрит персонаж. Например, комнату под землёй из пропсов со светом. Тогда `player:customize()` переносит игрока туда, а после выбора или отмены возвращает туда, где он был (при первом входе — на спавн). Пока выбор открыт, игрок не видит других игроков, а другие не видят его: сервер разводит их, как по разным виртуальным мирам (с переноса до возврата, в том числе пока грузится место), так что двое выбирающих не стоят друг в друге и не могут ранить друг друга. `player.world` при этом не меняется. Камера не заходит за стены комнаты. Манекен в редакторе тоже встаёт на это место.
+In "Characters" (or in "World" → "Mode logic" → `wardrobe`) you can place a **skin choosing place**: a point in the world, the arrow shows where the character looks. For example, an underground room made of props with lighting. Then `player:customize()` moves the player there, and after the choice or cancel returns them to where they were (on first join — to the spawn). While the choice is open, the player does not see other players and they do not see them: the server separates them as if they were in different virtual worlds (from the move until the return, including while the place is loading), so two players choosing do not stand inside each other and cannot hurt each other. `player.world` does not change. The camera does not go behind the room's walls. The mannequin in the editor also stands at this place.
 
-Игрок видит только заготовленные скины: листает их стрелками или выбирает из списка и сразу видит на себе. Сервер принимает только облик из показанного списка. Если в режиме нет списка «Скины на старте», `customize()` открывает полный редактор персонажа.
+The player sees only prepared skins: they flip through them with the arrows or pick from the list and see it on themselves at once. The server accepts only a look from the list that was shown. If the mode has no "Starting skins" list, `customize()` opens the full character editor.
 
 ### API
 
 | | |
 |---|---|
-| `player.skin` | облик скина или `nil`, если игрок ещё не выбирал персонажа |
-| `player.uniform` | надетая форма или `nil` |
-| `player:customize(opts)` | выбор облика. `place` — где выбирать: не задано — место выбора режима (если поставлено), `false` — где игрок стоит, точка `{x, y, z, yaw}` (z — земля, как у точек логики); `back = false` — не возвращать игрока после выбора (режим сам отправит его в `onDone`); `title`; `cancel = false` — нельзя закрыть без выбора; `list = "skins"` (по умолчанию), `"uniforms"` или таблица id (`{"biker", "guard"}`); `uniform = true/false` — выбор надевается формой, а не скином (для `list = "uniforms"` — да); `full = true` — полный редактор персонажа вместо списка (`families = {"male", "female", "deacon", "story"}` — какие тела доступны); `onDone = function(player, look, id) end` (`look = nil` — игрок отменил; `id` — запись из `skins.json`). Выбор надевается сам |
-| `player:setSkin(x)` | задать скин: id из `skins.json` (сначала «скины», потом «формы»), имя облика из [`docs/looks.md`](looks.md), строка скина или `nil` |
-| `player:setUniform(x)` | надеть форму: id из `skins.json` (сначала «формы»), имя облика или строка скина; `nil` — снять |
-| `skinList(kind)` | список режима: `kind = "skins"` или `"uniforms"`; элементы `{id, name, nameRu, look}` |
+| `player.skin` | the skin look, or `nil` if the player has not chosen a character yet |
+| `player.uniform` | the uniform worn, or `nil` |
+| `player:customize(opts)` | choosing a look. `place` — where to choose: not set — the mode's choosing place (if placed), `false` — where the player stands, a point `{x, y, z, yaw}` (z is the ground, as with logic points); `back = false` — do not return the player after the choice (the mode sends them itself in `onDone`); `title`; `cancel = false` — cannot be closed without a choice; `list = "skins"` (default), `"uniforms"` or a table of ids (`{"biker", "guard"}`); `uniform = true/false` — the choice is put on as a uniform, not a skin (yes for `list = "uniforms"`); `full = true` — the full character editor instead of a list (`families = {"male", "female", "deacon", "story"}` — which bodies are available); `onDone = function(player, look, id) end` (`look = nil` — the player cancelled; `id` — the entry from `skins.json`). The choice is put on automatically |
+| `player:setSkin(x)` | set the skin: an id from `skins.json` (first "skins", then "uniforms"), a look name from [`docs/looks.md`](looks.md), a skin string or `nil` |
+| `player:setUniform(x)` | put on a uniform: an id from `skins.json` (first "uniforms"), a look name or a skin string; `nil` — take off |
+| `skinList(kind)` | the mode's list: `kind = "skins"` or `"uniforms"`; elements `{id, name, nameRu, look}` |
 
-Событие `on("customize", function(player, look, id) end)` приходит при каждом закрытии выбора.
+The event `on("customize", function(player, look, id) end)` arrives every time a choice is closed.
 
 ```lua
 on("playerJoin", function(player)
-    if not player.skin then   -- впервые на сервере
-        player:customize({ title = "Ваш персонаж", cancel = false })
+    if not player.skin then   -- first time on the server
+        player:customize({ title = "Your character", cancel = false })
     end
 end)
-command("shop", function(player) player:customize({ title = "Магазин одежды" }) end)
-command("job", function(player) player:customize({ title = "Работа", list = "uniforms" }) end)
-command("duty", function(player) player:setUniform("guard") end)          -- id из skins.json
+command("shop", function(player) player:customize({ title = "Clothing shop" }) end)
+command("job", function(player) player:customize({ title = "Job", list = "uniforms" }) end)
+command("duty", function(player) player:setUniform("guard") end)          -- an id from skins.json
 command("offduty", function(player) player:setUniform(nil) end)
 command("vip", function(player) player:customize({ list = { "biker", "motocross" } }) end)
 ```
 
-В полном редакторе (`full = true` и редактор в «Персонажах») выбирают тело, основу (любой облик этого тела) и части по слотам: лицо, волосы, борода, головной убор, очки и маски, верх, руки, кисти, низ, обувь, рюкзак и снаряжение, кобура. Части взяты из обликов игры (`data/parts.txt`). Строка скина выглядит так: `skin:<облик>;<слот>=<номер части>;...`; `-` убирает часть.
+In the full editor (`full = true` and the editor in "Characters") you choose the body, the base (any look of this body) and parts by slot: face, hair, beard, headwear, glasses and masks, top, arms, hands, bottom, shoes, backpack and gear, holster. Parts are taken from the game's looks (`data/parts.txt`). A skin string looks like this: `skin:<look>;<slot>=<part number>;...`; `-` removes a part.
 
-## Мир режима: свет
+## The mode's world: lights
 
-Свет ставится в редакторе: «Мир» → «Свет» → «+ Точечный свет» или «+ Прожектор», потом ЛКМ в мире. У выделенного света задаются цвет, яркость, дальность (м), угол конуса прожектора и тени. Прожектор светит из основания конуса, по умолчанию вниз; направление меняется гизмо поворота. В редакторе свет виден как маленький шар или конус, в игре — только сам свет. Как и пропсы, свет появляется у игроков в пределах 400 м. Тени у динамического света дорогие: включайте их немногим.
+Lights are placed in the editor: "World" → "Lights" → "+ Point light" or "+ Spotlight", then LMB in the world. For the selected light you set the color, brightness, range (m), the spotlight cone angle and shadows. A spotlight shines from the base of the cone, down by default; the direction is changed with the rotation gizmo. In the editor a light is seen as a small ball or cone, in the game — only the light itself. Like props, lights appear for players within 400 m. Shadows of dynamic light are expensive: turn them on for only a few.
 
-В `world.json` свет хранится в `add` с `asset` `"light:point"` или `"light:spot"`:
+In `world.json` a light is stored in `add` with `asset` `"light:point"` or `"light:spot"`:
 
 ```json
 {"uid": "p123", "asset": "light:spot", "x": 0, "y": 0, "z": 0, "pitch": 0, "yaw": 0, "roll": 0,
  "light": {"color": [1, 0.85, 0.7], "intensity": 5000, "radius": 10, "cone": 40, "shadows": false}}
 ```
 
-## Диалоги
+## Dialogs
 
-Окно поверх игры, как `ShowPlayerDialog` в SA-MP. Пока оно открыто, у игрока курсор, а игра не получает мышь и клавиатуру. Новый диалог заменяет открытый (ответ на старый не придёт).
+A window over the game, like `ShowPlayerDialog` in SA-MP. While it is open, the player has a cursor and the game does not receive the mouse and keyboard. A new dialog replaces the open one (the answer to the old one will not arrive).
 
 ```lua
 local id = player:dialog({
-    style = "list",                    -- "msgbox" (по умолчанию без items), "input", "password", "list" (по умолчанию с items)
-    title = "Магазин",
-    text = "{FFD84A}Выберите товар",   -- над полем ввода или списком; 
- — новая строка
-    items = { "Мотоцикл	{7CD67C}$100", { "Еда", "$5" } },   -- строки списка; колонки через 	 или таблицей
-    headers = { "Товар", "Цена" },     -- заголовки колонок (необязательно)
-    button1 = "Купить",                -- по умолчанию "OK"
-    button2 = "Отмена",                -- у msgbox по умолчанию нет; у остальных "Отмена"/"Cancel" по языку игрока
-    default = "",                      -- начальный текст поля ввода
+    style = "list",                    -- "msgbox" (default without items), "input", "password", "list" (default with items)
+    title = "Shop",
+    text = "{FFD84A}Choose an item",   -- above the input field or the list; \n — a new line
+    items = { "Motorcycle\t{7CD67C}$100", { "Food", "$5" } },   -- list rows; columns separated by \t or given as a table
+    headers = { "Item", "Price" },     -- column headers (optional)
+    button1 = "Buy",                   -- "OK" by default
+    button2 = "Cancel",                -- none by default for msgbox; for the others "Cancel" in the player's language
+    default = "",                      -- initial text of the input field
     onResponse = function(player, ok, item, text)
-        -- ok: первая кнопка (Enter, двойной клик) — true; вторая кнопка или Esc — false
-        -- item: номер выбранной строки списка (с 1) или nil; text: введённый текст или текст выбранной строки
+        -- ok: the first button (Enter, double click) — true; the second button or Esc — false
+        -- item: the number of the selected list row (from 1) or nil; text: the entered text or the text of the selected row
     end,
 })
 player:closeDialog()
 ```
 
-Цвет в тексте, заголовках колонок и строках — коды `{RRGGBB}`, как в SA-MP. Событие `on("dialogResponse", function(player, id, ok, item, text) end)` приходит на каждый ответ. Сервер принимает ответ только на диалог, который сейчас открыт у игрока, а строку списка берёт у себя: клиент не может подменить текст выбранного пункта.
+Color in text, column headers and rows is `{RRGGBB}` codes, as in SA-MP. The event `on("dialogResponse", function(player, id, ok, item, text) end)` arrives on every response. The server accepts a response only for the dialog currently open for the player, and takes the list row's text from its own data: the client cannot substitute the text of the selected item.
 
-## HTML-интерфейс
+## HTML interface
 
-Свои телефоны, инвентари, банки, меню — страницами HTML/CSS/JS, как NUI в FiveM или WebView в alt:V. Страница рисуется поверх игры (прозрачный фон — видна игра), а с фокусом получает мышь и клавиатуру. Устройство — [`docs/webui.md`](webui.md).
+Your own phones, inventories, banks and menus as HTML/CSS/JS pages, like NUI in FiveM or WebView in alt:V. The page is drawn over the game (transparent background — the game is visible), and with focus it receives the mouse and keyboard. How it works — [`docs/webui.md`](webui.md).
 
-**Файлы**: всё из `modes/<режим>/ui/` (можно с подпапками): `html`, `css`, `js`, `json`, `svg`, картинки, шрифты `woff/woff2/ttf/otf`, звуки `mp3/ogg/wav`. Имена — латиница, цифры, `_ - . /`. До 4 МБ файл, до 32 МБ всего. Клиенты скачивают их при входе и кэшируют по содержимому, как картинки режима. Страница открыта на адресе `https://mode.dgmp/<путь>`: ссылки внутри — относительные (`<link href="style.css">`, `fetch("data/items.json")`). **Интернет странице недоступен** — шрифты, библиотеки, картинки кладите в `ui/`.
+**Files**: everything from `modes/<mode>/ui/` (subfolders allowed): `html`, `css`, `js`, `json`, `svg`, images, fonts `woff/woff2/ttf/otf`, sounds `mp3/ogg/wav`. Names — Latin letters, digits, `_ - . /`. Up to 4 MB per file, up to 32 MB in total. Clients download them on join and cache by content, like the mode's images. The page is opened at the address `https://mode.dgmp/<path>`: links inside are relative (`<link href="style.css">`, `fetch("data/items.json")`). **The page has no internet access** — put fonts, libraries and images in `ui/`.
 
 ```lua
-player:ui("index.html")                    -- открыть страницу (одна на игрока; новая заменяет старую)
-player:ui("phone.html", { focus = true })  -- сразу с курсором и клавиатурой
-player:uiFocus(true)                       -- отдать странице мышь и клавиатуру (игра их не получает)
-player:uiFocus(false)                      -- вернуть игре; страница остаётся на экране
-player:uiSend("contacts", { { name = "Bob", id = 3 } })   -- сообщение странице: dgmp.on("contacts", fn)
-player:ui(false)                           -- закрыть
+player:ui("index.html")                    -- open a page (one per player; a new one replaces the old one)
+player:ui("phone.html", { focus = true })  -- at once with the cursor and keyboard
+player:uiFocus(true)                       -- give the page the mouse and keyboard (the game does not get them)
+player:uiFocus(false)                      -- give them back to the game; the page stays on screen
+player:uiSend("contacts", { { name = "Bob", id = 3 } })   -- a message to the page: dgmp.on("contacts", fn)
+player:ui(false)                           -- close
 
-on("uiMessage", function(player, name, data)   -- страница: dgmp.send(name, data)
+on("uiMessage", function(player, name, data)   -- the page: dgmp.send(name, data)
     if name == "buy" then ... end
 end)
 ```
 
-На странице объект `dgmp` есть сразу, подключать ничего не нужно:
+The `dgmp` object is on the page right away; nothing needs to be included:
 
 ```js
 dgmp.on('contacts', (list) => render(list));       // player:uiSend("contacts", list)
-dgmp.send('buy', { item: 'kAmmoID_Pistol', count: 2 });   // on("uiMessage") с name = "buy"
-dgmp.on('focus', (on) => {});                      // страница получила / отдала мышь и клавиатуру
+dgmp.send('buy', { item: 'kAmmoID_Pistol', count: 2 });   // on("uiMessage") with name = "buy"
+dgmp.on('focus', (on) => {});                      // the page received / gave up the mouse and keyboard
 if (dgmp.focused) { ... }
 dgmp.off('contacts', fn);
 ```
 
-- **Фокус.** Без фокуса страница — только картинка (HUD на HTML: спидометр, деньги, уведомления), игрок играет как обычно. С фокусом виден курсор, клики и клавиши идут странице, игра стоит на месте (как в открытом диалоге). Закрывать ли страницу по Esc, решает режим: страница ловит `keydown` и шлёт сообщение (см. пример). Диалог `player:dialog` открывается поверх страницы и получает ввод первым.
-- **Сообщения** — любые значения JSON. Имя — до 64 символов; данные: странице — до 64 КБ, от страницы — до 16 КБ и не больше 30 сообщений в секунду (лишние отбрасываются). Сообщения, отправленные до загрузки страницы, придут после неё.
-- **Доверие.** Страница работает у игрока, и игрок может прислать что угодно: проверяйте `data` в `uiMessage` так же, как текст чата (цены, суммы, расстояния — на сервере).
-- **Отладка.** `console.log` и ошибки страницы пишутся в лог клиента `logs/DGMP.log` (строки `UI page:`), туда же — заблокированные запросы в интернет. Открыть страницу в обычном браузере тоже можно: без игры `window.dgmp` не будет, подставьте заглушку.
-- **Чего нет.** Одна страница на игрока (несколько окон — внутри неё, как в FiveM); `alert`/`confirm` не показываются; ввод иероглифов (IME) не поддержан. Нужен Microsoft Edge WebView2 Runtime (его требует и лаунчер) и Windows 10 1903+; без них игрок увидит сообщение в чате.
-- **Логика интерфейса** — в JS страницы или в клиентском скрипте режима: `onUi(name, fn)` получает `dgmp.send` вместо сервера, `uiSend(name, data)` отвечает странице (см. «Клиентские скрипты»).
+- **Focus.** Without focus the page is only a picture (an HTML HUD: speedometer, money, notifications), and the player plays as usual. With focus the cursor is visible, clicks and keys go to the page, and the game stands still (as in an open dialog). Whether to close the page on Esc is up to the mode: the page catches `keydown` and sends a message (see the example). A `player:dialog` dialog opens over the page and gets input first.
+- **Messages** are any JSON values. The name is up to 64 characters; data: to the page up to 64 KB, from the page up to 16 KB and no more than 30 messages per second (extra ones are dropped). Messages sent before the page has loaded arrive after it.
+- **Trust.** The page runs on the player's machine, and the player can send anything: check `data` in `uiMessage` the same way as chat text (prices, amounts, distances — on the server).
+- **Debugging.** `console.log` and page errors are written to the client log `logs/DGMP.log` (lines `UI page:`), and blocked internet requests go there too. You can also open the page in an ordinary browser: without the game there is no `window.dgmp`, so substitute a stub.
+- **What is missing.** One page per player (several windows — inside it, as in FiveM); `alert`/`confirm` are not shown; input of CJK characters (IME) is not supported. Microsoft Edge WebView2 Runtime is required (the launcher needs it too) and Windows 10 1903+; without them the player sees a message in chat.
+- **Interface logic** — in the page's JS or in the mode's client script: `onUi(name, fn)` receives `dgmp.send` instead of the server, `uiSend(name, data)` replies to the page (see "Client scripts").
 
-Пример — режим [`htmlui`](../modes/htmlui/main.lua): `dgmp-server.exe --mode htmlui`.
+Example — the [`htmlui`](../modes/htmlui/main.lua) mode: `dgmp-server.exe --mode htmlui`.
 
-## Клиентские скрипты
+## Client scripts
 
-Lua режима, который работает в игре у каждого игрока: файлы `modes/<режим>/client/` (точка входа `main.lua`, модули через `require`) сервер раздаёт при входе, игра выполняет их в песочнице. Всё, что должно отзываться мгновенно: HUD, который рисуется каждый кадр, клавиши, локальные команды чата, лучи из камеры. Полное описание — [`docs/client-lua.md`](client-lua.md).
+The mode's Lua that runs in the game on each player's machine: the files in `modes/<mode>/client/` (entry point `main.lua`, modules via `require`) are served by the server on join, and the game runs them in a sandbox. Everything that must respond instantly: a HUD drawn every frame, keys, local chat commands, rays from the camera. Full description — [`docs/client-lua.md`](client-lua.md).
 
 ```lua
--- modes/<режим>/client/main.lua (в игре)
+-- modes/<mode>/client/main.lua (in the game)
 on("frame", function(dt)
     local w, h = screen()
-    draw.text(w - 20, h - 60, string.format("%d км/ч", me().speed * 0.036), { align = "right", size = 28 })
+    draw.text(w - 20, h - 60, string.format("%d km/h", me().speed * 0.036), { align = "right", size = 28 })
 end)
-bindKey("G", function() send("wave", {}) end)       -- на сервер: on("clientMessage")
-onServer("waved", function(data) chat(data.from .. " машет вам") end)
+bindKey("G", function() send("wave", {}) end)       -- to the server: on("clientMessage")
+onServer("waved", function(data) chat(data.from .. " waves at you") end)
 
--- modes/<режим>/main.lua (сервер)
+-- modes/<mode>/main.lua (server)
 on("clientMessage", function(player, name, data)
     if name == "wave" then player:playAnim("wave") end
 end)
-player:clientSend("waved", { from = "Bob" })        -- клиенту: onServer("waved", fn)
+player:clientSend("waved", { from = "Bob" })        -- to the client: onServer("waved", fn)
 ```
 
-Сервер всё равно проверяет то, что присылает клиент: игрок может изменить свою игру. Пример — режим [`clientdemo`](../modes/clientdemo).
+The server still checks what the client sends: a player can modify their game. Example — the [`clientdemo`](../modes/clientdemo) mode.
 
 ## HUD
 
-Свои надписи и полоски на экране игрока, как textdraw в SA-MP. Элемент задаётся id и таблицей; повторный вызов с тем же id меняет его, без таблицы — убирает.
+Your own labels and bars on the player's screen, like textdraw in SA-MP. An element is defined by an id and a table; calling again with the same id changes it, without a table — removes it.
 
 ```lua
-player:hud("score", { text = "{F2D16B}Очки: 500", x = 0.97, y = 0.16, align = "right", size = 1.3 })
-player:hud("hunger", { bar = 0.6, x = 0.02, y = 0.7, w = 0.12, h = 0.012, barColor = "#E07070", text = "Голод" })
-player:hud("score")      -- убрать
-player:clearHud()        -- убрать все
+player:hud("score", { text = "{F2D16B}Score: 500", x = 0.97, y = 0.16, align = "right", size = 1.3 })
+player:hud("hunger", { bar = 0.6, x = 0.02, y = 0.7, w = 0.12, h = 0.012, barColor = "#E07070", text = "Hunger" })
+player:hud("score")      -- remove
+player:clearHud()        -- remove all
 ```
 
-| Поле | |
+| Field | |
 |---|---|
-| `x`, `y` | точка привязки, доли экрана (0..1) |
-| `align` | `"left"` (по умолчанию), `"center"`, `"right"` — относительно `x` |
-| `text` | текст с `{RRGGBB}` и `
-` |
-| `size` | масштаб шрифта (1 — обычный, 1.5+ — крупный) |
-| `color` | цвет текста `"#RRGGBB"` или `"#RRGGBBAA"` |
-| `bg` | подложка под текстом (по умолчанию нет) |
-| `shadow` | тень текста (по умолчанию `true`) |
-| `bar`, `w`, `h`, `barColor` | полоска: заполнение 0..1, ширина и высота в долях экрана; `text` — подпись над ней |
-| `image`, `w`, `h` | картинка режима (см. «Картинки»): размер в долях экрана; задано одно — второе по пропорциям картинки; ни одного — её пиксели × `size`. `color` тонирует её (`"#FFFFFF80"` — полупрозрачная) |
+| `x`, `y` | the anchor point, fractions of the screen (0..1) |
+| `align` | `"left"` (default), `"center"`, `"right"` — relative to `x` |
+| `text` | text with `{RRGGBB}` and `\n` |
+| `size` | font scale (1 — normal, 1.5+ — large) |
+| `color` | text color `"#RRGGBB"` or `"#RRGGBBAA"` |
+| `bg` | a backing under the text (none by default) |
+| `shadow` | text shadow (`true` by default) |
+| `bar`, `w`, `h`, `barColor` | a bar: fill 0..1, width and height in fractions of the screen; `text` is a caption above it |
+| `image`, `w`, `h` | a mode image (see "Images"): size in fractions of the screen; if one is set, the other follows the image's aspect ratio; if neither — its pixels × `size`. `color` tints it (`"#FFFFFF80"` — semi-transparent) |
 
-HUD скрыт в меню паузы, на карте, на экранах загрузки и у наблюдателя. В меню карты (Esc) угол «дней прожито» показывает сервер: число игроков, название сервера и режим. Значки других игроков на карте при наведении показывают ник. Игра сама занимает левый нижний угол (здоровье, выносливость, оружие), правый нижний (мини-карта) и верх справа (строка сервера DGMP) — ставьте свои элементы мимо них.
+The HUD is hidden in the pause menu, on the map, on loading screens and for a spectator. In the map menu (Esc) the "days survived" corner shows, from the server: the number of players, the server name and the mode. Other players' blips on the map show the nickname on hover. The game itself occupies the bottom left (health, stamina, weapon), the bottom right (mini-map) and the top right (the DGMP server line) — place your elements away from them.
 
-## Взаимодействия и клавиши
+## Interactions and keys
 
-**Точка действия**: игрок в радиусе видит подсказку «[F] текст» внизу экрана, нажатие приходит в режим. Пока подсказка видна, сама игра эту клавишу не получает. По умолчанию это F: E в игре — сесть на мотоцикл и подобрать, а фонарик в мультиплеере переносится с F на L у всех игроков.
+**Interaction point**: a player within the radius sees the prompt "[F] text" at the bottom of the screen, and the press is delivered to the mode. While the prompt is visible, the game itself does not receive that key. The default is F: E in the game is for getting on a motorcycle and picking up, and in multiplayer the flashlight is moved from F to L for all players.
 
 ```lua
-local shop = logic.point("shop")       -- точка из редактора (modes/_lib/logic.lua)
+local shop = logic.point("shop")       -- a point from the editor (modes/_lib/logic.lua)
 local id = createInteraction({
-    x = shop.x, y = shop.y, z = shop.z, -- z — земля
-    radius = 2,                          -- метры
-    text = "Магазин",
-    key = "F",                           -- по умолчанию; A-Z, 0-9, F1-F12
-    aim = true,                          -- нужно смотреть на точку (по умолчанию)
-    aimHeight = 1.0,                     -- м над z: куда смотреть (прилавок, грудь NPC)
-    aimRadius = 0.5,                     -- м: размер цели для взгляда
-    priority = 0,                        -- при одинаковом наведении побеждает больший
+    x = shop.x, y = shop.y, z = shop.z, -- z is the ground
+    radius = 2,                          -- meters
+    text = "Shop",
+    key = "F",                           -- default; A-Z, 0-9, F1-F12
+    aim = true,                          -- you must look at the point (default)
+    aimHeight = 1.0,                     -- m above z: where to look (a counter, an NPC's chest)
+    aimRadius = 0.5,                     -- m: the size of the target for the gaze
+    priority = 0,                        -- with equal aiming the larger one wins
     onUse = function(player, id) player:dialog({ ... }) end,
 })
 removeInteraction(id)
 ```
 
-Сервер проверяет, что игрок действительно стоит рядом. Событие: `on("use", function(player, id) end)`.
+The server checks that the player is really standing nearby. Event: `on("use", function(player, id) end)`.
 
-**Наведение.** Когда в радиусе несколько точек (продавец, дверь, ящик, другой игрок), подсказка достаётся той, на которую смотрит камера: точка `aimHeight` над `z` должна быть в конусе ~25° от середины экрана (выбранная держится до ~35°, чтобы подсказка не мигала), и между камерой и ней нет стены. Из подходящих выбирается ближайшая к середине экрана. Если в радиусе всего одна точка, достаточно, чтобы она была впереди (как раньше). `aim = false` — точке хватает радиуса (зона «встаньте в круг»), но она уступает любой точке под взглядом. Транспорт и ящики переноски получают подсказку, когда ни одна точка не выбрана.
+**Aiming.** When several points are in range (a seller, a door, a crate, another player), the prompt goes to the one the camera is looking at: the point `aimHeight` above `z` must be within a ~25° cone from the center of the screen (the selected one holds up to ~35° so that the prompt does not flicker), with no wall between the camera and it. Of the suitable ones, the one closest to the center of the screen is chosen. If there is only one point in range, it is enough for it to be in front (as before). `aim = false` — the radius is enough for the point (a "stand in the circle" zone), but it yields to any point under the gaze. Vehicles and carrying crates get the prompt when no point is selected.
 
-**Меню игрока.** `setPlayerMenu({key = "F", label = {ru = "Взаимодействие", en = "Interact"}, range = 2.5})` — у другого игрока, на которого смотрит камера в пределах `range` метров, появляется «[F] Взаимодействие»; нажатие приходит событием `playerInteract(player, target)` (сервер проверяет расстояние и мир). `setPlayerMenu(nil)` — выключить. Что показать дальше, решает режим; готовое меню с действиями и согласием — библиотека `interact` (ниже).
+**Player menu.** `setPlayerMenu({key = "F", label = {ru = "Взаимодействие", en = "Interact"}, range = 2.5})` — for another player whom the camera is looking at within `range` meters, "[F] Interact" appears; the press arrives as the event `playerInteract(player, target)` (the server checks distance and world). `setPlayerMenu(nil)` — turn off. What to show next is up to the mode; a ready-made menu with actions and consent is the `interact` library (below).
 
-**Вопрос «да / нет».** `player:ask(text, {seconds = 15}, function(player, yes, reason) end)` — внизу экрана игрока вопрос с «[Y] Да [N] Нет» и таймером; игра при этом не забирает курсор и не останавливается. `reason`: `"answer"` или `"timeout"` (тогда `yes = false`). Возвращает `false`, если у игрока уже открыт вопрос. `player:cancelAsk()` — убрать, `player:isAsked()` — открыт ли. Пока вопрос на экране, Y и N не уходят в игру, а N не включает голос.
+**Yes/no question.** `player:ask(text, {seconds = 15}, function(player, yes, reason) end)` — at the bottom of the player's screen a question with "[Y] Yes [N] No" and a timer; the game does not take the cursor and does not stop. `reason`: `"answer"` or `"timeout"` (then `yes = false`). Returns `false` if the player already has a question open. `player:cancelAsk()` — remove, `player:isAsked()` — whether one is open. While a question is on screen, Y and N do not go to the game, and N does not turn on voice.
 
-**Клавиши**: `bindKey("Y", function(player, key) end)` — нажатия этой клавиши игроками (не в чате, меню, диалоге и не у мёртвых); `unbindKey("Y")`. Событие: `on("key", function(player, key) end)`. Занятые клавиши (WASD, E, F — точки действия, L — фонарик, Tab — список игроков, T — чат, N и K — голос, F3, F8, F9) лучше не брать. Команду чата `/voice` занимает клиент (настройки голоса).
+**Keys**: `bindKey("Y", function(player, key) end)` — presses of this key by players (not in chat, a menu, a dialog, and not by the dead); `unbindKey("Y")`. Event: `on("key", function(player, key) end)`. Better not to take occupied keys (WASD, E, F — interaction points, L — flashlight, Tab — player list, T — chat, N and K — voice, F3, F8, F9). The chat command `/voice` is taken by the client (voice settings).
 
-## NPC (актёры)
+## NPCs (actors)
 
-Статисты режима, как `CreateActor` в SA-MP: продавец, охранник, бармен. Стоят на месте с обликом, зацикленной анимацией и именем над головой. Видны игрокам в пределах 250 м.
+Extras of the mode, like `CreateActor` in SA-MP: a seller, a guard, a bartender. They stand in place with a look, a looped animation and a name over the head. Visible to players within 250 m.
 
 ```lua
 local shop = logic.point("shop")
 local ava = createActor({
-    x = shop.x, y = shop.y, z = shop.z,   -- z — земля (точка логики из редактора)
-    yaw = shop.yaw,                       -- куда смотрит
-    look = "f_merch_ava_bergstrom",       -- id из skins.json, имя из docs/looks.md, путь или строка "skin:..."
-    anim = "idle",                        -- имя из data/anims.txt или путь к анимации
-    name = "Ava",                         -- над головой (видно с 25 м); "" — без имени
-    solid = true,                         -- игроки в неё упираются
-    world = 0,                            -- виртуальный мир; не задано — во всех мирах
+    x = shop.x, y = shop.y, z = shop.z,   -- z is the ground (a logic point from the editor)
+    yaw = shop.yaw,                       -- where they look
+    look = "f_merch_ava_bergstrom",       -- an id from skins.json, a name from docs/looks.md, a path or a "skin:..." string
+    anim = "idle",                        -- a name from data/anims.txt or a path to an animation
+    name = "Ava",                         -- over the head (visible from 25 m); "" — no name
+    solid = true,                         -- players bump into them
+    world = 0,                            -- virtual world; not set — in all worlds
 })
-setActor(ava, { anim = "talk", name = "Ava (busy)" })   -- поменять любые поля
+setActor(ava, { anim = "talk", name = "Ava (busy)" })   -- change any fields
 removeActor(ava)
 
--- Поговорить с продавцом: точка действия рядом с ним.
+-- Talk to the seller: an interaction point next to them.
 createInteraction({ x = shop.x, y = shop.y, z = shop.z, radius = 2, text = "Talk", onUse = function(player) ... end })
 ```
 
-`name` у `createActor` / `setActor` и `text` у `createInteraction` принимают строку или таблицу `{en="Commander", ru="Комендант"}`. Сервер отправляет каждому участнику вариант по `player.lang`; неизвестный язык использует английский, затем русский. Надписи NPC рисуются шрифтом интерфейса с поддержкой кириллицы и скрываются за стенами (кроме режима имён сквозь стены).
+`name` in `createActor` / `setActor` and `text` in `createInteraction` accept a string or a table `{en="Commander", ru="Комендант"}`. The server sends each participant the variant for `player.lang`; an unknown language uses English, then Russian. NPC labels are drawn with the interface font, which supports Cyrillic, and are hidden behind walls (except in the see-through-walls nametag mode).
 
 
-### NPC из редактора
+### NPCs from the editor
 
-Обычно NPC расставляют в редакторе: «Мир» → «NPC» → «+ NPC», клик в мире, потом гизмо (двигать, вращать). У выделенного NPC задаются id, группа, имя над головой, облик (выбор из скинов режима и обликов игры с поиском), анимация (выбор из каталога с поиском), «твёрдый» и мир. В редакторе NPC сразу стоит в выбранном облике и анимации. Хранятся в `world.json` (`"actors"`); сервер сам создаёт их при запуске режима, до кода режима.
+Usually NPCs are placed in the editor: "World" → "NPCs" → "+ NPC", a click in the world, then the gizmo (move, rotate). For the selected NPC you set the id, group, the name over the head, the look (a choice from the mode's skins and the game's looks, with search), the animation (a choice from the catalog, with search), "solid" and the world. In the editor the NPC stands in the chosen look and animation right away. They are stored in `world.json` (`"actors"`); the server creates them itself when the mode starts, before the mode's code.
 
-Код режима находит их через `logic`:
+The mode's code finds them through `logic`:
 
 ```lua
 local logic = require("logic")
-local ava = logic.actor("shopkeeper")     -- NPC с id "shopkeeper": {id, key, group, x, y, z, yaw, name, world, placed}
-local guards = logic.actors("guard")      -- все NPC группы "guard"
+local ava = logic.actor("shopkeeper")     -- the NPC with id "shopkeeper": {id, key, group, x, y, z, yaw, name, world, placed}
+local guards = logic.actors("guard")      -- all NPCs of the group "guard"
 if ava.placed then
-    createInteraction({ x = ava.x, y = ava.y, z = ava.z, radius = 2, text = "Поговорить",
+    createInteraction({ x = ava.x, y = ava.y, z = ava.z, radius = 2, text = "Talk",
                         onUse = function(player) setActor(ava.id, { anim = "talk" }) end })
 end
 ```
 
-Если код режима пишет `logic.actor("shopkeeper")` или `logic.actors("guard")`, редактор показывает их в «Логике режима» как NPC («не поставлен», «поставить», «добавить в группу»). Без редактора те же данные дают `getActor("id")` и `worldActors()`.
+If the mode's code writes `logic.actor("shopkeeper")` or `logic.actors("guard")`, the editor shows them in "Mode logic" as NPCs ("not placed", "place", "add to group"). Without the editor the same data is given by `getActor("id")` and `worldActors()`.
 
-NPC, созданных кодом (`createActor`), редактор не видит: их нет в `world.json`. Постоянных NPC (продавец, охрана) ставьте в редакторе и берите через `logic.actor` / `logic.actors`, а `createActor` оставьте для тех, кто появляется по ходу игры. Не повторяйте NPC из редактора через `createActor`: сервер уже создал его, получится второй на другом месте.
+NPCs created by code (`createActor`) are not seen by the editor: they are not in `world.json`. Place permanent NPCs (a seller, guards) in the editor and get them via `logic.actor` / `logic.actors`, and leave `createActor` for those who appear during the game. Do not duplicate an editor NPC through `createActor`: the server has already created it, and you would get a second one in a different place.
 
-Анимации — `data/anims.txt`: около 6800 анимаций людей из игры (Дикон, NPC, сюжетные персонажи, сценки, позы). Короткие имена в начале файла:
-- стоя: `idle`, `idle2`, `tense`, `alert`, `guard`, `wait`, `wave`, `attention` (смирно), `at_ease` (вольно), `tired`, `injured`, `talk`, `explain`, `beckon`, `surrender`, `binoculars`, `pushups`;
-- сидя: `sit`, `sit_talk`, `sit_warm` (греет руки), `sit_sleep`, `sit_look`, `sit_drink`, `patient`, `campfire`, `campfire_f`, `chair`; лёжа: `lie`;
-- пленные: `kneel` (руки на голове), `prisoner` (связан, на коленях).
+Animations are in `data/anims.txt`: about 6800 human animations from the game (Deacon, NPCs, story characters, scenes, poses). Short names at the start of the file:
+- standing: `idle`, `idle2`, `tense`, `alert`, `guard`, `wait`, `wave`, `attention` (at attention), `at_ease` (at ease), `tired`, `injured`, `talk`, `explain`, `beckon`, `surrender`, `binoculars`, `pushups`;
+- sitting: `sit`, `sit_talk`, `sit_warm` (warming hands), `sit_sleep`, `sit_look`, `sit_drink`, `patient`, `campfire`, `campfire_f`, `chair`; lying: `lie`;
+- captives: `kneel` (hands on head), `prisoner` (tied up, kneeling).
 
-Сидячие анимации рассчитаны на сиденье высотой с ящик: ставьте NPC на ящик, скамью или ступеньку. Не каждая анимация хорошо зацикливается, а позы из `StillPoses` неподвижны. Анимации Дикона подходят и мужским, и женским обликам.
+Sitting animations are made for a seat the height of a crate: put the NPC on a crate, a bench or a step. Not every animation loops well, and poses from `StillPoses` are static. Deacon's animations suit both male and female looks.
 
-Пули NPC не задевают: это декорация, а не противник. Игроки и мотоциклы в них упираются (если `solid` не `false`).
+Bullets do not hit NPCs: they are scenery, not an enemy. Players and motorcycles bump into them (unless `solid` is `false`).
 
-## Виртуальные миры
+## Virtual worlds
 
-Как `SetPlayerVirtualWorld` в SA-MP: игроки в разных мирах не видят друг друга (ни тела, ни мотоцикла, ни ника), не сталкиваются и не могут ранить друг друга. Мир 0 — общий, в нём все при входе.
+Like `SetPlayerVirtualWorld` in SA-MP: players in different worlds don't see each other (neither the body, nor the motorcycle, nor the nickname), don't collide and can't hurt each other. World 0 is the shared one; everyone starts in it on join.
 
 ```lua
-player:setWorld(5)          -- например, интерьер дома под землёй: в нём только свои
+player:setWorld(5)          -- e.g. a house interior underground: only your own people in it
 print(player.world)
-player:setWorld(0)          -- обратно
+player:setWorld(0)          -- back
 ```
 
-Миры — это слои поверх одной карты: гонка, событие или задание идут в своём мире и не мешают остальным, а остальные не мешают им. Игроки разных миров не слышат друг друга (голос, RP-чат), не видят выстрелов и трупов друг друга, звуки `playSound` с `world` звучат только в своём мире.
+Worlds are layers over one map: a race, an event or an objective runs in its own world and doesn't disturb the rest, and the rest don't disturb it. Players in different worlds don't hear each other (voice, RP chat), don't see each other's shots and corpses, and `playSound` sounds with `world` play only in their own world.
 
-Поле `world` (без него или `-1` — во всех мирах) есть у NPC (`createActor`), точек действия (`createInteraction`), транспорта, объектов, значков, ящиков, зон, ловушек, зомби, маркеров (`createMarker`), предметов (`spawnItem`) и лута из редактора. Маркер и предмет из одного мира приходят только его игрокам; войти в маркер и подобрать предмет можно только в его мире. HUD, диалоги и сообщения мирами не ограничены. Карта, здания и пропсы из редактора (`world.json`) одни на все миры: своё для мира ставьте объектами режима с `world`.
+The `world` field (omitted or `-1` — in all worlds) exists on NPCs (`createActor`), interaction points (`createInteraction`), vehicles, objects, blips, crates, zones, traps, zombies, markers (`createMarker`), items (`spawnItem`) and loot from the editor. A marker and an item from one world are sent only to its players; you can enter a marker and pick up an item only in its world. HUD, dialogs and messages are not limited by worlds. The map, buildings and props from the editor (`world.json`) are the same for all worlds: put things specific to a world as mode objects with `world`.
 
-**Вместе с игроком** в другой мир переходят транспорт режима, за рулём которого он сидит, его пассажир и ящик в руках. Пассажир, переведённый один, слезает. Свой мотоцикл (`giveBike`) другие видят только в его мире.
+**Together with the player**, the mode's vehicle they are driving, its passenger and the crate in their hands move to the other world. A passenger moved alone gets out. The player's own motorcycle (`giveBike`) is seen by others only in their world.
 
-**Свободный мир на время** (гонка, событие) выдаёт `newWorld()`: номер от 1000, которого не занял ни другой вызов `newWorld`, ни игрок. Свои номера берите меньше 1000. `freeWorld(n)` отдаёт номер обратно; кто ещё в этом мире, возвращается в мир 0.
+**A free world for a while** (a race, an event) is issued by `newWorld()`: a number from 1000 that is not taken by another `newWorld` call or by a player. Take your own numbers below 1000. `freeWorld(n)` gives the number back; whoever is still in that world returns to world 0.
 
 ```lua
 local w = newWorld()
@@ -542,178 +542,178 @@ for _, p in ipairs(team) do p:setWorld(w) end
 freeWorld(w)
 ```
 
-**Наблюдение за другим миром:** `player:spectate(true, players, { world = n })` — наблюдатель остаётся в своём мире (его слышат свои, ему пишут свои), но видит мир `n`: его игроков, транспорт, объекты, маркеры. `player.watching` — мир, который он смотрит (`nil`, если свой).
+**Watching another world:** `player:spectate(true, players, { world = n })` — the spectator stays in their own world (their own people hear them, they get their messages), but sees world `n`: its players, vehicles, objects, markers. `player.watching` is the world they are watching (`nil` if their own).
 
-Событие `playerWorld(player, world, old)` — игрок перешёл в другой мир (`setWorld`, дверь, `freeWorld`). При перезагрузке режима все возвращаются в мир 0, выданные миры освобождаются.
+The `playerWorld(player, world, old)` event — the player moved to another world (`setWorld`, a door, `freeWorld`). When the mode reloads, everyone returns to world 0 and the issued worlds are freed.
 
-## Гонки — библиотека `race`
+## Races — the `race` library
 
-Гонка нескольких игроков в своём виртуальном мире ([`modes/_lib/race.lua`](../modes/_lib/race.lua)): пока она идёт, гонщики видят только друг друга, остальные их не видят. Поэтому гонять можно хоть через город на RP-сервере: никто не мешает чужим заданиям, и никто не встанет поперёк трассы. Желающие смотрят гонку со стороны. После финиша все возвращаются в свой мир туда, где были. Одновременно может идти несколько гонок, у каждой свой мир.
+A race of several players in their own virtual world ([`modes/_lib/race.lua`](../modes/_lib/race.lua)): while it runs, the racers see only each other, and the others don't see them. So you can race even through a city on an RP server: nobody interferes with other people's objectives, and nobody will stand across the track. Those who want to can watch the race from the side. After the finish everyone returns to their own world, to where they were. Several races can run at once, each in its own world.
 
 ```lua
 local Race = require("race")
 local logic = require("logic")
 local highway = Race.new({
     name = { en = "Highway", ru = "Трасса" },
-    grid = logic.points("race_grid"),                                  -- места на старте (стрелка — направление)
-    checkpoints = logic.triggers("race_checkpoint", { radius = 12 }),  -- по порядку; последний — финиш
-    lobby = 45,                                                        -- запись: старт через 45 с после первого
+    grid = logic.points("race_grid"),                                  -- start positions (the arrow is the direction)
+    checkpoints = logic.triggers("race_checkpoint", { radius = 12 }),  -- in order; the last one is the finish
+    lobby = 45,                                                        -- sign-up: start 45 s after the first
     onEnd = function(race, results)
         if results[1] then results[1].player:giveMoney(500) end
     end,
 })
-highway:signup(logic.point("race_start"))   -- [F] там: записаться / выйти, во время гонки — смотреть
+highway:signup(logic.point("race_start"))   -- [F] there: sign up / leave, during the race — watch
 command("race", function(p) highway:join(p) end)
 ```
 
-| Параметр | По умолчанию | |
+| Parameter | Default | |
 |---|---|---|
-| `name` | `"Race"` | строка или `{en =, ru =}` |
-| `grid`, `checkpoints` | — | точки `{x, y, z, yaw}` и чекпойнты `{x, y, z [, radius (м)]}`, обычно из `logic` |
-| `laps` | 1 | кругов (чекпойнты проходятся заново) |
-| `vehicle` | `"bike"` | свой мотоцикл игрока (у кого не было — заберут после гонки) или модель `createVehicle` (`"golfcart"`...): создаётся на время гонки |
-| `lobby` | 30 | секунд записи после первого записавшегося, потом старт; `0` — только `race:start()` |
-| `minRacers` | 1 | меньше — запись продлевается |
-| `countdown` | 10 | отсчёт на старте (гонщики стоят) |
-| `finishWindow` | 30 | секунд остальным после первого финиша |
-| `maxTime` | 900 | гонка кончается в любом случае |
-| `returnTo` | `"back"` | `"back"` — туда, где был до гонки; `"stay"` — остаться у финиша (в своём мире) |
-| `objects` | — | параметры `createObject` (барьеры, арки): ставятся в мире гонки на время гонки |
-| `radius` | 10 | радиус чекпойнтов без своего, м |
-| `onStart(race)`, `onFinish(race, player, place, seconds)`, `onEnd(race, results)`, `onLeave(race, player, reason, back)` | | `results`: `{ {player, name, place, time}, ..., dnf = {{player, name}, ...} }`; `reason`: `"left"`, `"death"`, `"moved"`, `"quit"`; `back` — где он был до гонки |
+| `name` | `"Race"` | a string or `{en =, ru =}` |
+| `grid`, `checkpoints` | — | points `{x, y, z, yaw}` and checkpoints `{x, y, z [, radius (m)]}`, usually from `logic` |
+| `laps` | 1 | laps (the checkpoints are passed again) |
+| `vehicle` | `"bike"` | the player's own motorcycle (whoever had none, it is taken away after the race) or a `createVehicle` model (`"golfcart"`...): created for the duration of the race |
+| `lobby` | 30 | seconds of sign-up after the first one signs up, then the start; `0` — only `race:start()` |
+| `minRacers` | 1 | fewer — the sign-up is extended |
+| `countdown` | 10 | countdown at the start (the racers stand still) |
+| `finishWindow` | 30 | seconds for the rest after the first finish |
+| `maxTime` | 900 | the race ends in any case |
+| `returnTo` | `"back"` | `"back"` — to where they were before the race; `"stay"` — stay at the finish (in their own world) |
+| `objects` | — | `createObject` parameters (barriers, arches): placed in the race's world for the duration of the race |
+| `radius` | 10 | radius of checkpoints that have none of their own, m |
+| `onStart(race)`, `onFinish(race, player, place, seconds)`, `onEnd(race, results)`, `onLeave(race, player, reason, back)` | | `results`: `{ {player, name, place, time}, ..., dnf = {{player, name}, ...} }`; `reason`: `"left"`, `"death"`, `"moved"`, `"quit"`; `back` — where they were before the race |
 
-| Метод | |
+| Method | |
 |---|---|
-| `race:join(player)` → `ok, why` | записать; во время отсчёта сразу ставит на свободное место. `why`: `"already"`, `"other"` (в другой гонке), `"running"`, `"full"`, `"notready"` (нет трассы) |
-| `race:leave(player)` | выйти: до старта — из записи, на трассе — сход (DNF) |
-| `race:start()` / `race:stop()` | старт сейчас / закончить сейчас с текущими результатами (запись — отменить) |
-| `race:watch(player)` / `race:unwatch(player)` / `race:watching(player)` | смотреть гонку со стороны (стрелки переключают гонщиков) / перестать (вернёт туда, где стоял) |
-| `race:signup(point [, opts])` | точка [F] и значок на карте; `opts`: `text`, `radius`, `world`, `icon`, `color`, `blip = false` |
-| `race:racers()`, `race:entry(player)`, `race.state`, `race.world`, `race.last` | гонщики на трассе; запись игрока (`back` — где был); `"idle"`, `"lobby"`, `"countdown"`, `"racing"`; мир гонки; результаты прошлой |
-| `Race.of(player)` | гонка, в которую записан игрок |
+| `race:join(player)` → `ok, why` | sign up; during the countdown it puts them on a free spot at once. `why`: `"already"`, `"other"` (in another race), `"running"`, `"full"`, `"notready"` (no track) |
+| `race:leave(player)` | leave: before the start — from the sign-up, on the track — retire (DNF) |
+| `race:start()` / `race:stop()` | start now / end now with the current results (the sign-up — cancel) |
+| `race:watch(player)` / `race:unwatch(player)` / `race:watching(player)` | watch the race from the side (the arrows switch between racers) / stop (returns them to where they stood) |
+| `race:signup(point [, opts])` | an [F] point and a map blip; `opts`: `text`, `radius`, `world`, `icon`, `color`, `blip = false` |
+| `race:racers()`, `race:entry(player)`, `race.state`, `race.world`, `race.last` | racers on the track; the player's entry (`back` — where they were); `"idle"`, `"lobby"`, `"countdown"`, `"racing"`; the race's world; results of the previous one |
+| `Race.of(player)` | the race the player is signed up for |
 
-Сход из гонки: смерть, выход с сервера, `leave` или перевод в другой мир кем-то другим (`/goto` админа, дверь). Чекпойнты — личные маркеры гонщика в мире гонки, с маршрутом на миникарте. Примеры: режим [`race`](../modes/race/main.lua) и уличная гонка в [`rp`](../modes/rp/main.lua) (точки `race_start`, `race_grid`, `race_checkpoint` в редакторе, `/race`, призы).
+Retiring from a race: death, leaving the server, `leave`, or being moved to another world by someone else (an admin's `/goto`, a door). Checkpoints are the racer's personal markers in the race's world, with a route on the minimap. Examples: the [`race`](../modes/race/main.lua) mode and the street race in [`rp`](../modes/rp/main.lua) (points `race_start`, `race_grid`, `race_checkpoint` in the editor, `/race`, prizes).
 
-## Транспорт
+## Vehicles
 
-Мотоциклы и другой транспорт режима, как машины в SA-MP. Сервер хранит, где каждый стоит, его бензин, здоровье, владельца и замок. У всех игроков это один и тот же транспорт: кто-то уехал на нём — у остальных он уехал тоже, бросил — стоит там, где бросили. Сесть на транспорт режима можно только с разрешения сервера: игрок жмёт E, сервер проверяет замок и спрашивает режим.
+Motorcycles and other vehicles of the mode, like cars in SA-MP. The server stores where each one stands, its fuel, health, owner and lock. For all players it is the same vehicle: if someone drove off on it, it has driven off for the others too; if they left it, it stands where it was left. You can get into a mode's vehicle only with the server's permission: the player presses E, the server checks the lock and asks the mode.
 
-Мотоцикл из сохранения игры в мультиплеере убирается. Личный мотоцикл игры можно выдать через `player:giveBike()` (см. «Мотоцикл»), но у него нет владельца, замка и общего для всех места — для RP используйте транспорт режима.
+A motorcycle from the game save is removed in multiplayer. The game's personal motorcycle can be issued via `player:giveBike()` (see "Motorcycle"), but it has no owner, no lock and no place shared by everyone — for RP use the mode's vehicles.
 
-**Из редактора.** Постоянный транспорт (такси, служебные машины, мотоциклы на продажу) ставят в редакторе: «Мир» → «Транспорт» → «+ Транспорт», клик в мире, гизмо. У выделенного задаются ключ, модель, замок, владелец (ник), метка на карте, бензин и мир. Хранится в `world.json` (`"vehicles"`), сервер создаёт его при запуске режима, до кода режима. Код находит его по ключу:
+**From the editor.** Permanent vehicles (taxis, service vehicles, motorcycles for sale) are placed in the editor: "World" → "Vehicles" → "+ Vehicle", click in the world, gizmo. For the selected one you set the key, model, lock, owner (nickname), map mark, fuel and world. It is stored in `world.json` (`"vehicles"`); the server creates it when the mode starts, before the mode's code. The code finds it by key:
 
 ```lua
-local taxi = getVehicle("taxi")          -- таблица как у vehicleInfo (с полем key) или nil
+local taxi = getVehicle("taxi")          -- a table like vehicleInfo's (with the key field) or nil
 setVehicle(taxi.id, { locked = false })
 ```
 
 ```lua
 local id = createVehicle({
-    x = 1000, y = 2000, z = -5300,   -- z — земля
+    x = 1000, y = 2000, z = -5300,   -- z is the ground
     yaw = 90,
-    model = "bike",                  -- "bike" (по умолчанию), "golfcart", "helicopter" (см. «Вертолёт»); "dumptruck", "militarytruck" — экспериментально
-    owner = player,                  -- игрок или ник; без владельца — ничей
-    locked = true,                   -- запертый: садится только владелец
+    model = "bike",                  -- "bike" (default), "golfcart", "helicopter" (see "Helicopter"); "dumptruck", "militarytruck" — experimental
+    owner = player,                  -- a player or a nickname; with no owner — belongs to no one
+    locked = true,                   -- locked: only the owner can get in
     fuel = 1, health = 1,            -- 0..1
-    world = 0,                       -- виртуальный мир
-    blip = "owner",                  -- кто видит его на карте и радаре: "owner" (по умолчанию), "all", "none"
-    blipColor = "#E05050",           -- цвет метки у тех, кому он не свой (машина банды, работы)
+    world = 0,                       -- virtual world
+    blip = "owner",                  -- who sees it on the map and radar: "owner" (default), "all", "none"
+    blipColor = "#E05050",           -- the blip color for those it isn't their own (a gang's or a job's vehicle)
 })
-setVehicle(id, { locked = false })   -- поменять любые поля; x, y, z — переставить
-removeVehicle(id)                    -- если на нём кто-то сидит, его ссадит
+setVehicle(id, { locked = false })   -- change any fields; x, y, z — move it
+removeVehicle(id)                    -- if someone is sitting in it, they are kicked out
 
 local v = vehicleInfo(id)            -- {id, model, x, y, z, yaw, fuel, health, world, locked, blip, owner, driver, passenger}
 for _, v in ipairs(vehicles()) do print(v.id, v.owner, v.driver and v.driver.name) end
 ```
 
-Игроки:
+Players:
 
-| Метод | Описание |
+| Method | Description |
 |---|---|
-| `player:putInVehicle(id [, passenger])` | посадить за руль; `passenger = true` — сзади за тем, кто за рулём. Если транспорт далеко, игрока перенесёт к нему |
-| `player:exitVehicle()` | ссадить с транспорта |
-| `player:markVehicle(id [, on = true])` | показать транспорт на карте и радаре этому игроку (работа, банда), `false` — убрать |
+| `player:putInVehicle(id [, passenger])` | put them behind the wheel; `passenger = true` — behind the driver. If the vehicle is far away, the player is moved to it |
+| `player:exitVehicle()` | take them out of the vehicle |
+| `player:markVehicle(id [, on = true])` | show the vehicle on the map and radar to this player (a job, a gang), `false` — remove |
 
-Замок и режим: запертый транспорт пускает только владельца. Последнее слово за режимом:
+Lock and mode: a locked vehicle lets in only the owner. The mode has the last word:
 
 ```lua
 on("vehicleEnter", function(player, id, allowed, passenger)
     local v = vehicleInfo(id)
-    if v.owner == "police" and player.data.job ~= "police" then return false end   -- служебный: только своим
-    if passenger then return true end                                               -- сзади — кого угодно
+    if v.owner == "police" and player.data.job ~= "police" then return false end   -- service vehicle: only for its own
+    if passenger then return true end                                               -- in the back — anyone
 end)
 on("vehicleExit", function(player, id) local v = vehicleInfo(id); print("left at", v.x, v.y, v.fuel) end)
 ```
 
-**Метки.** Свой транспорт игрок видит как обычно в игре: значок на карте и радаре, над ним — значок с поршнями. Чужой не виден. Транспорт с `blip = "all"` или отмеченный через `markVehicle` виден маленьким мотоциклом на радаре и тонированным значком над ним, цвета `blipColor` (по умолчанию голубой).
+**Marks.** The player sees their own vehicle as usual in the game: a blip on the map and radar, and an icon with pistons above it. Someone else's is not visible. A vehicle with `blip = "all"` or marked via `markVehicle` is visible as a small motorcycle on the radar and a tinted icon above it, in the `blipColor` color (light blue by default).
 
-**Модели.**
-- `bike` — мотоцикл Дикона.
-- `golfcart` — гольф-кар. Не ломается: игровой ремонт на нём не работает.
-- `dumptruck`, `militarytruck` — самосвал и военный грузовик. **Экспериментально**: игроки проходят сквозь часть кузова.
+**Models.**
+- `bike` — Deacon's motorcycle.
+- `golfcart` — a golf cart. Doesn't break: the game's repair doesn't work on it.
+- `dumptruck`, `militarytruck` — a dump truck and a military truck. **Experimental**: players pass through part of the body.
 
-У всех моделей есть задний ход.
+All models have reverse gear.
 
-**Пассажир.** Если за рулём уже сидит игрок, другой игрок у транспорта видит «[E] Сесть сзади». На мотоцикле — на заднее сиденье, в гольф-каре — рядом. Сидя сзади, ударить нельзя. Если водитель слезает, пассажир слезает тоже.
+**Passenger.** If a player is already behind the wheel, another player near the vehicle sees "[E] Ride along". On a motorcycle — on the back seat, in a golf cart — next to them. You can't hit while sitting behind. If the driver gets out, the passenger gets out too.
 
-## Входы
+## Entrances
 
-Двери в интерьеры, как входы в дома и бизнесы на RP-серверах SA-MP: у каждого входа две стороны, [F] у одной переносит игрока к другой и в её виртуальный мир. Интерьер обычно строят из пропсов где-нибудь под картой, в своём мире, чтобы в одном месте могло быть много одинаковых «квартир».
+Doors to interiors, like house and business entrances on SA-MP RP servers: each entrance has two sides, [F] at one moves the player to the other and into its virtual world. An interior is usually built from props somewhere under the map, in its own world, so that many identical "apartments" can exist in one place.
 
-Ставятся в редакторе: «Мир» → «Входы» → «+ Вход»: первый клик — сторона снаружи, второй — внутри. У выделенного входа задаются ключ, надпись у [F], «заперт», мир снаружи и мир внутри; кнопка «К другой стороне» выделяет вторую сторону. Хранятся в `world.json` (`"doors"`), сервер создаёт их сам. Кода не нужно; режим может вмешаться:
+They are placed in the editor: "World" → "Doors" → "+ Door": the first click is the outside, the second is the inside. For the selected entrance you set the key, the text at [F], "locked", the outside world and the inside world; the "Other end" button selects the second side. Stored in `world.json` (`"doors"`); the server creates them itself. No code is needed; the mode can intervene:
 
 ```lua
-on("door", function(player, key, side)          -- side: "a" — снаружи, "b" — изнутри
+on("door", function(player, key, side)          -- side: "a" — outside, "b" — inside
     local house = storage.get("house:" .. key)
-    if house and house.owner == player.steamId then return true end   -- владелец проходит и в запертый
-    if key == "bank_vault" and not player.data.police then return false end  -- не пускать
-    -- nil: решает замок входа
+    if house and house.owner == player.steamId then return true end   -- the owner passes even through a locked one
+    if key == "bank_vault" and not player.data.police then return false end  -- don't let in
+    -- nil: the entrance's lock decides
 end)
-setDoor("house1", { locked = true, text = "Дом (продаётся)" })
+setDoor("house1", { locked = true, text = "House (for sale)" })
 getDoor("house1")   -- {key, text, locked, a = {x, y, z, yaw, world}, b = {...}}
-doors()             -- все входы
+doors()             -- all entrances
 ```
 
-Запертый вход без разрешения обработчика отвечает игроку «Заперто».
+A locked entrance without the handler's permission answers the player "Locked".
 
-## Лут
+## Loot
 
-Предметы, которые лежат в мире и возвращаются через заданное время после того, как их подобрали: аптечки, патроны, материалы. «Мир» → «Лут» → «+ Лут» кладёт предмет, выбранный во вкладке «Предметы» библиотеки. У выделенного: предмет, количество, через сколько секунд вернётся (`0` — один раз), метка. Хранится в `world.json` (`"loot"`). Подобрать его можно, как предмет `spawnItem` (засчитывается и защищённым предметам, см. «Античит»); игровое событие `gameEvent` с `type = "pickup"` приходит, как обычно. Список и состояние — `loot()`: `{key, item, count, tag, x, y, z, present, itemId}`.
+Items that lie in the world and come back some time after being picked up: medkits, ammo, materials. "World" → "Loot" → "+ Loot" places the item selected in the library's "Items" tab. For the selected one you set: the item, the count, in how many seconds it comes back (`0` — once), a tag. Stored in `world.json` (`"loot"`). It can be picked up like a `spawnItem` item (it counts for protected items too, see "Anti-cheat"); the `gameEvent` game event with `type = "pickup"` arrives as usual. The list and state — `loot()`: `{key, item, count, tag, x, y, z, present, itemId}`.
 
-## Точки появления
+## Spawn points
 
-В «Мир» → «Логика режима» у каждого режима есть список `spawn`. Если в нём есть точки, сервер ставит входящих и возродившихся игроков на случайную из них (иначе — на `Spawn` из `server.ini`). Обработчик `playerRespawn` по-прежнему может выбрать своё место.
+In "World" → "Mode logic" every mode has a `spawn` list. If it has points, the server puts joining and respawning players on a random one of them (otherwise — on `Spawn` from `server.ini`). The `playerRespawn` handler can still choose its own place.
 
-## Вертолёт
+## Helicopter
 
-Вертолёт NERO для быстрого перемещения по карте: такси между площадками, доставка на задание, эвакуация. Им управляет не игрок, а режим. Пилот — NPC, вертолёт взлетает, летит по точкам маршрута и садится. У всех игроков он летит одинаково, потому что сервер раздаёт маршрут и время вылета. Экспериментально.
+A NERO helicopter for fast travel across the map: a taxi between pads, delivery to a job, evacuation. It is controlled not by a player but by the mode. The pilot is an NPC; the helicopter takes off, flies through the route points and lands. It flies the same way for all players, because the server distributes the route and the departure time. Experimental.
 
 ```lua
 local heli = createVehicle({
-    x = pad.x, y = pad.y, z = pad.z,  -- z — земля площадки
+    x = pad.x, y = pad.y, z = pad.z,  -- z is the pad's ground
     yaw = pad.yaw,
     model = "helicopter",
-    npc = { look = "m_sur_copeland_guard_08", name = "Pilot" },   -- пилот (облик — как у NPC; без облика — Дикон)
+    npc = { look = "m_sur_copeland_guard_08", name = "Pilot" },   -- the pilot (look — as for an NPC; with no look — Deacon)
 })
 
 driveVehicle(heli, {
-    points = { { x = 1000, y = 2000, z = -5300 }, { 5000, 9000, -5100 } },   -- точки на земле; последняя — где сесть
-    speed = 25,        -- м/с
-    altitude = 40,     -- м над точками: взлёт, полёт на этой высоте, посадка в последней
-    onArrive = function(id) end,   -- сел
+    points = { { x = 1000, y = 2000, z = -5300 }, { 5000, 9000, -5100 } },   -- points on the ground; the last one is where to land
+    speed = 25,        -- m/s
+    altitude = 40,     -- m above the points: takeoff, flight at this height, landing at the last one
+    onArrive = function(id) end,   -- landed
 })
-stopVehicle(heli)      -- прервать полёт: сядет там, где сейчас
+stopVehicle(heli)      -- abort the flight: it lands where it is now
 ```
 
-Как летит:
-- **Взлёт и посадка** — вертикальные, медленнее полёта. Анимация винтов и корпуса (взлёт, полёт, посадка, на земле) включается сама.
-- **Высота.** Держится заданная `altitude`, но не ниже 25 м над рельефом под вертолётом и в нескольких секундах впереди: перед горой он заранее набирает высоту.
-- **Посадка** — на землю под последней точкой, даже если её `z` задан неточно.
-- **Маршрут** — каждый новый `driveVehicle` заменяет старый, полёт начинается оттуда, где вертолёт сейчас.
+How it flies:
+- **Takeoff and landing** are vertical, slower than flight. The rotor and body animation (takeoff, flight, landing, on the ground) switches on by itself.
+- **Altitude.** The given `altitude` is held, but not lower than 25 m above the terrain under the helicopter and a few seconds ahead: before a mountain it gains height in advance.
+- **Landing** is on the ground under the last point, even if its `z` is set inaccurately.
+- **Route** — each new `driveVehicle` replaces the old one, and the flight starts from where the helicopter is now.
 
-**Пассажиры.** В салоне 4 места. Игрок у стоящего вертолёта видит «[E] Сесть»; внутри — вид снаружи на вертолёт, камеру крутит мышь, самого игрока не видно. Выйти («[E] Выйти») можно только когда вертолёт стоит на земле; в полёте не выпускает ни клиент, ни сервер. Сидящих в нём отдаёт `vehicleInfo(heli).passengers`, высадить можно `player:exitVehicle()`, посадить — `player:putInVehicle(heli)`. Запретить посадку можно в `vehicleEnter`, как для другого транспорта (`passenger` будет `true`).
+**Passengers.** The cabin has 4 seats. A player near a stationary helicopter sees "[E] Board"; inside, the view is from outside on the helicopter, the mouse rotates the camera, the player themselves is not visible. You can get out ("[E] Get out") only when the helicopter is on the ground; in flight neither the client nor the server lets you out. Those sitting in it are returned by `vehicleInfo(heli).passengers`, you can drop them off with `player:exitVehicle()`, and put them in with `player:putInVehicle(heli)`. Boarding can be forbidden in `vehicleEnter`, as for other vehicles (`passenger` will be `true`).
 
-Такси между двумя площадками из редактора (точки логики `heli_a` и `heli_b`): первый севший запускает отсчёт, через 20 секунд вертолёт улетает на другую площадку, садится, через 15 секунд высаживает всех и ждёт там следующих пассажиров.
+A taxi between two pads from the editor (logic points `heli_a` and `heli_b`): the first to board starts the countdown, after 20 seconds the helicopter flies to the other pad, lands, after 15 seconds drops everyone off and waits there for the next passengers.
 
 ```lua
 local logic = require("logic")
@@ -724,12 +724,12 @@ local atA, departing = true, false
 on("vehicleEnter", function(player, id)
     if id ~= heli or departing then return end
     departing = true
-    broadcast("Вертолёт вылетает через 20 секунд", "#F2D16B")
+    broadcast("The helicopter departs in 20 seconds", "#F2D16B")
     after(20000, function()
         local to = atA and b or a
         driveVehicle(heli, { points = { { to.x, to.y, to.z } }, speed = 30, altitude = 60, onArrive = function(vid)
             atA = not atA
-            for _, p in ipairs(vehicleInfo(vid).passengers) do p:message("Прилетели", "#7CD67C") end
+            for _, p in ipairs(vehicleInfo(vid).passengers) do p:message("We have arrived", "#7CD67C") end
             after(15000, function()
                 for _, p in ipairs(vehicleInfo(vid).passengers) do p:exitVehicle() end
                 departing = false
@@ -739,88 +739,88 @@ on("vehicleEnter", function(player, id)
 end)
 ```
 
-## Картинки
+## Images
 
-Свои картинки режима: PNG, JPG или GIF (первый кадр) в папке `modes/<режим>/images`. До 2 МБ и до 2048×2048 пикселей каждая, до 32 МБ на режим. Клиенты скачивают их при входе и кэшируют: изменённая картинка скачается заново, остальные — нет.
+A mode's own images: PNG, JPG or GIF (first frame) in the `modes/<mode>/images` folder. Up to 2 MB and up to 2048×2048 pixels each, up to 32 MB per mode. Clients download them on join and cache them: a changed image is downloaded again, the others are not.
 
-Где их можно показать:
-- **HUD**: `player:hud("logo", { image = "logo.png", x = 0.5, y = 0.02, align = "center", h = 0.05 })` (см. «HUD»);
-- **в тексте** диалогов и HUD: `{img:shop.png}` — картинка высотой со строку, например `items = { "{img:box.gif} Ящик	$5" }`;
-- **в мире** — над точкой, повёрнута к камере, уменьшается с расстоянием:
+Where they can be shown:
+- **HUD**: `player:hud("logo", { image = "logo.png", x = 0.5, y = 0.02, align = "center", h = 0.05 })` (see "HUD");
+- **in the text** of dialogs and HUD: `{img:shop.png}` — an image the height of a line, e.g. `items = { "{img:box.gif} Crate\t$5" }`;
+- **in the world** — above a point, turned to the camera, shrinking with distance:
 
 ```lua
 local icon = createIcon({
-    x = shop.x, y = shop.y, z = shop.z + 230,   -- например, над головой продавца
+    x = shop.x, y = shop.y, z = shop.z + 230,   -- e.g. above the seller's head
     image = "shop.png",
-    size = 40,              -- высота в пикселях вблизи
-    distance = 25,          -- видна с 25 м
-    text = "Магазин",       -- подпись под ней (можно {RRGGBB})
-    color = "#FFFFFF",      -- тон (можно "#RRGGBBAA")
-    world = 0,              -- виртуальный мир; не задано — во всех
-    throughWalls = false,   -- true — видна и сквозь стены
+    size = 40,              -- height in pixels up close
+    distance = 25,          -- visible from 25 m
+    text = "Shop",          -- a caption under it (can use {RRGGBB})
+    color = "#FFFFFF",      -- tint (can be "#RRGGBBAA")
+    world = 0,              -- virtual world; not set — in all
+    throughWalls = false,   -- true — visible through walls too
 })
-setIcon(icon, { text = "Закрыто" })
+setIcon(icon, { text = "Closed" })
 removeIcon(icon)
 ```
 
-Картинки в мире рисуются поверх игры: стены их прячут, но они не освещаются и не отбрасывают тень. Значки на игровой карте и радаре — `createBlip` (см. «Значки на карте»).
+Images in the world are drawn over the game: walls hide them, but they are not lit and cast no shadow. Blips on the game map and radar are `createBlip` (see "Map blips").
 
-## Объекты
+## Objects
 
-Пропсы игры, которые ставит код режима, как `CreateObject` / `MoveObject` в SA-MP: ворота, шлагбаум, двери, мебель, ящики. В отличие от пропсов из редактора (`world.json`) их можно двигать и убирать по ходу игры. Видны в пределах 400 м, с учётом виртуальных миров; движение у всех игроков одинаковое: сервер раздаёт цель и время.
+Game props placed by the mode's code, like `CreateObject` / `MoveObject` in SA-MP: gates, a barrier, doors, furniture, crates. Unlike props from the editor (`world.json`), they can be moved and removed during the game. Visible within 400 m, taking virtual worlds into account; the movement is the same for all players: the server distributes the target and the time.
 
 ```lua
 local gate = createObject({
-    model = "SM_Militia_Fort_Gate_01a",   -- имя меша из data/props.txt (последняя часть пути) или asset = "/Game/..."
-    x = 1000, y = 2000, z = -5300,        -- единицы Unreal; z — низ модели, как в редакторе
+    model = "SM_Militia_Fort_Gate_01a",   -- mesh name from data/props.txt (the last part of the path) or asset = "/Game/..."
+    x = 1000, y = 2000, z = -5300,        -- Unreal units; z is the bottom of the model, as in the editor
     pitch = 0, yaw = 90, roll = 0,
     scale = 1,
-    world = 0,                            -- виртуальный мир; не задано — во всех
-    collision = true,                     -- false — сквозь него можно пройти
+    world = 0,                            -- virtual world; not set — in all
+    collision = true,                     -- false — you can walk through it
 })
-moveObject(gate, { z = getObject(gate).z + 400, time = 4,          -- поднять на 4 м за 4 секунды
-                   onArrive = function(id) print("открыто") end })
-moveObject(gate, { yaw = 0, speed = 1 })   -- или скорость, м/с (поворот без сдвига — 1 секунда)
-stopObject(gate)                           -- остановить там, где сейчас
-setObject(gate, { model = "...", scale = 2 })   -- поменять что угодно (движение прекращается)
+moveObject(gate, { z = getObject(gate).z + 400, time = 4,          -- raise by 4 m over 4 seconds
+                   onArrive = function(id) print("opened") end })
+moveObject(gate, { yaw = 0, speed = 1 })   -- or a speed, m/s (a rotation without a shift — 1 second)
+stopObject(gate)                           -- stop where it is now
+setObject(gate, { model = "...", scale = 2 })   -- change anything (the movement stops)
 removeObject(gate)
-getObject(gate)   -- {id, asset, x, y, z, pitch, yaw, roll, scale, world, collision, moving} — где он сейчас
-objects()         -- все объекты режима
+getObject(gate)   -- {id, asset, x, y, z, pitch, yaw, roll, scale, world, collision, moving} — where it is now
+objects()         -- all of the mode's objects
 ```
 
-`moveObject` возвращает время движения в секундах. Событие `on("objectMoved", function(id) end)` приходит после `onArrive`. Каталог моделей — `data/props.txt` (13 тысяч мешей игры, по группам), в редакторе их видно в «Библиотеке». Объекты режима убираются при его перезагрузке. Игроков движущийся объект не толкает: ставьте ворота так, чтобы они не проезжали сквозь людей.
+`moveObject` returns the movement time in seconds. The `on("objectMoved", function(id) end)` event arrives after `onArrive`. The model catalog is `data/props.txt` (13 thousand game meshes, by group); in the editor they can be seen in the "Library". The mode's objects are removed when it reloads. A moving object doesn't push players: place gates so that they don't pass through people.
 
 ```lua
--- Ворота базы фракции: открываются по F у пульта, если игрок в фракции, и закрываются через 8 секунд.
+-- A faction base gate: opens on F at the console if the player is in the faction, and closes after 8 seconds.
 local gate = createObject({ model = "SM_Militia_Fort_Gate_01a", x = gx, y = gy, z = gz, yaw = 90 })
-createInteraction({ x = px, y = py, z = pz, radius = 2, text = "Ворота", onUse = function(p)
-    if p.data.faction ~= "militia" then return p:tip("Заперто", 3) end
+createInteraction({ x = px, y = py, z = pz, radius = 2, text = "Gate", onUse = function(p)
+    if p.data.faction ~= "militia" then return p:tip("Locked", 3) end
     moveObject(gate, { z = gz + 450, time = 3 })
     after(8000, function() moveObject(gate, { z = gz, time = 3 }) end)
 end })
 ```
 
-## Анимации игрока
+## Player animations
 
-Как `ApplyAnimation` в SA-MP: режим проигрывает на игроке анимацию игры — сесть, поднять руки, помахать. Другие игроки видят её, потому что поза тела передаётся как обычно.
+Like `ApplyAnimation` in SA-MP: the mode plays a game animation on the player — sit, raise hands, wave. Other players see it, because the body pose is transmitted as usual.
 
 ```lua
-player:playAnim("surrender")                                  -- руки вверх, пока не сдвинется
-player:playAnim("sit", { loop = true, freeze = true })         -- сесть (ставьте игрока на скамью или ящик)
-player:playAnim("wave", { loop = false, freeze = false })      -- помахать один раз, идти можно
+player:playAnim("surrender")                                  -- hands up, until they move
+player:playAnim("sit", { loop = true, freeze = true })         -- sit (put the player on a bench or a crate)
+player:playAnim("wave", { loop = false, freeze = false })      -- wave once, walking is allowed
 player:stopAnim()
-print(player.anim)                                             -- "dcn_surrender" или nil
+print(player.anim)                                             -- "dcn_surrender" or nil
 on("animEnd", function(player, reason) end)                    -- "done" / "moved"
 ```
 
-| Поле `opts` | |
+| `opts` field | |
 |---|---|
-| `loop` | повторять (по умолчанию `true`) |
-| `freeze` | игрок не может идти, пока анимация играет (по умолчанию `true`) |
-| `stopOnMove` | WASD или пробел прерывают анимацию (по умолчанию `true`; событие `animEnd` с `"moved"`) |
-| `rate` | скорость (1 — обычная) |
+| `loop` | repeat (default `true`) |
+| `freeze` | the player can't walk while the animation plays (default `true`) |
+| `stopOnMove` | WASD or space interrupt the animation (default `true`; the `animEnd` event with `"moved"`) |
+| `rate` | speed (1 — normal) |
 
-Имена — из `data/anims.txt`, как у NPC (`idle`, `talk`, `wave`, `surrender`, `sit`, `sit_talk`, `kneel`, `prisoner`…) или полный путь. Анимация играет во всё тело (слот `FullBody` анимационного блюпринта Дикона). Смерть прерывает её. Для RP-команд вроде `/sit`, `/hands`, `/lay` этого достаточно:
+Names are from `data/anims.txt`, as for NPCs (`idle`, `talk`, `wave`, `surrender`, `sit`, `sit_talk`, `kneel`, `prisoner`…) or a full path. The animation plays on the whole body (the `FullBody` slot of Deacon's animation blueprint). Death interrupts it. For RP commands like `/sit`, `/hands`, `/lay` this is enough:
 
 ```lua
 for cmd, anim in pairs({ sit = "sit", hands = "surrender", wave = "wave", kneel = "kneel", lay = "lie" }) do
@@ -829,445 +829,445 @@ end
 command("stop", function(p) p:stopAnim() end)
 ```
 
-## Значки на карте
+## Map blips
 
-Свои значки на большой карте и радаре, как `SetPlayerMapIcon` в SA-MP: магазины, гаражи, базы фракций, точки работ. Значки берутся из иконок карты игры.
+Your own blips on the big map and radar, like `SetPlayerMapIcon` in SA-MP: shops, garages, faction bases, job sites. The blips are taken from the game's map icons.
 
 ```lua
 local shop = createBlip({
     x = 1000, y = 2000, z = -5300,
-    icon = "MAP_objective_encampment_merchant",   -- текстура карты игры (можно без "MAP_": "fuel")
-    title = {ru = "Магазин", en = "Shop"},        -- подпись обычной точки карты; можно просто строку
-    description = {ru = "Припасы", en = "Supplies"}, -- необязательное описание при наведении
-    color = "#F2D16B",                            -- тон
+    icon = "MAP_objective_encampment_merchant",   -- a game map texture (can be without "MAP_": "fuel")
+    title = {ru = "Магазин", en = "Shop"},        -- caption of an ordinary map point; can be just a string
+    description = {ru = "Припасы", en = "Supplies"}, -- optional description on hover
+    color = "#F2D16B",                            -- tint
     scale = 1,
-    map = true, radar = true,                     -- где показывать
-    edge = false,                                 -- true: на краю радара, когда далеко (по умолчанию — только рядом)
-    world = 0,                                    -- виртуальный мир
-    player = somePlayer,                          -- только этому игроку (дом, личная работа)
-    follow = otherPlayer,                         -- ходит за этим игроком (раз в секунду, от 3 м); исчезает, когда он выходит
+    map = true, radar = true,                     -- where to show
+    edge = false,                                 -- true: at the radar edge when far (by default — only nearby)
+    world = 0,                                    -- virtual world
+    player = somePlayer,                          -- only for this player (a house, a personal job)
+    follow = otherPlayer,                         -- follows this player (once a second, from 3 m); disappears when they leave
 })
 setBlip(shop, { color = "#E07070" })
 removeBlip(shop)
 ```
 
-При наведении значок показывает название обычной точки карты, без сюжетной карточки миссии. Поля `title` и `description` принимают строку или таблицу `{ru=..., en=...}`; сервер выбирает язык отдельно для каждого игрока.
+On hover the blip shows the name of an ordinary map point, without the story mission card. The `title` and `description` fields accept a string or a `{ru=..., en=...}` table; the server picks the language separately for each player.
 
-Иконки игры: `MAP_objective_encampment_merchant` (торговец), `MAP_objective_encampment_mechanic` (механик), `MAP_objective_encampment_food` (еда), `MAP_objective_encampment_locker` (шкафчик), `MAP_objective_encampment_bounty`, `MAP_fuel`, `MAP_player_safehouse` (убежище), `MAP_objective_encampment` (лагерь), `MAP_encampment_job`, `MAP_objective_NERO_checkpoint`, `MAP_objective_ambush`, `MAP_nest`, `MAP_collectable`, `MAP_plant`, `MAP_alert`, `MAP_enemy`, `MAP_bike`, `MAP_player_marker` (по умолчанию) и др. Радар показывает значки в радиусе примерно 25 м вокруг игрока; дальние — только с `edge = true`, на краю. Значки режима убираются при его перезагрузке.
+Game icons: `MAP_objective_encampment_merchant` (trader), `MAP_objective_encampment_mechanic` (mechanic), `MAP_objective_encampment_food` (food), `MAP_objective_encampment_locker` (locker), `MAP_objective_encampment_bounty`, `MAP_fuel`, `MAP_player_safehouse` (safehouse), `MAP_objective_encampment` (camp), `MAP_encampment_job`, `MAP_objective_NERO_checkpoint`, `MAP_objective_ambush`, `MAP_nest`, `MAP_collectable`, `MAP_plant`, `MAP_alert`, `MAP_enemy`, `MAP_bike`, `MAP_player_marker` (default), etc. The radar shows blips within a radius of about 25 m around the player; distant ones — only with `edge = true`, at the edge. The mode's blips are removed when it reloads.
 
-## Звуки
+## Sounds
 
-Звуки игры, как `PlayerPlaySound` / `PlayAudioStreamForPlayer` в SA-MP: сигнал, выстрел, сирена, звук двери, интерфейс.
+Game sounds, like `PlayerPlaySound` / `PlayAudioStreamForPlayer` in SA-MP: a horn, a shot, a siren, a door sound, the interface.
 
 ```lua
-playSound("cc_wpn_m9_npc", { x = x, y = y, z = z })            -- в точке мира (3D): слышат все в радиусе
-playSound("ui_tutorial_x_press")                                 -- всем, без точки (2D)
-player:playSound("ui_mech_scroll")                               -- только этому игроку
+playSound("cc_wpn_m9_npc", { x = x, y = y, z = z })            -- at a world point (3D): heard by everyone in range
+playSound("ui_tutorial_x_press")                                 -- to everyone, with no point (2D)
+player:playSound("ui_mech_scroll")                               -- only to this player
 playSound("cc_amb_infestation", { x = x, y = y, z = z, range = 300, volume = 0.6, pitch = 1, world = 0 })
 ```
 
-| Поле | |
+| Field | |
 |---|---|
-| `x`, `y`, `z` | точка звука; без них — 2D, без положения |
-| `range` | кому отправить 3D-звук: игрокам ближе этого числа метров (по умолчанию 100). Сама громкость затухает по настройкам звука игры |
-| `volume`, `pitch` | громкость и высота (1 — как в игре) |
-| `world` | только игрокам этого виртуального мира |
-| `player` | только этому игроку |
+| `x`, `y`, `z` | the sound's point; without them — 2D, no position |
+| `range` | who to send a 3D sound to: players closer than this many meters (default 100). The volume itself falls off per the game's sound settings |
+| `volume`, `pitch` | volume and pitch (1 — as in the game) |
+| `world` | only to players of this virtual world |
+| `player` | only to this player |
 
-Имена — из `data/sounds.txt` (около 3000 звуков: оружие, взрывы, транспорт, двери, интерфейс, окружение, музыка; `cc_*` — звуки с вариантами, хорошо звучат в 3D) или полный путь `/Game/Audio/...`. Реплики персонажей в каталог не входят.
+Names are from `data/sounds.txt` (about 3000 sounds: weapons, explosions, vehicles, doors, interface, environment, music; `cc_*` — sounds with variants, they sound good in 3D) or a full path `/Game/Audio/...`. Character lines are not in the catalog.
 
-**Выстрелы других игроков** слышны сами: клиент стрелявшего сообщает о выстреле, сервер передаёт его игрокам в радиусе 300 м (того же мира), и у них звучит звук этого оружия из игры в точке стрелка. Режим узнаёт о выстрелах из события `playerShot`.
+**Other players' shots** are audible by themselves: the shooter's client reports the shot, the server passes it to players within 300 m (of the same world), and they hear that weapon's game sound at the shooter's position. The mode learns about shots from the `playerShot` event.
 
-## Голосовой чат
+## Voice chat
 
-Голос по кнопке (push-to-talk), как в голосовых плагинах SA-MP и в FiveM: игроки слышат тех, кто говорит рядом с ними, из того места, где стоит говорящий (3D, громкость падает с расстоянием), а режим добавляет каналы: рации на частотах, телефонные звонки.
+Push-to-talk voice, as in SA-MP and FiveM voice plugins: players hear those who speak near them, from the place where the speaker stands (3D, the volume falls off with distance), and the mode adds channels: radios on frequencies, phone calls.
 
-**Игроку.** `N` — говорить, `K` — говорить в рацию (если режим её дал). Микрофон — тот, что выбран в Steam (Steam → Настройки → Голос), поэтому нужен запущенный Steam. Пока зажата клавиша, слева на экране горит «Говорите» / «Рация: канал». У говорящих рядом игроков зелёная точка у полоски здоровья, а говорящие по рации и телефону перечислены слева.
+**For the player.** `N` — talk, `K` — talk on the radio (if the mode gave one). The microphone is the one selected in Steam (Steam → Settings → Voice), so Steam must be running. While the key is held, "Talking" / "Radio: channel" is lit on the left of the screen. Players speaking nearby have a green dot by the health bar, and those speaking on the radio and phone are listed on the left.
 
-**Настройки — команда `/voice` в чате** (её обрабатывает сам клиент, на сервер она не уходит): громкость своего микрофона (0–250 %) со шкалой уровня (красная — перегруз) и проверкой «слышать себя» (свой голос слышите только вы, никому не отправляется), громкость других игроков (0–200 %), клавиши «говорить» и «рация» (кнопка, затем нужная клавиша; Esc — без клавиши), микрофон всегда включён, микрофон выключен (только слушать). Steam отдаёт голос уже сжатым, поэтому громкость микрофона едет вместе с голосом и применяется у слушателей. Сохраняется в `DGMP.ini` рядом с `DGMP.exe`:
+**Settings — the `/voice` chat command** (the client handles it itself, it doesn't go to the server): your own microphone volume (0–250 %) with a level meter (red — overload) and a "hear yourself" check (only you hear your own voice, nothing is sent to anyone), other players' volume (0–200 %), the "talk" and "radio" keys (a button, then the desired key; Esc — no key), microphone always on, microphone off (listen only). Steam delivers the voice already compressed, so the microphone volume travels with the voice and is applied at the listeners. Saved in `DGMP.ini` next to `DGMP.exe`:
 
 ```ini
 [Voice]
-TalkKey=N         ; A-Z, 0-9, F1-F24, CapsLock, Mouse4, Mouse5, Mouse3, LAlt, RAlt, LCtrl, RCtrl, Tilde, None или код 0x..
-RadioKey=K        ; B в игре — бинокль
-MicVolume=100     ; громкость своего микрофона, 0-250 %
-Volume=100        ; громкость чужих голосов, 0-200 %
-Microphone=1      ; 0 — не говорить совсем (слушать можно)
-OpenMic=0         ; 1 — микрофон включён всегда, без клавиши (голос рядом и звонки; рация — по-прежнему клавишей)
+TalkKey=N         ; A-Z, 0-9, F1-F24, CapsLock, Mouse4, Mouse5, Mouse3, LAlt, RAlt, LCtrl, RCtrl, Tilde, None or a code 0x..
+RadioKey=K        ; B in the game is the binoculars
+MicVolume=100     ; your own microphone volume, 0-250 %
+Volume=100        ; volume of other players' voices, 0-200 %
+Microphone=1      ; 0 — don't talk at all (listening is possible)
+OpenMic=0         ; 1 — the microphone is always on, no key (nearby voice and calls; the radio is still by key)
 ```
 
-В чате, диалоге и меню клавиши не работают.
+In chat, in a dialog and in a menu the keys don't work.
 
-**Кто слышит.** Голос идёт через сервер (сам сервер его не декодирует, только решает, кому переслать):
+**Who hears.** The voice goes through the server (the server doesn't decode it itself, it only decides whom to forward it to):
 
-- **рядом**: все игроки того же виртуального мира ближе дальности говорящего (`VoiceRange` в `server.ini`, по умолчанию 25 м). Слышно и то, что сказано в рацию: стоящий рядом слышит говорящего в рацию;
-- **каналы** режима: игрок может быть в нескольких каналах (до 16), в каждом одним из способов:
+- **nearby**: all players of the same virtual world closer than the speaker's range (`VoiceRange` in `server.ini`, 25 m by default). What is said on the radio is heard too: someone standing nearby hears the person speaking on the radio;
+- **channels** of the mode: a player can be in several channels (up to 16), in each in one of these ways:
 
-| Способ | Что говорит в канал | Как слышит канал |
+| Mode | What it sends to the channel | How it hears the channel |
 |---|---|---|
-| `"radio"` (по умолчанию) | то, что сказано с клавишей рации | как рацию: без положения, с «рацийным» звуком |
-| `"call"` | всё, что говорит (любой клавишей) | как телефон: без положения, узкая полоса |
-| `"listen"` | ничего | как рацию (сканер, прослушка) |
+| `"radio"` (default) | what is said with the radio key | as a radio: no position, with a "radio" sound |
+| `"call"` | everything they say (with any key) | as a phone: no position, narrow band |
+| `"listen"` | nothing | as a radio (scanner, eavesdropping) |
 
-Член канала, стоящий рядом с говорящим, слышит его один раз — по каналу.
+A channel member standing next to the speaker hears them once — through the channel.
 
 ```lua
--- Рация: частота из команды /r 101.5
+-- Radio: a frequency from the command /r 101.5
 command("r", function(player, args)
-    if args == "" then player:setVoiceChannel(nil); return player:message("Рация выключена") end
-    player:setVoiceChannel("Рация " .. args)  -- имя канала видно у игрока на экране
+    if args == "" then player:setVoiceChannel(nil); return player:message("Radio off") end
+    player:setVoiceChannel("Radio " .. args)  -- the channel name is shown on the player's screen
 end)
 
--- Телефонный звонок: оба в канале "call", пока не положат трубку
+-- A phone call: both are in the "call" channel until one hangs up
 local function call(a, b)
-    local ch = "Звонок " .. a.id .. "-" .. b.id
+    local ch = "Call " .. a.id .. "-" .. b.id
     a:joinVoiceChannel(ch, "call"); b:joinVoiceChannel(ch, "call")
 end
 local function hangUp(a, b)
-    local ch = "Звонок " .. a.id .. "-" .. b.id
+    local ch = "Call " .. a.id .. "-" .. b.id
     a:leaveVoiceChannel(ch); b:leaveVoiceChannel(ch)
 end
 
--- Мегафон: слышно на 80 м, пока он в руках
-player:setVoiceRange(80)        -- player:setVoiceRange(nil) — снова как у сервера
+-- Megaphone: audible at 80 m while it is in the hands
+player:setVoiceRange(80)        -- player:setVoiceRange(nil) — as the server's again
 
--- Мёртвые молчат
+-- The dead are silent
 on("playerDeath", function(player) player:setVoiceMuted(true) end)
 on("playerRespawn", function(player) player:setVoiceMuted(false) end)
 
--- Не давать говорить в рацию в «тихой» зоне
+-- Don't allow talking on the radio in a "quiet" zone
 on("voice", function(player, talking, how)
     if talking and how == "radio" and player:inZone("bunker") then return false end
 end)
 ```
 
-| Метод игрока | |
+| Player method | |
 |---|---|
-| `setVoiceChannel(name [, how])` | оставить только этот канал (`how`: `"radio"`, `"call"`, `"listen"`); `nil` — выйти из всех |
-| `joinVoiceChannel(name [, how])` | войти ещё в один канал (или сменить способ). `false` — плохое имя (1–64 байта) или уже 16 каналов |
-| `leaveVoiceChannel([name])` | выйти из канала; без имени — из всех |
-| `voiceChannels()` | `{["имя"] = "radio" / "call" / "listen", ...}` |
-| `setVoiceRange(metres)` | на сколько метров слышен этот игрок (`0` — только в каналах); `nil` — как у сервера |
-| `voiceRange()` | его дальность, м |
-| `setVoiceMuted([true / false])` | заглушить: всё, что он говорит, никуда не идёт; на экране у него «Микрофон выключен сервером» |
+| `setVoiceChannel(name [, how])` | keep only this channel (`how`: `"radio"`, `"call"`, `"listen"`); `nil` — leave all |
+| `joinVoiceChannel(name [, how])` | join one more channel (or change the mode). `false` — a bad name (1–64 bytes) or already 16 channels |
+| `leaveVoiceChannel([name])` | leave a channel; without a name — all |
+| `voiceChannels()` | `{["name"] = "radio" / "call" / "listen", ...}` |
+| `setVoiceRange(metres)` | how many meters this player is audible (`0` — only in channels); `nil` — as the server's |
+| `voiceRange()` | their range, m |
+| `setVoiceMuted([true / false])` | mute: everything they say goes nowhere; on their screen "Your microphone is muted" |
 | `isVoiceMuted()` | |
-| `isTalking()` | `false`, `"talk"` или `"radio"` — говорит сейчас |
+| `isTalking()` | `false`, `"talk"` or `"radio"` — is talking right now |
 
-| Глобальная функция | |
+| Global function | |
 |---|---|
-| `setVoiceRange(metres)` | дальность голоса по умолчанию для всех |
-| `voiceRange()` | она же, м |
-| `voiceChannelPlayers(name)` | игроки в канале (массив) |
-| `setVoiceEnabled(on)` / `voiceEnabled()` | голосовой чат на сервере вообще: выключить всем на лету и включить обратно. Начальное значение — `Voice=` в `server.ini`, после перезагрузки режима — снова оно. Консоль: `voice on` / `voice off` |
+| `setVoiceRange(metres)` | the default voice range for everyone |
+| `voiceRange()` | the same, m |
+| `voiceChannelPlayers(name)` | players in the channel (an array) |
+| `setVoiceEnabled(on)` / `voiceEnabled()` | voice chat on the server at all: turn it off for everyone on the fly and back on. The initial value is `Voice=` in `server.ini`, after the mode reloads — it again. Console: `voice on` / `voice off` |
 
-Событие `voice(player, talking, how)`: игрок начал (`talking = true`) или перестал говорить, `how` — `"talk"` или `"radio"` (клавиша). `return false` в начале — этот разговор никто не услышит (до отпускания клавиши); конец приходит и тогда. Каналы, дальности и заглушки — состояние режима: при его перезагрузке они сбрасываются (`playerJoin` выставит их снова).
+The `voice(player, talking, how)` event: the player started (`talking = true`) or stopped talking, `how` is `"talk"` or `"radio"` (the key). `return false` at the start — nobody will hear this talk (until the key is released); the end arrives anyway. Channels, ranges and mutes are the mode's state: when it reloads they are reset (`playerJoin` will set them again).
 
-**Список игроков (Tab) и личный мут.** Tab в мультиплеере открывает и закрывает список всех игроков сервера: id, ник, пинг, кто говорит сейчас, свои столбцы режима. Сверху — «Говорят сейчас»: кого слышно в эту секунду. У каждого — громкость его голоса (0–200 %) и «Заглушить». Это только у себя: сервер перестаёт присылать заглушённый голос (не тратится трафик и место в `VoiceListeners`). Мут и громкость хранятся в `DGMP.ini` → `[Players]` по Steam-аккаунту игрока (без Steam — по нику) и действуют при следующих входах. Кнопка «Настройки голоса» открывает окно `/voice`. Tab игра в мультиплеере не получает.
+**Player list (Tab) and personal mute.** In multiplayer Tab opens and closes the list of all players on the server: id, nickname, ping, who is talking now, the mode's own columns. At the top is "Talking now": whom you can hear this second. Each has their voice volume (0–200 %) and "Mute". This is only for yourself: the server stops sending the muted voice (no traffic and no `VoiceListeners` slot is spent). The mute and volume are stored in `DGMP.ini` → `[Players]` by the player's Steam account (without Steam — by nickname) and apply on later joins. The "Voice settings" button opens the `/voice` window. The game gets no Tab in multiplayer.
 
 ```lua
-setScoreboard({ columns = { "Фракция", "Уровень" } })   -- свои столбцы (до 8); nil — без них
-player:setScoreboard({ "Полиция", 5 })                   -- ячейки игрока под ними
-on("voiceIgnore", function(player, target, on)            -- player заглушил target у себя (on) / вернул звук
-    -- например, автомут: если target заглушили пятеро за 10 минут — target:setVoiceMuted(true)
+setScoreboard({ columns = { "Faction", "Level" } })   -- your own columns (up to 8); nil — none
+player:setScoreboard({ "Police", 5 })                   -- the player's cells under them
+on("voiceIgnore", function(player, target, on)            -- player muted target for themselves (on) / restored the sound
+    -- e.g. automute: if target was muted by five in 10 minutes — target:setVoiceMuted(true)
 end)
 ```
 
-Столбцы и ячейки — состояние режима: после перезагрузки режима их нет, пока код не задаст снова.
+Columns and cells are the mode's state: after the mode reloads they are gone until the code sets them again.
 
-**Нагрузка.** Голос — Steam Voice (внутри Opus), около 2–3 КБ/с на говорящего. Ограничения в `server.ini`: `VoiceRate` — байт в секунду от одного игрока (лишнее отбрасывается), `VoiceListeners` — скольких говорящих один игрок слышит одновременно (новый голос ждёт, пока кто-то замолчит), `VoiceBandwidth` — байт в секунду голоса от всего сервера (0 — без ограничения). Консольная команда `voice` показывает, кто говорит, каналы и сколько передано и отброшено.
+**Load.** The voice is Steam Voice (Opus inside), about 2–3 KB/s per speaker. Limits in `server.ini`: `VoiceRate` — bytes per second from one player (the excess is dropped), `VoiceListeners` — how many speakers one player hears at once (a new voice waits until someone falls silent), `VoiceBandwidth` — bytes per second of voice from the whole server (0 — no limit). The `voice` console command shows who is talking, the channels, and how much was passed and dropped.
 
-## Ранение
+## Downed state
 
-Как «нокдаун» на RP-серверах: смертельный удар не убивает, а кладёт игрока на землю. Включает режим:
+Like a "knockdown" on RP servers: a lethal hit doesn't kill but puts the player on the ground. Enabled by the mode:
 
 ```lua
 setDeathMode("downed", {
-    bleedout = 300,      -- секунд до смерти от кровопотери
-    giveUpAfter = 30,    -- через сколько можно сдаться (удерживать E 3 с)
-    finish = true,       -- удар по раненому (игрок, зомби, NPC) добивает; false — не действует
-    voice = true,        -- раненый говорит голосом; false — молчит
-    chat = true,         -- раненый пишет в чат и вводит команды; false — нет (админам можно)
-    anim = "lie",        -- поза (data/anims.txt или путь)
+    bleedout = 300,      -- seconds until death from blood loss
+    giveUpAfter = 30,    -- after how long they can give up (hold E for 3 s)
+    finish = true,       -- a hit on the downed player (a player, a zombie, an NPC) finishes them off; false — has no effect
+    voice = true,        -- the downed player speaks by voice; false — silent
+    chat = true,         -- the downed player writes in chat and enters commands; false — no (admins can)
+    anim = "lie",        -- pose (data/anims.txt or a path)
 })
-setDeathMode("instant")  -- как раньше: сразу экран «Возрождение» (по умолчанию)
+setDeathMode("instant")  -- as before: the "Respawning" screen at once (default)
 ```
 
-**Раненый** лежит (поза держится, даже если игра проигрывает реакцию на попадание), не ходит, не стреляет и ничем не пользуется: ни действиями игры, ни точками действия, ни клавишами режима и клиентских скриптов; анимации режима (`/sit`) его не поднимают. По краям экрана красная рамка, посередине «Вы тяжело ранены 3:41», **H** — позвать помощь (событие `playerHelp`), **удерживать E 3 с** — сдаться, когда разрешено. Работают голос и чат (если не выключены), список Tab и вопросы «да / нет». С мотоцикла раненого сбрасывает, ящик падает из рук.
+**The downed player** lies down (the pose holds even if the game plays a hit reaction), doesn't walk, doesn't shoot and uses nothing: no game actions, no interaction points, no mode and client script keys; the mode's animations (`/sit`) don't raise them. There's a red frame at the screen edges, in the middle "You are badly wounded 3:41", **H** — call for help (the `playerHelp` event), **hold E for 3 s** — give up, when allowed. Voice and chat work (unless turned off), the Tab list and yes/no questions. A motorcycle throws the downed player off, and the crate falls from their hands.
 
-Падает игрок, когда **полоска здоровья игры пуста**. Полоска показывает здоровье выше «запаса под бронёй» (`UnderArmorHealth`, 35 из 135), и игра сама останавливает первый сильный удар на этом запасе. Поэтому раньше игрок с пустой полоской стоял до следующего удара. Проценты здоровья (`player.health`, `setHealth`, `revive`) — проценты полоски.
+The player falls when **the game's health bar is empty**. The bar shows health above the "under-armor reserve" (`UnderArmorHealth`, 35 of 135), and the game itself stops the first strong hit on this reserve. So previously a player with an empty bar stood until the next hit. Health percentages (`player.health`, `setHealth`, `revive`) are percentages of the bar.
 
-**Конец ранения** решает сервер:
-- `player:revive(percent)` — встаёт со здоровьем `percent`;
-- истёк кровью (`playerBleedout`), сдался (E), добит ударом (`finish`), `player:finishDowned()` — обычная смерть: `playerDeath` (убийца — тот, кто уронил, если не добил другой), затем `playerRespawn`;
-- `player:setDowned({bleedout = 60, giveUp = 0})` — новое время (например, «медиков нет — можно сдаться сразу»).
+**The end of the downed state** is decided by the server:
+- `player:revive(percent)` — gets up with `percent` health;
+- bled out (`playerBleedout`), gave up (E), finished off by a hit (`finish`), `player:finishDowned()` — an ordinary death: `playerDeath` (the killer is whoever knocked them down, unless another finished them off), then `playerRespawn`;
+- `player:setDowned({bleedout = 60, giveUp = 0})` — a new time (e.g. "no medics — can give up at once").
 
-Остальные видят лежащего через позу тела; в меню игрока взгляд на раненого направлен ниже. Выстрелы раненого по игрокам отбрасываются. `return false` в `playerDowned` — смерть сразу (так делает библиотека `instance` на арене и в дуэли). При перезагрузке режима раненые встают.
+The others see the lying player through the body pose; in the player menu the view of a downed player is directed lower. Shots by a downed player at players are discarded. `return false` in `playerDowned` — death at once (this is what the `instance` library does in the arena and in a duel). When the mode reloads, downed players get up.
 
-Готовая помощь — библиотека `medic` (ниже). Пример — режим `outpost` (Рубеж).
+Ready-made help is the `medic` library (below). An example is the `outpost` mode (Rubezh).
 
-## Меню игрока — библиотека `interact`
+## Player menu — the `interact` library
 
-`modes/_lib/interact.lua`: посмотреть на игрока рядом, нажать F — список действий, которые режим разрешил для этой пары сейчас. Действие может требовать согласия другого игрока (вопрос «да / нет» у него на экране).
+`modes/_lib/interact.lua`: look at a nearby player, press F — a list of actions the mode allowed for this pair right now. An action can require another player's consent (a yes/no question on their screen).
 
 ```lua
 local interact = require("interact")
 interact.add({
     id = "squad_invite", order = 10,
-    label = { ru = "Пригласить в отряд", en = "Invite to the squad" },   -- строка, {ru, en} или function(player, target)
-    range = 3,                                                           -- м
+    label = { ru = "Пригласить в отряд", en = "Invite to the squad" },   -- a string, {ru, en} or function(player, target)
+    range = 3,                                                           -- m
     when = function(player, target) return not sameSquad(player, target) end,
-    consent = { ru = "%s зовёт вас в отряд", en = "%s invites you to the squad" },  -- %s — имя спрашивающего
-    seconds = 15, cooldown = 10,                                         -- на ответ / между вопросами этому игроку
-    downed = false,                                                      -- показывать и на раненом
-    onUse = function(player, target) end,                                -- после «да» (или сразу без consent)
+    consent = { ru = "%s зовёт вас в отряд", en = "%s invites you to the squad" },  -- %s — the asker's name
+    seconds = 15, cooldown = 10,                                         -- to answer / between questions to this player
+    downed = false,                                                      -- show on a downed player too
+    onUse = function(player, target) end,                                -- after "yes" (or at once without consent)
     onRefuse = function(player, target, reason) end,                     -- "no", "timeout", "busy", "far"
 })
 interact.remove("squad_invite")
 interact.setup({ key = "F", label = { ru = "Взаимодействие", en = "Interact" }, range = 2.5 })
-interact.open(player, target)        -- меню из кода
-interact.near(a, b, metres)          -- рядом ли (и в одном мире)
+interact.open(player, target)        -- a menu from code
+interact.near(a, b, metres)          -- whether nearby (and in the same world)
 ```
 
-Меню включается само, когда добавлено первое действие (`setPlayerMenu`). Перед выполнением сервер снова проверяет расстояние и `when`.
+The menu turns on by itself when the first action is added (`setPlayerMenu`). Before executing, the server checks the distance and `when` again.
 
-### Отряд — `squad`
+### Squad — `squad`
 
 ```lua
 local squad = require("squad")
 squad.setup({ max = 6, chat = "sq", radio = false, color = "#7CD67C" })
-squad.of(player)        -- {id, leader, members = {id, ...}} или nil
+squad.of(player)        -- {id, leader, members = {id, ...}} or nil
 squad.same(a, b); squad.join(player, leader); squad.leave(player)
 squad.onChange = function(s) end
 ```
 
-В меню игрока: «Пригласить в отряд» (с согласием) и «Выйти из отряда». Члены отряда видят друг друга на карте и радаре (значки с `follow`); `/sq текст` — чат отряда, `/squad` — состав, `/squad leave`, `/squad kick <id>`, `/squad lead <id>`. `radio = true` — общий радиоканал отряда (`joinVoiceChannel`; не сочетайте с `setVoiceChannel` режима: тот оставляет только один канал). Отряд из одного человека распускается.
+In the player menu: "Invite to the squad" (with consent) and "Leave the squad". Squad members see each other on the map and radar (blips with `follow`); `/sq text` — squad chat, `/squad` — the roster, `/squad leave`, `/squad kick <id>`, `/squad lead <id>`. `radio = true` — a shared squad radio channel (`joinVoiceChannel`; don't combine with the mode's `setVoiceChannel`: it keeps only one channel). A squad of one person is disbanded.
 
-### Обмен — `trade`
+### Trade — `trade`
 
-Окно на двоих: слева рюкзак, справа «стол» — свои предложения, предложения другого, деньги (+$10 / +$100) и кнопка «Готов». Любое изменение снимает «Готов» у обоих. Когда готовы оба, сервер заново проверяет, что у каждого есть то, что он предложил, и что ему хватит места, и меняет всё сразу (или ничего). Что такое рюкзак, решает режим:
+A window for two: the backpack on the left, the "table" on the right — your own offers, the other's offers, money (+$10 / +$100) and a "Ready" button. Any change clears "Ready" for both. When both are ready, the server rechecks that each has what they offered and that they have enough room, and swaps everything at once (or nothing). What a backpack is, is decided by the mode:
 
 ```lua
 local trade = require("trade")
 trade.setup({
-    list = function(p) return { { id = "food", name = "Паёк", count = 3, icon = "food.png" } } end,
+    list = function(p) return { { id = "food", name = "Ration", count = 3, icon = "food.png" } } end,
     take = function(p, id, n) return true end, give = function(p, id, n) end,
-    fits = function(p, gets, gives) return true end,                     -- необязательно: унесёт ли
-    money = { get = function(p) end, take = function(p, n) end, give = function(p, n) end },  -- необязательно
-    allowed = function(p, t) return true end,                            -- необязательно
+    fits = function(p, gets, gives) return true end,                     -- optional: whether they can carry it
+    money = { get = function(p) end, take = function(p, n) end, give = function(p, n) end },  -- optional
+    allowed = function(p, t) return true end,                            -- optional
 })
 trade.onTrade = function(a, b, offerA, offerB) end
 ```
 
-В меню игрока: «Предложить обмен» (с согласием). Обмен отменяется, если игроки разошлись дальше 6 м, кто-то закрыл окно, вышел или погиб.
+In the player menu: "Offer a trade" (with consent). The trade is cancelled if the players move farther than 6 m apart, someone closes the window, leaves or dies.
 
-### Медик — `medic`
+### Medic — `medic`
 
-Помощь раненым (`setDeathMode("downed")`): раненый жмёт H, медикам на сервере приходит вопрос «принять вызов?», первый ответивший «да» получает маршрут, раненый — сообщение «Медик едет». Если медиков нет, раненому так и говорят, и (по умолчанию) сдаться можно сразу. В меню игрока у медика на раненом — «Поднять раненого»: несколько секунд на коленях со шкалой, затем раненый встаёт.
+Help for downed players (`setDeathMode("downed")`): the downed player presses H, medics on the server get a "accept the call?" question, the first to answer "yes" gets a route, and the downed player gets the message "A medic is on the way". If there are no medics, the downed player is told so, and (by default) can give up at once. In the player menu a medic on a downed player has "Revive": a few seconds kneeling with a progress bar, then the downed player gets up.
 
 ```lua
 local medic = require("medic")
 medic.setup({
-    isMedic = function(p) return p.data.job == "medic" end,   -- nil: любой может поднимать и принимать вызовы
-    seconds = 5, health = 30,                                  -- сколько поднимать, здоровье после
-    use = function(m, patient, check) return true end,         -- check: только проверить; false, "причина" — нельзя
-    noMedicGiveUp = true, command = "medic",                   -- /medic <id> — принять вызов вручную
+    isMedic = function(p) return p.data.job == "medic" end,   -- nil: anyone can revive and accept calls
+    seconds = 5, health = 30,                                  -- how long to revive, health afterwards
+    use = function(m, patient, check) return true end,         -- check: only verify; false, "reason" — not allowed
+    noMedicGiveUp = true, command = "medic",                   -- /medic <id> — accept a call manually
 })
 medic.onRevive = function(m, patient) end
 ```
 
-## Инстансы и дуэли — библиотека `instance`
+## Instances and duels — the `instance` library
 
-Под-режимы внутри одного сервера: дуэль, арена, полигон. Игроки уходят в свой виртуальный мир со снаряжением и здоровьем инстанса; при выходе всё возвращается — место, мир, рюкзак, здоровье, PvP. Смерть внутри ничего не стоит: ни ранения, ни платы, раунд идёт дальше.
+Sub-modes within one server: a duel, an arena, a firing range. Players go into their own virtual world with the instance's equipment and health; on leaving everything is returned — place, world, backpack, health, PvP. Dying inside costs nothing: no downed state, no fee, the round goes on.
 
 ```lua
 local instance = require("instance")
 local arena = instance.new({
     name = { ru = "Арена", en = "Arena" },
-    world = "new",                                -- свой мир (newWorld) или номер общего мира арены
-    spawns = { {x =, y =, z =, yaw =} },          -- места старта по кругу; "here" — вокруг первого игрока
+    world = "new",                                -- its own world (newWorld) or the number of a shared arena world
+    spawns = { {x =, y =, z =, yaw =} },          -- start places in a circle; "here" — around the first player
     loadout = { weapons = { kWeaponID_M9 = 60 }, items = { kItemID_Bandage = 2 } },
     health = 100, rounds = 3, timeLimit = 180, countdown = 3,
     onEnd = function(inst, result) end,           -- result: {winner, score = {[id] = n}, reason}
     onLeave = function(inst, player, reason) end,
 })
 arena:join(player); arena:start(); arena:leave(player); arena:finish(winner)
-instance.of(player)                               -- инстанс игрока или nil
-instance.duel(a, b, { rounds = 3, loadout = {} }) -- двое, прямо там, где стоят
-instance.enableDuels({ rounds = 3, loadout = {}, allowed = function(a, b) end })  -- «Вызвать на дуэль» в меню игрока
+instance.of(player)                               -- the player's instance or nil
+instance.duel(a, b, { rounds = 3, loadout = {} }) -- two players, right where they stand
+instance.enableDuels({ rounds = 3, loadout = {}, allowed = function(a, b) end })  -- "Challenge to a duel" in the player menu
 ```
 
-Снимок игрока хранится в `storage` (`instance:<игрок>`), пока игрок не вернулся: после вылета, кика или перезапуска сервера вещи вернутся при следующем входе. Рюкзак берётся из последнего снимка клиента (до 2 с давности). Нож, камень и шокер остаются при игроке. Режим, который сам сохраняет инвентарь игрока (как Рубеж), не должен сохранять его, пока `player.world ~= 0`.
+The player's snapshot is stored in `storage` (`instance:<player>`) until the player has returned: after a crash, a kick or a server restart the items come back on the next join. The backpack is taken from the client's last snapshot (up to 2 s old). The knife, the rock and the stun gun stay with the player. A mode that saves the player's inventory itself (like Rubezh) must not save it while `player.world ~= 0`.
 
-## PvP и зоны
+## PvP and zones
 
-Урон между игроками решает сервер. Порядок такой:
+The server decides damage between players. The order is:
 
-1. `player:setPvp(false)` у любого из двоих — урона нет. `player:setPvp(true)` у **обоих** — урон есть везде, даже в безопасной зоне (дуэль).
-2. Кто-то из двоих стоит в **PvE-зоне** — урона нет. Стрелять из безопасной зоны тоже нельзя.
-3. PvP режима включено (`setPvp(true)`, по умолчанию) — урон есть. Выключено — урон есть, только если **оба** стоят в **PvP-зонах** (арена на мирном сервере).
-4. Правило режима `setPvpRule(fn)`, если задано, получает это решение и может его поменять.
-5. Затем обработчики `playerDamage` меняют или отменяют сам урон.
+1. `player:setPvp(false)` on either of the two — no damage. `player:setPvp(true)` on **both** — damage everywhere, even in a safe zone (a duel).
+2. One of the two stands in a **PvE zone** — no damage. You cannot shoot from a safe zone either.
+3. The mode's PvP is on (`setPvp(true)`, the default) — there is damage. Off — there is damage only if **both** stand in **PvP zones** (an arena on a peaceful server).
+4. The mode rule `setPvpRule(fn)`, if set, receives this decision and may change it.
+5. Then the `playerDamage` handlers change or cancel the damage itself.
 
-Зомби, NPC и падения ранят игроков везде, как обычно: зоны касаются только урона от других игроков. У стрелка попадание по чужому телу выглядит как обычно (кровь, реакция), но жертва урона не получает. Урон из кода (`player:damage`) правилам не подчиняется.
+Zombies, NPCs and falls hurt players everywhere, as usual: zones only affect damage from other players. For the shooter, a hit on another player's body looks as usual (blood, reaction), but the victim takes no damage. Damage from code (`player:damage`) does not follow the rules.
 
 ```lua
-setPvp(false)                          -- мирный сервер: игроки не ранят друг друга (кроме PvP-зон)
-print(pvp())                           -- включено ли PvP режима
+setPvp(false)                          -- peaceful server: players do not hurt each other (except in PvP zones)
+print(pvp())                           -- whether the mode's PvP is on
 
--- Условия: полиция может стрелять в разыскиваемых даже в безопасной зоне, свои — не ранят своих.
+-- Conditions: police may shoot wanted players even in a safe zone, teammates do not hurt each other.
 setPvpRule(function(victim, attacker, info)
     if attacker.data.job == "police" and victim.data.wanted then return true end
     if attacker.data.gang and attacker.data.gang == victim.data.gang then return false end
-    -- nil: оставить решение сервера (info.allowed)
+    -- nil: keep the server's decision (info.allowed)
 end)
-setPvpRule(nil)                        -- убрать правило
+setPvpRule(nil)                        -- remove the rule
 
-player:setPvp(false)                   -- новичок: его не ранят и он не ранит (как god mode против игроков)
-player:setPvp(nil)                     -- снова по общим правилам
-if canDamage(a, b) then ... end        -- может ли b ранить a сейчас (с учётом правила режима)
+player:setPvp(false)                   -- newcomer: nobody hurts them and they hurt nobody (like god mode against players)
+player:setPvp(nil)                     -- back to the general rules
+if canDamage(a, b) then ... end        -- whether b can hurt a right now (taking the mode's rule into account)
 ```
 
-`info` правила: `allowed` (решение сервера), `zone` и `weapon` (при попадании), `victimZone`, `attackerZone` (имя зоны, которая решает для игрока, или `nil`).
+The rule's `info`: `allowed` (the server's decision), `zone` and `weapon` (on a hit), `victimZone`, `attackerZone` (the name of the zone that decides for the player, or `nil`).
 
-### Зоны
+### Zones
 
-Зоны ставят в редакторе: «Мир» → «PvP и зоны» → «+ PvE зона» / «+ PvP зона», клик в мире ставит центр. У выделенной зоны задаются имя, тип, форма (круг с радиусом или прямоугольник с длиной, шириной и поворотом), высота вверх и вниз от центра, «включена при старте», надпись на экране и мир. В редакторе зона видна столбиками по границе: PvE зелёная, PvP красная. Галочка «Урон между игроками (PvP)» там же — это начальное значение `pvp()`. Хранится в `world.json` (`"zones"`, `"rules"`); сервер загружает их до кода режима.
+Zones are placed in the editor: "World" → "PvP and zones" → "+ PvE zone" / "+ PvP zone"; a click in the world sets the center. A selected zone has a name, type, shape (a circle with a radius or a rectangle with length, width and rotation), height up and down from the center, "enabled at start", an on-screen text and a world. In the editor a zone is shown as posts along its border: PvE green, PvP red. The "Player damage (PvP)" checkbox in the same place is the initial value of `pvp()`. Stored in `world.json` (`"zones"`, `"rules"`); the server loads them before the mode code.
 
-Игрок в зоне, которая меняет правило (PvE при включённом PvP, PvP при выключенном), видит строку вверху экрана: «Безопасная зона» / «PvP-зона». Свой текст — поле `text`, без строки — `notify = false`. Если зоны пересекаются, решает PvE.
+A player in a zone that changes the rule (PvE while PvP is on, PvP while it is off) sees a line at the top of the screen: "Safe zone" / "PvP zone". Set your own text with the `text` field; no line with `notify = false`. If zones overlap, PvE decides.
 
 ```lua
-createZone({ name = "town", type = "pve", x = -85000, y = -301000, z = -5180, radius = 120 })   -- круг, метры
-createZone({ name = "pit", type = "pvp", x = 1000, y = 2000, z = 0, length = 40, width = 25, yaw = 30, text = "{E07070}Арена" })
-setZone("town", { enabled = false })   -- выключить на время (рейд на город), потом enabled = true
-setZone("pit", { radius = 60 })        -- менять можно любое поле, кроме имени
+createZone({ name = "town", type = "pve", x = -85000, y = -301000, z = -5180, radius = 120 })   -- circle, meters
+createZone({ name = "pit", type = "pvp", x = 1000, y = 2000, z = 0, length = 40, width = 25, yaw = 30, text = "{E07070}Arena" })
+setZone("town", { enabled = false })   -- turn off for a while (a raid on the town), then enabled = true
+setZone("pit", { radius = 60 })        -- any field except the name can be changed
 removeZone("pit")
-local z = getZone("town")              -- таблица зоны или nil
+local z = getZone("town")              -- the zone table or nil
 for _, z in ipairs(zones()) do print(z.name, z.type) end
-zonesAt(x, y, z [, world])             -- имена включённых зон в точке
-player:zones()                         -- имена зон, где стоит игрок
+zonesAt(x, y, z [, world])             -- names of the enabled zones at a point
+player:zones()                         -- names of the zones the player stands in
 player:inZone("town")                  -- true / false
-print(player.zone)                     -- зона, которая решает его PvP, или nil
+print(player.zone)                     -- the zone that decides their PvP, or nil
 print(player.pvp)                      -- true / false / nil (setPvp)
 ```
 
-| Поле зоны | |
+| Zone field | |
 |---|---|
-| `name` | имя (у `createZone` без имени — `zone1`, `zone2`…; то же имя заменяет зону) |
-| `type` | `"pve"` (по умолчанию) или `"pvp"` |
-| `shape` | `"circle"`, `"box"` или `"polygon"` (есть `points` — многоугольник; `width`/`length` — прямоугольник) |
-| `x`, `y`, `z` | центр, единицы Unreal (`z` — у земли) |
-| `radius` | круг, метры (по умолчанию 20) |
-| `length`, `width`, `yaw` | прямоугольник: длина вдоль `yaw`, ширина, поворот в градусах |
-| `points` | многоугольник: 3–128 вершин `{x=..., y=...}` **в метрах относительно центра зоны**, повёрнутых вместе с `yaw` |
-| `height` | метры вверх и вниз от `z` (по умолчанию 50) |
-| `world` | виртуальный мир (`-1` — во всех) |
-| `enabled` | работает ли зона (по умолчанию `true`) |
-| `notify`, `text` | строка на экране игрока в зоне и её текст (`{RRGGBB}` — цвета) |
+| `name` | name (`createZone` without a name gives `zone1`, `zone2`…; the same name replaces the zone) |
+| `type` | `"pve"` (default) or `"pvp"` |
+| `shape` | `"circle"`, `"box"` or `"polygon"` (with `points` — a polygon; `width`/`length` — a rectangle) |
+| `x`, `y`, `z` | center, Unreal units (`z` — ground level) |
+| `radius` | circle, meters (default 20) |
+| `length`, `width`, `yaw` | rectangle: length along `yaw`, width, rotation in degrees |
+| `points` | polygon: 3–128 vertices `{x=..., y=...}` **in meters relative to the zone center**, rotated together with `yaw` |
+| `height` | meters up and down from `z` (default 50) |
+| `world` | virtual world (`-1` — all of them) |
+| `enabled` | whether the zone is active (default `true`) |
+| `notify`, `text` | the on-screen line for a player in the zone and its text (`{RRGGBB}` — colors) |
 
-Зоны из кода живут до перезагрузки режима; после неё снова только зоны из `world.json`, `pvp()` из него же, а `player:setPvp` и `setPvpRule` сбрасываются.
+Zones created from code live until the mode is reloaded; after that only the zones from `world.json` remain, `pvp()` comes from it too, and `player:setPvp` and `setPvpRule` are reset.
 
-Контур многоугольника замыкается автоматически; повторять первую вершину в конце не нужно. Допускаются вогнутые контуры (например, Г-образные), любое направление обхода, перемещение и поворот всей зоны. Самопересечения, наложение рёбер и совпадающие вершины отклоняются. Точки на границе считаются внутри зоны. `height`, `world`, `enabled`, уведомления и правила PvP работают как у остальных форм. Отверстия внутри контура не поддерживаются. Форма многоугольника доступна зонам PvE/PvP; зоны появления зомби пока круглые.
+The polygon outline closes automatically; do not repeat the first vertex at the end. Concave outlines (for example L-shaped), either winding direction, and moving and rotating the whole zone are allowed. Self-intersections, overlapping edges and coinciding vertices are rejected. Points on the border count as inside the zone. `height`, `world`, `enabled`, notifications and PvP rules work as for the other shapes. Holes inside the outline are not supported. The polygon shape is available to PvE/PvP zones; zombie spawn zones are still circular.
 
 ```lua
 createZone({name="camp", type="pve", shape="polygon", x=10000, y=20000, z=300, height=30,
     points={{x=0,y=0},{x=100,y=0},{x=100,y=40},{x=40,y=40},{x=40,y=100},{x=0,y=100}}})
-setZone("camp", {yaw=45})                 -- поворот всего контура
-local outline=getZone("camp").points     -- те же локальные метры
+setZone("camp", {yaw=45})                 -- rotate the whole outline
+local outline=getZone("camp").points     -- the same local meters
 ```
 
-В редакторе: «Мир → PvP и зоны», поставить и выбрать зону, в отдельном окне «Свойства выбранного» переключить форму на «Многоугольник», нажать «Рисовать контур». ЛКМ по земле добавляет вершину, Enter завершает контур, Backspace убирает последнюю, Esc возвращает предыдущий контур. Вершины можно редактировать в списке или кнопкой «Переставить» и следующим кликом по земле. Неправильный контур отмечен красным и не сохраняется в основной `world.json`; автосейв оставляет его черновик в `.autosave/world.json`. Сохранённый контур поддерживает отмену/возврат, дублирование и перемещение как остальные зоны.
+In the editor: "World → PvP and zones", place and select a zone, switch the shape to "Polygon" in the separate "Inspector" window, press "Draw outline". Left-click on the ground adds a vertex, Enter finishes the outline, Backspace removes the last one, Esc restores the previous outline. Vertices can be edited in the list or with the "Move" button followed by a click on the ground. An invalid outline is marked red and is not saved to the main `world.json`; autosave keeps its draft in `.autosave/world.json`. A saved outline supports undo/redo, duplication and moving like the other zones.
 
-## Подсказки
+## Hints
 
-- **Окно** — `hint(title, text, image, pause)` / `player:hint(...)`. Родное окно игры, как обучающие окна «Зараженные зоны». Закрывается удержанием E.
-  - `image` — путь к текстуре игры, например `"/Game/Libraries/UI/Textures/MAP_bike.MAP_bike"`. Без картинки окно компактное.
-  - `pause = true` — в мультиплеере не действует: общий мир не останавливается (меню паузы и карта тоже открываются без паузы).
-- **Совет** — `tip(text, seconds)` / `player:tip(...)`. Строка «Совет по выживанию» внизу экрана. Не мешает управлению и исчезает сама через `seconds` секунд.
-- Сообщения в чат — `player:message` / `broadcast`.
+- **Window** — `hint(title, text, image, pause)` / `player:hint(...)`. The game's native window, like the "Infestation Zones" tutorial windows. Closed by holding E.
+  - `image` — a path to a game texture, for example `"/Game/Libraries/UI/Textures/MAP_bike.MAP_bike"`. Without an image the window is compact.
+  - `pause = true` — has no effect in multiplayer: the shared world is not stopped (the pause menu and the map also open without a pause).
+- **Tip** — `tip(text, seconds)` / `player:tip(...)`. A "Survival tip" line at the bottom of the screen. Does not interfere with controls and disappears on its own after `seconds` seconds.
+- Chat messages — `player:message` / `broadcast`.
 
-## Маркеры
+## Markers
 
 ```lua
 local id = createMarker({
-    x = 1000, y = 2000, z = -5000,  -- точные координаты (единицы игры, 100 = 1 м), включая высоту
-    radius = 5,                     -- м: радиус для markerEnter/markerLeave
-    category = "task",              -- иконка и цвет: story, camp, infestation, ambush, nero, killednpc, nest, horde, campmission, task
-    style = "basic",                -- вид: basic, kill, killarea, defend, defendarea, search, track, nokill, nero
-    route = true,                   -- маршрут по дорогам на карте и мини-карте (у самого нового такого маркера)
-    player = somePlayer,            -- виден только ему; без поля — всем
-    track = true,                   -- false: только отображение, без событий входа/выхода
-    title = "Заправка", description = "Подсказка при выборе на карте",
-    icon = "/Game/...",             -- своя текстура иконки (необязательно)
+    x = 1000, y = 2000, z = -5000,  -- exact coordinates (game units, 100 = 1 m), including height
+    radius = 5,                     -- m: radius for markerEnter/markerLeave
+    category = "task",              -- icon and color: story, camp, infestation, ambush, nero, killednpc, nest, horde, campmission, task
+    style = "basic",                -- look: basic, kill, killarea, defend, defendarea, search, track, nokill, nero
+    route = true,                   -- road route on the map and minimap (for the newest such marker)
+    player = somePlayer,            -- visible only to them; without the field — to everyone
+    track = true,                   -- false: display only, no enter/leave events
+    title = "Gas station", description = "Hint when selected on the map",
+    icon = "/Game/...",             -- your own icon texture (optional)
     onEnter = function(player, id) end, onLeave = function(player, id) end,
 })
 ```
 
-## Задания
+## Objectives
 
-Родная панель задания игры (слева сверху), плашка «Новое задание», экран «Задание выполнено» с опытом.
+The game's native objective panel (top left), the "New objective" banner, and the "Objective complete" screen with experience.
 
 ```lua
-player:objective({ title = "Припасы для лагеря", text = "Доберитесь до заправки",
+player:objective({ title = "Supplies for the camp", text = "Get to the gas station",
                    state = "new", category = "camp", style = "basic", xp = 0 })
 ```
 
-- `state`: `new` (с плашкой), `update` (сменить строку), `complete` (экран «Задание выполнено», `xp` — число опыта на нём), `failed`, `remove` (убрать панель).
-- `player:objectiveMeter("Поиск", 0.4)` — шкала под заданием.
-- Обычно проще пользоваться библиотекой `quest` (ниже).
+- `state`: `new` (with the banner), `update` (change the line), `complete` (the "Objective complete" screen, `xp` — the amount of experience on it), `failed`, `remove` (remove the panel).
+- `player:objectiveMeter("Search", 0.4)` — a meter under the objective.
+- It is usually easier to use the `quest` library (below).
 
-## Игровые события
+## Game events
 
-`on("gameEvent", function(player, ev) ... end)`. Поля `ev`:
+`on("gameEvent", function(player, ev) ... end)`. Fields of `ev`:
 
-| Поле | Описание |
+| Field | Description |
 |---|---|
-| `type` | `pickup` — подобрал предмет; `carry` — взял в руки канистру, баллон и т. п.; `search` — вскрыл багажник, капот, скорую; `body` — обыскал труп; `interact` — табличка, коллекционный предмет и другие взаимодействия; `door` — открыл или выбил дверь; `explosion` — взрыв (бочка, баллон, канистра, граната); `fire` — поджог (Молотов, огонь от канистры) |
-| `class` | класс объекта игры, например `BP_Interact_SearchCarTrunk_C` |
-| `item` | ключ предмета для `pickup`/`carry` |
-| `id` | имя объекта в мире: постоянное для расставленных объектов (`BP_Interact_SearchCarTrunk21`), `dgmp_item_<id>` для предметов из `spawnItem` |
-| `x, y, z` | где это произошло |
+| `type` | `pickup` — picked up an item; `carry` — picked up a gas can, cylinder, etc.; `search` — opened a trunk, hood, ambulance; `body` — searched a corpse; `interact` — a sign, collectible and other interactions; `door` — opened or kicked in a door; `explosion` — an explosion (barrel, cylinder, gas can, grenade); `fire` — arson (Molotov, fire from a gas can) |
+| `class` | the game object's class, for example `BP_Interact_SearchCarTrunk_C` |
+| `item` | the item key for `pickup`/`carry` |
+| `id` | the object's name in the world: permanent for placed objects (`BP_Interact_SearchCarTrunk21`), `dgmp_item_<id>` for items from `spawnItem` |
+| `x, y, z` | where it happened |
 
-Взрывы и поджоги — события мира рядом с игроком, а не обязательно им вызванные.
+Explosions and arson are world events near the player, not necessarily caused by them.
 
-## Предметы в мире
+## World items
 
 ```lua
 local id = spawnItem({ item = "kWeaponID_Molotov_Small", count = 1, x = .., y = .., z = .., player = p })
 ```
 
-Предмет появляется у клиента, когда игрок ближе 200 м, и ставится на землю. Берётся клавишей E (подсказка появляется рядом), **даже при полном рюкзаке**: в инвентарь попадает, только если есть место, но событие `gameEvent` с `type = "pickup"` и `id = "dgmp_item_<id>"` приходит всегда. Игровое «взять/МАКС.» у таких предметов отключено. `despawnItem(id)` убирает предмет. Предметы и маркеры режима убираются при его перезагрузке.
+The item appears on the client when a player is closer than 200 m, and is placed on the ground. It is picked up with E (a prompt appears nearby), **even with a full backpack**: it goes into the inventory only if there is room, but the `gameEvent` event with `type = "pickup"` and `id = "dgmp_item_<id>"` always arrives. The game's "take/MAX" for such items is disabled. `despawnItem(id)` removes the item. The mode's items and markers are removed when it is reloaded.
 
-## Деньги
+## Money
 
-Деньги игрока, как `GivePlayerMoney` в SA-MP (пример — режим [`loader`](../modes/loader/main.lua): оплата за смену). Пока сумма не 0, она видна справа вверху экрана (`$ 120`, долг — красным).
+The player's money, like `GivePlayerMoney` in SA-MP (example — the [`loader`](../modes/loader/main.lua) mode: pay for a shift). While the amount is not 0, it is shown at the top right of the screen (`$ 120`, debt in red).
 
 ```lua
-player:giveMoney(5)          -- добавить; вернёт новую сумму
-player:giveMoney(-20)        -- забрать (сумма может уйти в минус — проверяйте сами)
+player:giveMoney(5)          -- add; returns the new amount
+player:giveMoney(-20)        -- take away (the amount can go negative — check it yourself)
 player:setMoney(0)
 if player.money >= 100 then ... end
 ```
 
-Сервер деньги не хранит: при выходе игрока и при перезагрузке режима они пропадают. Чтобы они сохранялись, режим кладёт их в `storage` по нику:
+The server does not store money: it is lost when the player leaves and when the mode is reloaded. To keep it, the mode puts it in `storage` by nickname:
 
 ```lua
 on("playerJoin", function(p) p:setMoney(storage.get("money:" .. p.name:lower()) or 0) end)
 on("playerQuit", function(p) storage.set("money:" .. p.name:lower(), p.money) end)
 ```
 
-`player:clearHud()` строку денег не убирает.
+`player:clearHud()` does not remove the money line.
 
-## Переноска
+## Carrying
 
-Ящики, которые носят перед собой двумя руками, как ящик динамита в сюжете: родная анимация подъёма, ходьба с ящиком, игрок с ящиком не бьёт. Что делает с ящиком перекат, решает режим (`roll`). Основа для работы на складе, доставки грузов и т. п.
+Crates carried in front of you with both hands, like the dynamite crate in the story: the native pickup animation, walking with the crate, a player with a crate does not hit. What a roll does to the crate is up to the mode (`roll`). The basis for warehouse work, cargo delivery and the like.
 
-- Ящик лежит на земле у всех игроков (появляется ближе 200 м). Подсказка «[F] Поднять (удерживать)»: игрок зажимает F, сервер проверяет, что он рядом, режим может отказать (`carryPick`), и ящик оказывается в руках.
-- С ящиком в руках: «[F] Положить (удерживать)» — ящик ставится перед игроком (`carryDrop`, `reason = "put"`; режим может отказать или забрать ящик — так делается сдача груза).
-- Если игра выбила ящик из рук (удар, сел на мотоцикл, паркур), игрок погиб или вышел, ящик остаётся лежать там, где упал (`carryDrop` с `reason` `"lost"`, `"death"`, `"quit"`).
-- Перекат (`roll`): `"keep"` — ящик остаётся в руках (по умолчанию); `"drop"` — выпадает и лежит там (`reason = "roll"`); `"break"` — разбивается (`reason = "break"`), после обработчика ящик пропадает: так работа начинается заново (поставьте новый на складе).
-- Другие игроки видят ящик в руках несущего. Подсказка точки действия режима на F важнее подсказки ящика.
+- The crate lies on the ground for all players (appears closer than 200 m). The prompt "[F] Pick up (hold)": the player holds F, the server checks that they are nearby, the mode may refuse (`carryPick`), and the crate ends up in their hands.
+- With a crate in hands: "[F] Put down (hold)" — the crate is placed in front of the player (`carryDrop`, `reason = "put"`; the mode may refuse or take the crate — this is how cargo hand-in is done).
+- If the game knocked the crate out of the hands (a hit, got on a motorcycle, parkour), or the player died or left, the crate stays where it fell (`carryDrop` with `reason` `"lost"`, `"death"`, `"quit"`).
+- Roll (`roll`): `"keep"` — the crate stays in the hands (default); `"drop"` — it falls out and lies there (`reason = "roll"`); `"break"` — it breaks (`reason = "break"`), and after the handler the crate disappears: so the work starts over (place a new one at the warehouse).
+- Other players see the crate in the carrier's hands. The mode's interaction point prompt on F takes priority over the crate's prompt.
 
-Обычно ящики расставляют в редакторе: «Мир» → «Переноска» → «+ Ящик», клик в мире, потом гизмо (двигать, вращать). У выделенного ящика задаются ключ, модель, метка, мир и что делает перекат; новый ящик берёт модель, метку, мир и перекат выделенного. В редакторе ящик сразу лежит в своей модели, над ним ключ и метка. Хранятся в `world.json`:
+Crates are usually placed in the editor: "World" → "Carrying" → "+ Box", a click in the world, then the gizmo (move, rotate). A selected crate has a key, model, tag, world and what a roll does; a new crate takes the model, tag, world and roll of the selected one. In the editor the crate immediately appears in its model, with the key and tag above it. Stored in `world.json`:
 
 ```json
 "carries": [
@@ -1276,54 +1276,54 @@ on("playerQuit", function(p) storage.set("money:" .. p.name:lower(), p.money) en
 ]
 ```
 
-Сервер кладёт их при запуске (и перезагрузке) режима, до кода режима; код находит их по ключу — `getCarry("box1")` — или по метке — `carries("cargo")`. Ящик из редактора ничем не отличается от созданного `createCarry`: его можно переставить, убрать, отдать в руки.
+The server places them when the mode starts (and reloads), before the mode code; the code finds them by key — `getCarry("box1")` — or by tag — `carries("cargo")`. A crate from the editor is no different from one created by `createCarry`: it can be moved, removed, put into hands.
 
 ```lua
 local id = createCarry({
-    model = "crate",            -- модель: "crate", "cooler", "medcase", "centrifuge" (см. таблицу ниже)
-    x = .., y = .., z = ..,     -- z — земля
+    model = "crate",            -- model: "crate", "cooler", "medcase", "centrifuge" (see the table below)
+    x = .., y = .., z = ..,     -- z — ground
     yaw = 0,
-    world = 0,                  -- виртуальный мир; не задано — во всех
-    tag = "cargo",              -- своя метка режима
-    key = "box7",               -- свой ключ для getCarry("box7"); необязательно, должен быть свободен
-    roll = "keep",              -- перекат с ним: "keep", "drop", "break"
+    world = 0,                  -- virtual world; not set — in all of them
+    tag = "cargo",              -- the mode's own tag
+    key = "box7",               -- your own key for getCarry("box7"); optional, must be free
+    roll = "keep",              -- roll with it: "keep", "drop", "break"
 })
-setCarry(id, { x = .., y = .., z = .. })  -- переставить (из рук тоже), поменять world/tag/roll
-removeCarry(id)                           -- убрать (и из рук)
-getCarry(id)    -- {id, key, model, x, y, z, yaw, world, tag, roll, carrier} или nil; carrier — игрок, который несёт
-getCarry("box1")  -- то же по ключу (ящики из редактора)
-carries("cargo")  -- все ящики (с этой меткой)
+setCarry(id, { x = .., y = .., z = .. })  -- move (from hands too), change world/tag/roll
+removeCarry(id)                           -- remove (from hands too)
+getCarry(id)    -- {id, key, model, x, y, z, yaw, world, tag, roll, carrier} or nil; carrier — the player carrying it
+getCarry("box1")  -- the same by key (crates from the editor)
+carries("cargo")  -- all crates (with this tag)
 
-player.carrying             -- id ящика в руках или nil
-player:giveCarry(id)        -- сразу в руки (с анимацией подъёма); false — руки заняты
-player:dropCarry()          -- положить у ног; player:dropCarry(x, y, z, yaw) — в точку. Возвращает id
+player.carrying             -- id of the crate in hands, or nil
+player:giveCarry(id)        -- straight into hands (with the pickup animation); false — hands are busy
+player:dropCarry()          -- put down at the feet; player:dropCarry(x, y, z, yaw) — at a point. Returns the id
 
--- Склад: ящик, поставленный у точки сдачи, засчитывается.
+-- Warehouse: a crate put down at the hand-in point counts.
 on("carryDrop", function(player, id, info)
     if info.reason == "put" and near(info, depot, 4) then
         removeCarry(id)
-        player:message("Ящик сдан")
+        player:message("Crate delivered")
     end
 end)
 ```
 
-| Модель | Что это |
+| Model | What it is |
 |---|---|
-| `crate` | ящик динамита (сюжет), двумя руками |
-| `cooler` | переносной холодильник (сюжет: NBE) |
-| `medcase` | кейс с антибиотиками (сюжет: NFS) |
-| `centrifuge` | микроцентрифуга (сюжет: RFS4) |
+| `crate` | dynamite crate (story), two hands |
+| `cooler` | portable cooler (story: NBE) |
+| `medcase` | antibiotics case (story: NFS) |
+| `centrifuge` | micro-centrifuge (story: RFS4) |
 
-У всех родные анимации подъёма и переноски из сюжета.
+All have the native pickup and carrying animations from the story.
 
-### Работа: пример (грузчик)
+### A job: example (loader)
 
-Повторяющаяся работа целиком на Lua: взять у бригадира, носить ящики со склада к грузовику ($5 за ящик), сдать работу. Готовый режим — `modes/loader` (запуск: `dgmp-server --mode loader`). Места ставятся в редакторе: точки логики `loader_boss`, `loader_pickup`, `loader_depot`; ящики могут лежать в `world.json` или создаваться кодом.
+A repeatable job entirely in Lua: take it from the foreman, carry crates from the warehouse to a truck ($5 per crate), turn in the job. The ready-made mode is `modes/loader` (run: `dgmp-server --mode loader`). Places are set in the editor: logic points `loader_boss`, `loader_pickup`, `loader_depot`; crates can lie in `world.json` or be created by code.
 
-Цикл:
-1. **Взять работу.** NPC-бригадир (`createActor`) и точка действия рядом (`createInteraction`). По F — диалог «Взять работу». Режим надевает форму (`setUniform`), ставит маркеры склада и грузовика только этому игроку (`createMarker{player = ...}`) и строку на экране (`player:hud`).
-2. **Работать.** На складе лежат общие ящики с меткой `"loader"`. Взять их может только тот, кто на работе: `carryPick` возвращает `false` остальным. Ящик, поставленный у грузовика (`carryDrop`, `reason == "put"`, в радиусе точки сдачи), режим убирает (`removeCarry`), засчитывает и кладёт на склад новый. Разбитый в перекате (`roll = "break"`) тоже заменяется новым.
-3. **Сдать работу.** Снова F у бригадира — диалог «Сдать»: выплата (`giveMoney`), форма снимается (`setUniform(nil)`), маркеры и строка на экране убираются. Ушёл с сервера — смена кончается без оплаты, а ящик из рук возвращается на склад.
+The cycle:
+1. **Take the job.** An NPC foreman (`createActor`) and an interaction point next to it (`createInteraction`). On F — the "Take job" dialog. The mode puts on a uniform (`setUniform`), places the warehouse and truck markers for this player only (`createMarker{player = ...}`) and an on-screen line (`player:hud`).
+2. **Work.** Shared crates tagged `"loader"` lie at the warehouse. Only someone on the job can pick them up: `carryPick` returns `false` to the others. A crate put down at the truck (`carryDrop`, `reason == "put"`, within the hand-in point's radius) is removed by the mode (`removeCarry`), counted, and a new one is placed at the warehouse. One broken by a roll (`roll = "break"`) is also replaced with a new one.
+3. **Turn in the job.** F at the foreman again — the "Turn in" dialog: payout (`giveMoney`), the uniform is taken off (`setUniform(nil)`), the markers and the on-screen line are removed. Left the server — the shift ends without pay, and the crate in hands returns to the warehouse.
 
 ```lua
 local logic = require("logic")
@@ -1339,10 +1339,10 @@ on("start", function() for i = 1, 4 do newCrate() end end)
 
 local function startShift(p)
     local s = { delivered = 0, earned = 0 }
-    s.markers = { createMarker({ x = depot.x, y = depot.y, z = depot.z, radius = 4, category = "task", route = true, player = p, track = false, title = "Грузовик" }) }
+    s.markers = { createMarker({ x = depot.x, y = depot.y, z = depot.z, radius = 4, category = "task", route = true, player = p, track = false, title = "Truck" }) }
     shifts[p.id] = s
     p:setUniform("m_mil_diamondlake_worker_001")
-    p:hud("job", { text = "Грузчик: 0 · $0", x = 0.985, y = 0.11, align = "right" })
+    p:hud("job", { text = "Loader: 0 · $0", x = 0.985, y = 0.11, align = "right" })
 end
 local function endShift(p, pay)
     local s = shifts[p.id]; if not s then return end
@@ -1353,12 +1353,12 @@ local function endShift(p, pay)
     if pay then p:giveMoney(s.earned) end
 end
 
-createActor({ x = boss.x, y = boss.y, z = boss.z, yaw = boss.yaw, look = "m_mil_diamondlake_worker_003", name = "Бригадир" })
-createInteraction({ x = boss.x, y = boss.y, z = boss.z, radius = 2.5, text = "Бригадир", onUse = function(p)
+createActor({ x = boss.x, y = boss.y, z = boss.z, yaw = boss.yaw, look = "m_mil_diamondlake_worker_003", name = "Foreman" })
+createInteraction({ x = boss.x, y = boss.y, z = boss.z, radius = 2.5, text = "Foreman", onUse = function(p)
     local s = shifts[p.id]
-    p:dialog({ title = s and "Сдать работу" or "Работа грузчиком",
-               text = s and ("К выплате: $" .. s.earned) or ("$" .. PAY .. " за ящик"),
-               button1 = s and "Сдать" or "Взять работу", button2 = "Нет",
+    p:dialog({ title = s and "Turn in job" or "Loader job",
+               text = s and ("Payout: $" .. s.earned) or ("$" .. PAY .. " per crate"),
+               button1 = s and "Turn in" or "Take job", button2 = "No",
                onResponse = function(p, ok) if ok then if s then endShift(p, true) else startShift(p) end end end })
 end })
 
@@ -1368,318 +1368,318 @@ on("carryDrop", function(p, id, info)
     if info.reason == "put" and s and (info.x - depot.x) ^ 2 + (info.y - depot.y) ^ 2 < 400 ^ 2 then
         removeCarry(id); newCrate()
         s.delivered, s.earned = s.delivered + 1, s.earned + PAY
-        p:hud("job", { text = "Грузчик: " .. s.delivered .. " · $" .. s.earned, x = 0.985, y = 0.11, align = "right" })
+        p:hud("job", { text = "Loader: " .. s.delivered .. " · $" .. s.earned, x = 0.985, y = 0.11, align = "right" })
     elseif info.reason == "break" then newCrate() end
 end)
 on("playerQuit", function(p) endShift(p, false) end)
 ```
 
-Так же строятся другие работы: шахтёр, уборка сорняков, доставка — меняется только то, что засчитывается (поставленный ящик, `gameEvent`, зона `q:hold`), и чем платят.
+Other jobs are built the same way: miner, weeding, delivery — only what counts (a placed crate, a `gameEvent`, a `q:hold` zone) and what pays changes.
 
-**Без кода.** Ту же работу можно собрать в редакторе квестов: файл `quests/<id>.json` с `"kind": "job"` — NPC, форма, оплата за круг и шаги, которые идут по кругу, в том числе шаг `deliver` (перенести ящики). Формат — [`docs/quests.md`](quests.md), «Работа». Готовый файл — `quests/loader_job.json` (грузчик, как `modes/loader`). В режиме работы запускаются через `require("jobs")` или `Jobs=all` в `meta.ini` (см. «Квесты — библиотека `quest`»).
+**Without code.** The same job can be assembled in the quest editor: a `quests/<id>.json` file with `"kind": "job"` — an NPC, a uniform, pay per cycle and steps that run in a loop, including the `deliver` step (carry crates). The format is [`docs/quests.md`](quests.md), "Job". A ready-made file is `quests/loader_job.json` (loader, like `modes/loader`). In a mode, jobs are started through `require("jobs")` or `Jobs=all` in `meta.ini` (see "Quests — the `quest` library").
 
-Ящики режима убираются при его перезагрузке (ящики из `world.json` кладутся заново на свои места). Пример — режим [`loader`](../modes/loader/main.lua) (работа целиком).
+The mode's crates are removed when it is reloaded (crates from `world.json` are placed again at their spots). Example — the [`loader`](../modes/loader/main.lua) mode (the whole job).
 
-## Квесты — библиотека `quest`
+## Quests — the `quest` library
 
 ```lua
 local Quest = require("quest")
-local q = Quest.start(player, { title = "Мародёр", category = "task", text = "Соберите припасы в округе." })
-q:step("Доберитесь до заправки", { x = .., y = .., z = .., radius = 6,
+local q = Quest.start(player, { title = "Looter", category = "task", text = "Collect supplies in the area." })
+q:step("Get to the gas station", { x = .., y = .., z = .., radius = 6,
     onEnter = function(q, player)
-        q:hold("Обыщите место", { x = .., y = .., z = .., radius = 8, seconds = 10, meter = "Поиск",
-            onDone = function(q) q:collect("Обыщите машины", { event = "search", count = 2,
+        q:hold("Search the area", { x = .., y = .., z = .., radius = 8, seconds = 10, meter = "Search",
+            onDone = function(q) q:collect("Search the cars", { event = "search", count = 2,
                 onDone = function(q) q:complete(150) end }) end })
     end })
 ```
 
-| Шаг | Описание |
+| Step | Description |
 |---|---|
-| `q:step(text, target)` | дойти до точки: квестовый маркер с маршрутом (`route = false` — без), `onEnter(quest, player)` |
-| `q:hold(text, {x, y, z, radius, seconds, meter, leaveTip, onDone})` | находиться в зоне: шкала растёт только внутри, при выходе — совет «вернитесь» |
-| `q:collect(text, spec)` | сделать что-то `count` раз, в строке задания счётчик «(1/3)» |
-| `q:talk(text, spec)` | разговор: подойти к NPC (`actor = "id"` из редактора) или точке (`x, y, z`), реплики `lines` показываются окнами диалога по очереди, `speaker` — заголовок; `onDone(quest, player)` |
-| `q:deliver(text, spec)` | перенести ящики: `count` ящиков поставить в зоне разгрузки, в строке задания счётчик «(1/3)» (ниже) |
-| `q:progress(title, percent)` | своя шкала |
-| `q:complete([xp])`, `q:fail()` | завершить; панель убирается через 6 с (после закрытия экрана награды) |
+| `q:step(text, target)` | reach a point: a quest marker with a route (`route = false` — without), `onEnter(quest, player)` |
+| `q:hold(text, {x, y, z, radius, seconds, meter, leaveTip, onDone})` | stay in an area: the meter grows only inside, on leaving — a "go back" tip |
+| `q:collect(text, spec)` | do something `count` times, the objective line has a "(1/3)" counter |
+| `q:talk(text, spec)` | conversation: approach an NPC (`actor = "id"` from the editor) or a point (`x, y, z`), the `lines` are shown in dialog windows one after another, `speaker` — the title; `onDone(quest, player)` |
+| `q:deliver(text, spec)` | carry crates: put `count` crates down in the unloading area, the objective line has a "(1/3)" counter (below) |
+| `q:progress(title, percent)` | your own meter |
+| `q:complete([xp])`, `q:fail()` | finish; the panel is removed after 6 s (after the reward screen is closed) |
 
-Поля `spec` у `deliver`: `pickup = {x, y, z, radius = 3, boxes = 4, model = "crate", roll = "keep", tag, name}` — погрузка (с `tag` берутся ящики мира с этой меткой, иначе шаг кладёт `boxes` своих вокруг точки), `dropoff = {x, y, z, radius = 4, name}` — разгрузка, `count = 1`, `route = true` (маршрут к разгрузке), `onBox(quest, player, done)`, `onDone(quest, player)`. Засчитывается ящик, поставленный игроком (`carryDrop`, `reason = "put"`) в радиусе разгрузки; он возвращается на погрузку. Брать свои ящики шага может только этот игрок, а когда шаг кончается, они убираются. Общие ящики для нескольких игроков — `Quest.pool(pickup, allowed(player), denyTip)`, переданный как `spec.pool`.
+`spec` fields of `deliver`: `pickup = {x, y, z, radius = 3, boxes = 4, model = "crate", roll = "keep", tag, name}` — loading (with `tag`, the world's crates with that tag are used, otherwise the step places its own `boxes` around the point), `dropoff = {x, y, z, radius = 4, name}` — unloading, `count = 1`, `route = true` (a route to the unloading), `onBox(quest, player, done)`, `onDone(quest, player)`. A crate counts when the player puts it down (`carryDrop`, `reason = "put"`) within the unloading radius; it returns to the loading point. Only this player can pick up the step's own crates, and they are removed when the step ends. Shared crates for several players — `Quest.pool(pickup, allowed(player), denyTip)`, passed as `spec.pool`.
 
-Поля `spec` у `collect`: `event` (тип или список типов событий), `item` (ключ или список), `class` (часть имени класса), `ids` (список конкретных объектов мира), `area = {x, y, z, radius}` (засчитывается только там: «взорвите гнездо», «сожгите бумаги»), `marker = true` (маркер над зоной, `route = true` — с маршрутом), `spawn = {{item, count, x, y, z}, ...}` (шаг раскладывает свои предметы с маркерами над ними; засчитываются только они; не взятые исчезают по окончании шага), `count`, `onDone(quest, player)`. Один и тот же объект засчитывается один раз.
+`spec` fields of `collect`: `event` (an event type or a list of types), `item` (a key or a list), `class` (part of a class name), `ids` (a list of specific world objects), `area = {x, y, z, radius}` (counts only there: "blow up the nest", "burn the papers"), `marker = true` (a marker above the area, `route = true` — with a route), `spawn = {{item, count, x, y, z}, ...}` (the step lays out its own items with markers above them; only they count; those not picked up disappear when the step ends), `count`, `onDone(quest, player)`. The same object counts once.
 
-Квесты и работы из файлов (`quests/<id>.json`, формат — [`docs/quests.md`](quests.md)):
+Quests and jobs from files (`quests/<id>.json`, format — [`docs/quests.md`](quests.md)):
 
 | | |
 |---|---|
-| `Quest.load(id)`, `Quest.list()` | файл квеста (таблица) / список id |
-| `Quest.run(player, def, onDone)` | квест для игрока: шаги по порядку, награда, экран завершения |
-| `Quest.runJob(def or id)` → `job` | работа (`"kind": "job"`) в мире режима: NPC с [F] «Взять работу» / «Сдать работу», ящики шагов `deliver`; `job:stop()` убирает её. Повторный вызов с тем же id заменяет работу |
-| `require("jobs")` | все работы из `quests/` (`modes/_lib/jobs.lua`); `.running[id]` — запущенные |
-| `Quest.jobs()`, `Quest.shift(player)` | запущенные работы по id; на какой работе игрок: `id, {cycles, earned, finished}` или `nil` |
-| `quests.watch()` | с этого момента изменение `quests/*.json` перезагружает режим (вызывают `runJob` и `jobs`) |
+| `Quest.load(id)`, `Quest.list()` | a quest file (table) / list of ids |
+| `Quest.run(player, def, onDone)` | a quest for a player: steps in order, reward, completion screen |
+| `Quest.runJob(def or id)` → `job` | a job (`"kind": "job"`) in the mode's world: an NPC with [F] "Take job" / "Turn in job", the crates of `deliver` steps; `job:stop()` removes it. A repeated call with the same id replaces the job |
+| `require("jobs")` | all jobs from `quests/` (`modes/_lib/jobs.lua`); `.running[id]` — the running ones |
+| `Quest.jobs()`, `Quest.shift(player)` | running jobs by id; which job the player is on: `id, {cycles, earned, finished}` or `nil` |
+| `quests.watch()` | from now on a change to `quests/*.json` reloads the mode (called by `runJob` and `jobs`) |
 
-Без кода работы запускает `meta.ini` режима: `Jobs=all` (или список id через запятую: `Jobs=loader_job,miner`).
+Without code, jobs are started by the mode's `meta.ini`: `Jobs=all` (or a comma-separated list of ids: `Jobs=loader_job,miner`).
 
-## Постоянное хранилище — `storage`
+## Persistent storage — `storage`
 
-Данные режима переживают перезагрузку скриптов и перезапуск сервера. Хранятся в `data/<режим>/storage.json` и записываются на диск не реже раза в 5 секунд и при выгрузке режима.
+The mode's data survives script reloads and server restarts. Stored in `data/<mode>/storage.json` and written to disk at least once every 5 seconds and when the mode is unloaded.
 
-| Функция | Описание |
+| Function | Description |
 |---|---|
-| `storage.get(key)` | значение или `nil` |
-| `storage.set(key, value)` | сохранить: числа, строки, bool и таблицы с вложенностью; `nil` удаляет |
-| `storage.keys()` | массив ключей |
-| `storage.save()` | записать на диск немедленно |
+| `storage.get(key)` | the value or `nil` |
+| `storage.set(key, value)` | save: numbers, strings, bool and nested tables; `nil` deletes |
+| `storage.keys()` | an array of keys |
+| `storage.save()` | write to disk immediately |
 
-Пример аккаунтов RP-сервера:
+An example of RP server accounts:
 ```lua
 command("register", function(player, args, password)
-    if storage.get("acc:" .. player.name) then return player:message("Аккаунт уже существует.") end
+    if storage.get("acc:" .. player.name) then return player:message("The account already exists.") end
     storage.set("acc:" .. player.name, { pass = passwordHash(password or ""), money = 100 })
-    player:message("Аккаунт создан.")
+    player:message("Account created.")
 end)
 command("login", function(player, args, password)
     local acc = storage.get("acc:" .. player.name)
-    if not acc or not passwordCheck(password or "", acc.pass) then return player:message("Неверный пароль.") end
+    if not acc or not passwordCheck(password or "", acc.pass) then return player:message("Wrong password.") end
     player.data.logged = true
 end)
 ```
 
-С проверкой Steam (`SteamApiKey`) ник закреплён за аккаунтом Steam, и пароль нужен только если вы хотите отдельные аккаунты-персонажи. Без неё ники не защищены — делайте вход (`/login`) в самом режиме, как в примере выше.
+With Steam verification (`SteamApiKey`) the nickname is bound to the Steam account, and a password is needed only if you want separate character accounts. Without it nicknames are not protected — implement sign-in (`/login`) in the mode itself, as in the example above.
 
-## HTTP и JSON
+## HTTP and JSON
 
-Запросы на сайт, в API, вебхуки Discord. Выполняются в фоне, ответ приходит в функцию на следующем тике сервера. Одновременно — до 16 запросов, тело — до 1 МБ, тайм-аут по умолчанию 10 с. Выключается в `server.ini`: `Http=0`.
+Requests to a website, an API, Discord webhooks. They run in the background, and the response arrives in your function on the next server tick. Up to 16 requests at a time, body up to 1 MB, default timeout 10 s. Turned off in `server.ini`: `Http=0`.
 
 ```lua
 http.get("https://example.com/api/status", function(ok, status, body, err)
     if ok then local data = json.decode(body) end
 end)
 
--- Сообщение в канал Discord через вебхук (таблица уходит как JSON)
-http.post("https://discord.com/api/webhooks/<id>/<token>", { content = player.name .. " зашёл на сервер" })
+-- A message to a Discord channel through a webhook (the table is sent as JSON)
+http.post("https://discord.com/api/webhooks/<id>/<token>", { content = player.name .. " joined the server" })
 
 http.request({ method = "PUT", url = "https://...", body = json.encode(t), type = "application/json", timeout = 20 },
              function(ok, status, body, err) end)
 ```
 
-`ok` — ответ 2xx; `status` — код HTTP (0 — ответа нет); `err` — что пошло не так. `json.decode` при ошибке возвращает `nil, "invalid JSON"`.
+`ok` — a 2xx response; `status` — the HTTP code (0 — no response); `err` — what went wrong. On an error `json.decode` returns `nil, "invalid JSON"`.
 
-## RP-чат — библиотека `rpchat`
+## RP chat — the `rpchat` library
 
-Чат как на RP-серверах SA-MP: обычное сообщение слышно только рядом, и чем дальше, тем бледнее; игроки в разных виртуальных мирах друг друга не слышат.
+Chat like on SA-MP RP servers: a normal message is heard only nearby, and the farther away, the paler it is; players in different virtual worlds do not hear each other.
 
 ```lua
 local rpchat = require("rpchat")
-rpchat.install()                                     -- радиус 20 м, /o включён
+rpchat.install()                                     -- radius 20 m, /o enabled
 rpchat.install({ radius = 15, ooc = false, names = "underscores", adminSees = true })
-rpchat.near(player, "* Рация шипит", "#C2A2DA", 10)  -- своё сообщение по тем же правилам
+rpchat.near(player, "* The radio hisses", "#C2A2DA", 10)  -- your own message by the same rules
 ```
 
-| Команда | |
+| Command | |
 |---|---|
-| обычный текст | «Mark Twain говорит: …» в радиусе, цвет тускнеет с расстоянием |
-| `/me действие` | `* Mark Twain достаёт рацию` |
-| `/do описание` | `* Дверь заперта (( Mark Twain ))` |
-| `/try действие` | `* Mark Twain открыть дверь \| удачно` — случайно, 50 на 50 |
-| `/b текст` | локальный OOC `(( Mark Twain: … ))` |
-| `/s текст` | крик — вдвое дальше |
-| `/w текст` | шёпот — 2 м |
-| `/pm id или ник текст` | личное сообщение |
-| `/o текст` | общий OOC для всех (`ooc = false` — выключен) |
+| plain text | "Mark Twain says: …" within the radius, the color fades with distance |
+| `/me action` | `* Mark Twain takes out a radio` |
+| `/do description` | `* The door is locked (( Mark Twain ))` |
+| `/try action` | `* Mark Twain open the door \| success` — random, 50/50 |
+| `/b text` | local OOC `(( Mark Twain: … ))` |
+| `/s text` | a shout — twice as far |
+| `/w text` | a whisper — 2 m |
+| `/pm id or nickname text` | a private message |
+| `/o text` | global OOC for everyone (`ooc = false` — turned off) |
 
-`names = "spaces"` (по умолчанию) показывает `Mark_Twain` как `Mark Twain`. `adminSees = true` — админы видят и дальние локальные сообщения (серым, с пометкой `[far]`). Тексты «говорит», «кричит» и т. п. — на языке слушателя (`player.lang`), свои — `prefix = { says = { en = "...", ru = "..." } }`.
+`names = "spaces"` (default) shows `Mark_Twain` as `Mark Twain`. `adminSees = true` — admins also see distant local messages (in gray, marked `[far]`). The "says", "shouts" etc. texts are in the listener's language (`player.lang`); your own — `prefix = { says = { en = "...", ru = "..." } }`.
 
-## Steam, админы и баны
+## Steam, admins and bans
 
-Сервер узнаёт Steam-аккаунт игрока: клиент присылает SteamID и одноразовый билет Steam, сервер проверяет его через Steam Web API (`ISteamUserAuth/AuthenticateUserTicket`). Подделать чужой SteamID нельзя.
+The server learns the player's Steam account: the client sends the SteamID and a one-time Steam ticket, and the server verifies it through the Steam Web API (`ISteamUserAuth/AuthenticateUserTicket`). Someone else's SteamID cannot be forged.
 
-- Ключ Web API — бесплатно на https://steamcommunity.com/dev/apikey, вписать в `server.ini` → `SteamApiKey`. Без ключа аккаунты не проверяются: `player.steamId` у всех `nil`.
-- `SteamAuth=optional` (по умолчанию) — проверка, если есть ключ; игроки без Steam или во время сбоя Steam входят неподтверждёнными. `required` — только подтверждённые. `off` — как раньше, только ники.
-- **Ник закреплён за аккаунтом** (`ReserveNicks=1`): первый, кто вошёл под ником с подтверждённым Steam, владеет им (`data/names.json`); другим этот ник не дадут, неподтверждённым — тоже. Поэтому хранить данные по нику безопасно, но надёжнее по `player.steamId`.
-- **Админы** — SteamID через запятую в `Admins`. Ники там действуют только при `SteamAuth=off`. Игрок, зашедший с этого же компьютера (`127.0.0.1`), — админ (`LocalAdmin=1`). Пароль `RconPassword` даёт права на сессию: в чате `/rcon login <пароль>` (3 неверных — бан IP на 10 минут), дальше `/rcon <команда консоли>` — ответ приходит в чат (`/rcon status`, `/rcon ban 3 60 читы`).
-- **Баны** — `data/bans.json`: по SteamID, IP или нику, со сроком или навсегда. Бан игрока с подтверждённым Steam не трогает его IP (за одним адресом бывает много людей: NAT, мобильный интернет); без Steam баннится и IP. Проверяются при входе, просроченные удаляются сами. Если игрок играет с чужой копии (семейный доступ), бан владельца копии тоже действует.
+- A Web API key is free at https://steamcommunity.com/dev/apikey; put it in `server.ini` → `SteamApiKey`. Without a key, accounts are not verified: `player.steamId` is `nil` for everyone.
+- `SteamAuth=optional` (default) — verification if there is a key; players without Steam, or during a Steam outage, join unverified. `required` — verified only. `off` — as before, nicknames only.
+- **The nickname is bound to the account** (`ReserveNicks=1`): the first player to join under a nickname with verified Steam owns it (`data/names.json`); nobody else is given that nickname, and neither are unverified players. So storing data by nickname is safe, but by `player.steamId` is more reliable.
+- **Admins** — SteamIDs separated by commas in `Admins`. Nicknames there work only with `SteamAuth=off`. A player who joins from this same computer (`127.0.0.1`) is an admin (`LocalAdmin=1`). The `RconPassword` password grants rights for the session: `/rcon login <password>` in chat (3 wrong attempts — an IP ban for 10 minutes), then `/rcon <console command>` — the reply arrives in chat (`/rcon status`, `/rcon ban 3 60 cheats`).
+- **Bans** — `data/bans.json`: by SteamID, IP or nickname, for a period or permanently. A ban of a player with verified Steam does not touch their IP (many people can share one address: NAT, mobile internet); without Steam the IP is banned too. Checked on join, expired ones are removed automatically. If a player plays from someone else's copy (Family Sharing), a ban on the copy's owner also applies.
 
 ```lua
-command("ban", function(admin, args, who)          -- /ban Raud 60 читы
-    if not admin.admin then return admin:message("Нет прав") end
+command("ban", function(admin, args, who)          -- /ban Raud 60 cheats
+    if not admin.admin then return admin:message("No permission") end
     local target, rest = getPlayer(who), args:match("^%S+%s*(.*)$")
     local minutes, reason = rest:match("^(%d+)%s*(.*)$")
     if target then target:ban(reason or rest, tonumber(minutes) or 0) end
 end)
 
-on("playerConnecting", function(info)               -- белый список по SteamID
-    if not info.verified then return "Войдите через Steam" end
-    if not storage.get("whitelist:" .. info.steamId) then return "Подайте анкету в Discord" end
+on("playerConnecting", function(info)               -- whitelist by SteamID
+    if not info.verified then return "Sign in through Steam" end
+    if not storage.get("whitelist:" .. info.steamId) then return "Submit an application on Discord" end
 end)
 ```
 
-## Античит
+## Anti-cheat
 
-Сервер не доверяет тому, что присылает клиент, там, где это можно проверить.
+The server does not trust what the client sends, wherever that can be checked.
 
-**Попадания.** Урон по игроку присылает клиент стрелявшего. Сервер отбрасывает попадание и даёт страйк, если: урон больше `MaxHitDamage`; дальше 400 м; удар в ближнем бою дальше `MeleeRange` (с поправкой на скорость и пинг); стрелок мёртв или наблюдает; попаданий в секунду больше `MaxHitsPerSecond`.
+**Hits.** Damage to a player is sent by the shooter's client. The server discards the hit and gives a strike if: the damage is greater than `MaxHitDamage`; farther than 400 m; a melee hit is farther than `MeleeRange` (adjusted for speed and ping); the shooter is dead or spectating; there are more hits per second than `MaxHitsPerSecond`.
 
-**Защищённые предметы.** Режим объявляет ключи (префиксы), которые выдаёт только сервер:
+**Protected items.** The mode declares keys (prefixes) that only the server hands out:
 
 ```lua
-protectItems({ "kWeaponID_", "kAmmoID_" })   -- оружие и патроны — только из магазина режима
+protectItems({ "kWeaponID_", "kAmmoID_" })   -- weapons and ammo — only from the mode's shop
 ```
 
-Сервер ведёт учёт, сколько чего выдал каждому игроку (`giveItem`, `giveWeapon`, `setAmmo`, `restoreInventory`, предметы `spawnItem`), и сверяет каждый снимок инвентаря. Лишнее забирается, режим слышит `inventoryViolation`, без объяснения — страйк. Что разрешено само:
-- нож, камень и шокер Дикона (не защищаются никогда);
-- расход: потратил патроны, выбросил оружие — учёт уменьшается;
-- оружие, которое выбросил или отдал другой игрок: кто поднимет его там же (до 30 минут), тому оно засчитывается — так работает передача из рук в руки;
-- предметы `spawnItem` — тому, кто их поднял, один раз.
+The server keeps count of how much of what it has given each player (`giveItem`, `giveWeapon`, `setAmmo`, `restoreInventory`, `spawnItem` items) and checks every inventory snapshot against it. The excess is taken away, the mode hears `inventoryViolation`, and without an explanation — a strike. What is allowed automatically:
+- Deacon's knife, rock and stun gun (never protected);
+- spending: used up ammo, threw away a weapon — the count decreases;
+- a weapon that another player dropped or handed over: whoever picks it up in the same place (within 30 minutes) is credited with it — this is how hand-to-hand transfer works;
+- `spawnItem` items — to whoever picked them up, once.
 
-Мировой лут игры (ящики с патронами, оружие на карте) сервер не выдавал: решает режим —
+The game's world loot (ammo crates, weapons on the map) was not handed out by the server: the mode decides —
 
 ```lua
 on("inventoryViolation", function(p, v)
-    if v.pickedUp and v.item:find("^kAmmoID_") then return true end   -- патроны, подобранные в мире, — можно
+    if v.pickedUp and v.item:find("^kAmmoID_") then return true end   -- ammo picked up in the world is allowed
 end)
 ```
 
-Изготовленное (коктейль Молотова — это `kWeaponID_Molotov_*`) тоже не выдано сервером: не защищайте такие ключи или разрешайте их в обработчике.
+Crafted items (a Molotov cocktail is `kWeaponID_Molotov_*`) were not handed out by the server either: do not protect such keys, or allow them in the handler.
 
-**Страйки.** Каждое нарушение — страйк и событие `cheat` (`kind`: `hitDamage`, `hitRange`, `hitRate`, `hitWhileDead`, `hitFromHelicopter`, `item`). `CheatKick` страйков за минуту (по умолчанию 10) — кик. `return true` в `cheat` — режим решает сам (например, бан или только лог). Всё пишется в лог сервера с пометкой `[anticheat]`.
+**Strikes.** Every violation is a strike and a `cheat` event (`kind`: `hitDamage`, `hitRange`, `hitRate`, `hitWhileDead`, `hitFromHelicopter`, `item`). `CheatKick` strikes per minute (default 10) — a kick. `return true` in `cheat` — the mode decides itself (for example, a ban or just a log). Everything is written to the server log marked `[anticheat]`.
 
 ```lua
 on("cheat", function(p, kind, info)
-    if kind == "hitDamage" then p:ban("урон-хак: " .. info.detail) return true end   -- навсегда
+    if kind == "hitDamage" then p:ban("damage hack: " .. info.detail) return true end   -- permanently
 end)
 ```
 
-## Окно предметов
+## Item window
 
-Готовое окно игры с одним или двумя списками предметов (рюкзак | багажник, рюкзак | тайник): иконки (картинки режима), количество, строка описания, кнопки действий у выбранного предмета, перенос между списками (кнопкой «Переложить», «1 шт.» или двойным щелчком). Что значит любое нажатие, решает сервер: окно только показывает и сообщает. Обычно его открывает библиотека `inventory` (ниже), но можно и напрямую.
+A ready-made game window with one or two item lists (backpack | trunk, backpack | stash): icons (the mode's images), quantity, a description line, action buttons for the selected item, transfer between lists (with the "Move" button, "1 only" or a double click). What any click means is decided by the server: the window only shows and reports. It is usually opened by the `inventory` library (below), but it can also be used directly.
 
 ```lua
 player:itemWindow({
-    title = "Рюкзак и багажник", hint = "Двойной щелчок — переложить",
+    title = "Backpack and trunk", hint = "Double-click to move",
     panes = {
-        { id = "bag", title = "Рюкзак", info = "12.5 / 30 кг", empty = "Пусто",
-          items = { { id = "gas", name = "Канистра", count = 2, icon = "gas.png", text = "10 л", actions = { { id = "refuel", label = "Заправить" } } } } },
-        { id = "trunk", title = "Багажник", items = {} },
+        { id = "bag", title = "Backpack", info = "12.5 / 30 kg", empty = "Empty",
+          items = { { id = "gas", name = "Gas can", count = 2, icon = "gas.png", text = "10 L", actions = { { id = "refuel", label = "Refuel" } } } } },
+        { id = "trunk", title = "Trunk", items = {} },
     },
 }, function(player, action)
     -- action: {type = "move", pane = 1, item = 1, count = 2} | {type = "action", pane =, item =, id = "refuel"} | {type = "close"}
 end)
-player:itemWindow({...})      -- пока окно открыто: обновить на месте (выбор остаётся)
+player:itemWindow({...})      -- while the window is open: update in place (the selection stays)
 player:closeItemWindow()
-on("itemWindow", function(player, windowId, action) end)   -- то же для всех окон
+on("itemWindow", function(player, windowId, action) end)   -- the same for all windows
 ```
 
-Окно держит курсор, как диалог. До 64 КБ описания и 20 действий в секунду от игрока.
+The window holds the cursor, like a dialog. Up to 64 KB of description and 20 actions per second from a player.
 
-## Свой инвентарь — библиотека `inventory`
+## The mode's own inventory — the `inventory` library
 
-`modes/_lib/inventory.lua`: предметы режима (канистра бензина, рация, ключ, мина), контейнеры с ограничением по весу и слотам — рюкзак игрока, багажник транспорта, тайник — и окно предметов к ним. Всё решает сервер; игровой рюкзак (патроны, оружие — `player:giveItem`) отдельно.
+`modes/_lib/inventory.lua`: the mode's items (a gas can, radio, key, mine), containers limited by weight and slots — the player's backpack, a vehicle trunk, a stash — and the item window for them. The server decides everything; the game's backpack (ammo, weapons — `player:giveItem`) is separate.
 
 ```lua
 local inventory = require("inventory")
 inventory.define("gas", { name = { en = "Gas can", ru = "Канистра" }, icon = "gas.png", weight = 5, stack = 1,
     text = { en = "Fills a tank by 40 %", ru = "Заправляет бак на 40 %" },
     actions = { { id = "refuel", label = { en = "Refuel", ru = "Заправить" },
-                  when = function(player) return nearVehicle(player) ~= nil end,   -- кнопка видна только рядом с транспортом
-                  fn = function(player, ctx) setVehicle(id, { fuel = 1 }) return true end } } })   -- true: один израсходован
+                  when = function(player) return nearVehicle(player) ~= nil end,   -- the button is visible only near a vehicle
+                  fn = function(player, ctx) setVehicle(id, { fuel = 1 }) return true end } } })   -- true: one is used up
 
-local bag = inventory.of(player)              -- рюкзак игрока: по SteamID (без него — по нику), сохраняется
-bag:add("gas", 1)                             -- сколько поместилось (вес, слоты)
+local bag = inventory.of(player)              -- the player's backpack: by SteamID (without it — by nickname), persisted
+bag:add("gas", 1)                             -- how many fit (weight, slots)
 bag:remove("gas", 1); bag:count("gas"); bag:has("gas"); bag:weight(); bag:list()
-local trunk = inventory.trunk(vehicleId, { key = "bob_car", maxWeight = 80 })   -- key: хранить и после перезапуска
-local stash = inventory.container("house:12", { title = "Тайник", maxWeight = 100, slots = 30, persist = true })
-inventory.open(player, bag, trunk, { title = "Рюкзак и багажник" })   -- одно или два хранилища
+local trunk = inventory.trunk(vehicleId, { key = "bob_car", maxWeight = 80 })   -- key: also keep it after a restart
+local stash = inventory.container("house:12", { title = "Stash", maxWeight = 100, slots = 30, persist = true })
+inventory.open(player, bag, trunk, { title = "Backpack and trunk" })   -- one or two storages
 inventory.close(player)
-inventory.onMove = function(player, item, count, from, to) return false end   -- запретить перенос
-inventory.bag = { maxWeight = 30, slots = 24 }   -- размер рюкзака (до первого inventory.of)
+inventory.onMove = function(player, item, count, from, to) return false end   -- forbid the transfer
+inventory.bag = { maxWeight = 30, slots = 24 }   -- backpack size (before the first inventory.of)
 ```
 
-У предмета: `name`, `icon` (картинка из `images/`), `weight` (кг), `stack` (сколько в одной ячейке), `text` (строка или `function(item, player)`), `actions` (`id`, `label`, `when`, `fn`). Имена и подписи — строкой или `{en =, ru =}` (по языку игрока). Предмет с данными (`bag:add("radio", 1, {freq = 101})`) занимает свою ячейку. Хранилища с `persist = true` лежат в `storage` под ключом `inv:<id>`.
+An item has: `name`, `icon` (an image from `images/`), `weight` (kg), `stack` (how many in one slot), `text` (a string or `function(item, player)`), `actions` (`id`, `label`, `when`, `fn`). Names and labels are a string or `{en =, ru =}` (by the player's language). An item with data (`bag:add("radio", 1, {freq = 101})`) takes its own slot. Storages with `persist = true` are kept in `storage` under the key `inv:<id>`.
 
-## Ловушки
+## Traps
 
-Игровые мина, СВУ и капкан, растяжка между двумя точками (со СВУ на одном конце) или невидимая зона. Когда ловушка срабатывает, решает **сервер**: игрок (или зомби) в радиусе точечной ловушки или пересёк растяжку на высоте своего тела. Тогда вызываются `onTrigger` и события `trap` (`false` — ничего не происходит), и ловушка срабатывает у всех: взрывчатка взрывается по-игровому (каждая игра ранит своего игрока и своих зомби рядом), капкан ловит жертву у неё на экране (застрял, вырывайтесь, кровотечение) и захлопывается у остальных. Сами игровые срабатыватели и подбор ловушки в рюкзак выключены.
+The game's mine, IED and bear trap, a tripwire between two points (with an IED at one end) or an invisible zone. When a trap triggers is decided by the **server**: a player (or zombie) within the radius of a point trap, or one who crossed a tripwire at body height. Then `onTrigger` and the `trap` events are called (`false` — nothing happens), and the trap triggers for everyone: explosives explode in the game's way (each game hurts its own player and its own zombies nearby), a bear trap catches the victim on their screen (stuck, struggle free, bleeding) and snaps shut for the others. The game's own triggers and picking a trap up into the backpack are disabled.
 
 ```lua
-createTrap({ type = "mine", x = x, y = y, z = z })                -- z — земля; радиус 1.5 м
-createTrap({ type = "beartrap", x = x, y = y, z = z, yaw = 90 })   -- 0.6 м
+createTrap({ type = "mine", x = x, y = y, z = z })                -- z — ground; radius 1.5 m
+createTrap({ type = "beartrap", x = x, y = y, z = z, yaw = 90 })   -- 0.6 m
 createTrap({ type = "ied", x = x, y = y, z = z, radius = 3 })
-createTrap({ type = "wire", x = x1, y = y1, z = z1 + 30, x2 = x2, y2 = y2, z2 = z2 + 30 })   -- z: высота проволоки
+createTrap({ type = "wire", x = x1, y = y1, z = z1 + 30, x2 = x2, y2 = y2, z2 = z2 + 30 })   -- z: height of the wire
 createTrap({ type = "wire", explosive = false, x = ..., z = z + 150, ..., onTrigger = function(trap, player, zombieId)
-    if not player then return false end            -- зомби проходят
-    player:damage(25)                                -- «бельевая верёвка» на шее мотоциклиста
+    if not player then return false end            -- zombies pass
+    player:damage(25)                                -- a "clothesline" at a motorcyclist's neck
     if player:isOnBike() then player:playAnim("dcn_trap_tripwire_clothsline_bike_long") end
 end })
-createTrap({ type = "zone", x = x, y = y, z = z, radius = 5, rearm = 10, onTrigger = function(trap, player) ... end })  -- своя механика
-removeTrap(id); getTrap(id); traps(); fireTrap(id [, player])     -- взорвать сейчас
-explode(x, y, z [, world])                                         -- взрыв СВУ в точке
-on("trap", function(trap, player, zombieId) end)                   -- return false: не срабатывать
+createTrap({ type = "zone", x = x, y = y, z = z, radius = 5, rearm = 10, onTrigger = function(trap, player) ... end })  -- your own mechanic
+removeTrap(id); getTrap(id); traps(); fireTrap(id [, player])     -- detonate now
+explode(x, y, z [, world])                                         -- an IED explosion at a point
+on("trap", function(trap, player, zombieId) end)                   -- return false: do not trigger
 ```
 
-Поля: `world` (0), `players = true`, `zombies = true` (кто задевает), `rearm` (секунды до повторной готовности; без него ловушка одноразовая), `radius` (м), `lethal = true` и `bleed = 20` (капкан: пойманный истекает кровью и погибает через `bleed` секунд, если не вырвется; своё кровотечение игры останавливается примерно на четверти здоровья; `false` — только держит и ранит), `explosive = true` (растяжка: СВУ на конце). Новая ловушка готова через секунду (не под ногами поставившего). Растяжку засчитывает пересечение отрезка движения с проволокой, если она на высоте от щиколоток до головы мотоциклиста (−20 … +220 см от ног); точечные — по расстоянию до центра. Клиенты показывают ловушки в радиусе 300 м.
+Fields: `world` (0), `players = true`, `zombies = true` (who sets it off), `rearm` (seconds until ready again; without it the trap is one-shot), `radius` (m), `lethal = true` and `bleed = 20` (bear trap: the caught player bleeds out and dies after `bleed` seconds unless they break free; the game's own bleeding stops at about a quarter of health; `false` — it only holds and hurts), `explosive = true` (tripwire: an IED at the end). A new trap is ready after a second (not under the placer's feet). A tripwire counts as triggered when the movement segment crosses the wire, if it is at a height from the ankles to the motorcyclist's head (−20 … +220 cm from the feet); point traps — by distance to the center. Clients show traps within a 300 m radius.
 
-- **Капкан.** Пойманный застревает, вырывается частым нажатием клавиши, которую показывает игра (E), теряет кровь. Пока капкан его держит (игрок стоит в его челюстях), взаимодействия, переноска и клавиши режима не действуют — клавиши остаются игре.
-- **Растяжка.** Тонкая проволока на двух колышках, СВУ лежит на земле под первым концом. После срабатывания проволока исчезает сразу, колышки — через 7 секунд; сервер забывает ловушку через 10.
+- **Bear trap.** The caught player gets stuck, breaks free by repeatedly pressing the key the game shows (E), and loses blood. While the trap holds them (the player stands in its jaws), interactions, carrying and the mode's keys do not work — the keys stay with the game.
+- **Tripwire.** A thin wire on two stakes, the IED lies on the ground under the first end. After it triggers the wire disappears immediately, the stakes after 7 seconds; the server forgets the trap after 10.
 
-**Установка прицелом** — на клиентском скрипте (`modes/inventory/client/main.lua`): призрак ловушки (`createObject{..., ghost = true}`, с обводкой) стоит там, куда смотрит прицел; F ставит, G отменяет. Точка — не дальше 4 м от игрока (и не под ногами: не ближе 1,5 м). Растяжка — как в игре: первый конец ставится (`send("wireStart", ...)`, сервер запоминает его тогда же), игрок идёт, натягивая проволоку (видна линия с длиной), и ставит второй конец тоже в 4 м от себя; длина — от 1 до 10 м (`send("placeAt", ...)`). Сервер проверяет всё сам и только потом ставит ловушку и забирает предмет из рюкзака. Свою несработавшую ловушку поставивший забирает обратно — «[F] Забрать ловушку» рядом с ней. `/place mine|beartrap|wire` — то же без предмета (для проверки).
+**Aimed placement** is done in a client script (`modes/inventory/client/main.lua`): a ghost of the trap (`createObject{..., ghost = true}`, outlined) stands where the crosshair points; F places it, G cancels. The point is no farther than 4 m from the player (and not underfoot: no closer than 1.5 m). A tripwire works as in the game: the first end is placed (`send("wireStart", ...)`, the server remembers it at that moment), the player walks, stretching the wire (a line with its length is visible), and places the second end also within 4 m of themselves; the length is from 1 to 10 m (`send("placeAt", ...)`). The server checks everything itself and only then places the trap and takes the item from the backpack. The placer can take their own untriggered trap back — "[F] Pick up trap" next to it. `/place mine|beartrap|wire` — the same without an item (for testing).
 
-## Зомби
+## Zombies
 
-Фрикеры игры в мультиплеере (экспериментально, `server.ini` `Zombies=1`). ИИ зомби работает в игре ближайшего к нему игрока, остальные видят его копию. Подробно — [`docs/zombies.md`](zombies.md).
+The game's freakers in multiplayer (experimental, `server.ini` `Zombies=1`). The zombie AI runs in the game of the player closest to it; the others see a copy of it. Details — [`docs/zombies.md`](zombies.md).
 
-- **Зоны зомби** ставят в редакторе («Мир» → «PvP и зоны» → «+ Зомби», салатовые столбики) или кодом. Пока рядом игрок, в зоне держится заданное число зомби; убитый возвращается через `respawn` секунд; без игроков рядом 30 с зона засыпает.
-- **Типы** — `Swarmer`, `Newt`, `Breaker`, `Screamer`, ...: любой тип, который регион перечисляет, даже если игра его там не загрузила (загружается при первом спавне).
+- **Zombie zones** are placed in the editor ("World" → "PvP and zones" → "+ Zombies", lime-green posts) or in code. While a player is nearby, the zone keeps the set number of zombies; a killed one returns after `respawn` seconds; with no players nearby for 30 s the zone goes to sleep.
+- **Types** — `Swarmer`, `Newt`, `Breaker`, `Screamer`, ...: any type the region lists, even if the game has not loaded it there (it loads on the first spawn).
 
 ```lua
 createZombieZone({ name = "camp", x = -82000, y = -301000, z = -5250, radius = 30, types = { "Swarmer", "Newt" }, max = 6, respawn = 60 })
-setZombieZone("camp", { enabled = false })          -- зомби зоны исчезают
-local id = createZombie(x, y, z, "Breaker")         -- один зомби
-local horde = createHorde(x, y, z, 12, { radius = 10 })  -- стая
+setZombieZone("camp", { enabled = false })          -- the zone's zombies disappear
+local id = createZombie(x, y, z, "Breaker")         -- a single zombie
+local horde = createHorde(x, y, z, 12, { radius = 10 })  -- a horde
 on("zombieDeath", function(zombie, killer) if killer then killer:giveMoney(10) end end)  -- zombie.zone / zombie.horde
-on("hordeDeath", function(id) broadcast("Стая уничтожена") end)
+on("hordeDeath", function(id) broadcast("Horde destroyed") end)
 ```
 
-## Скрипты сервера
+## Server scripts
 
-Как filterscripts в SA-MP: Lua-файлы `scripts/<имя>.lua` в папке сервера, которые работают в любом режиме — общие админ-команды, логи, правила античита. В `server.ini`: `Scripts=discord_log,admin` (через запятую). Они выполняются в том же Lua-состоянии, что и режим, перед его `main.lua`: им доступен весь API, их обработчики `on(...)` и команды работают вместе с обработчиками режима. Ошибка в скрипте пропускает только его. Изменение файла в `scripts/` перезагружает режим, как и правка самого режима.
+Like filterscripts in SA-MP: Lua files `scripts/<name>.lua` in the server folder that work in any mode — shared admin commands, logs, anti-cheat rules. In `server.ini`: `Scripts=discord_log,admin` (comma-separated). They run in the same Lua state as the mode, before its `main.lua`: the whole API is available to them, and their `on(...)` handlers and commands work together with the mode's handlers. An error in a script skips only that script. A change to a file in `scripts/` reloads the mode, as does an edit to the mode itself.
 
-Пример — [`scripts/discord_log.lua`](../scripts/discord_log.lua): входы, выходы, убийства и срабатывания античита уходят в канал Discord через вебхук (адрес вебхука вписывается в начало файла).
+Example — [`scripts/discord_log.lua`](../scripts/discord_log.lua): joins, leaves, kills and anti-cheat triggers go to a Discord channel through a webhook (the webhook address is put at the top of the file).
 
-## Песочница и ограничения
+## Sandbox and limits
 
-- Доступны `string`, `table`, `math`, `utf8`, `coroutine`, `os.time` / `os.clock` / `os.date`.
-- Нет `io`, `os.execute`, нативных модулей и байткода (`load` принимает только текст).
-- Один вызов скрипта может работать не дольше **3 секунд**. Иначе он прерывается с ошибкой «infinite loop?», а сервер продолжает работать.
+- Available: `string`, `table`, `math`, `utf8`, `coroutine`, `os.time` / `os.clock` / `os.date`.
+- No `io`, `os.execute`, native modules or bytecode (`load` accepts text only).
+- A single script call may run for no more than **3 seconds**. Otherwise it is aborted with an "infinite loop?" error, and the server keeps running.
 
-## Консоль сервера
+## Server console
 
-`help`, `status` (у каждого игрока — IP, SteamID: со знаком `?` — не подтверждён, admin), `say <текст>`, `kick <id или ник> [причина]`, `ban <id|ник|SteamID|IP> [минуты] [причина]`, `unban <SteamID|IP|ник>`, `bans`, `admin <id|ник> [off]`, `hitstats` (наибольший урон одного попадания по каждому оружию с запуска — чтобы подобрать `MaxHitDamage`), `voice` (голосовой чат: кто говорит, каналы, передано и отброшено), `bot [N]` / `bot off`, `reload`, `mode <id>`, `time <часы>`, `weather <id или auto>`, `quit`. Остальные строки попадают в событие `console` режима. Например, во фрируме: `give`, `weapon`, `disarm`, `bike`, `nobike`, `inv`, `hint`, `tip`, `nametags`.
+`help`, `status` (for each player — IP, SteamID: with a `?` sign — unverified, admin), `say <text>`, `kick <id or nickname> [reason]`, `ban <id|nickname|SteamID|IP> [minutes] [reason]`, `unban <SteamID|IP|nickname>`, `bans`, `admin <id|nickname> [off]`, `hitstats` (the largest single-hit damage for each weapon since launch — for choosing `MaxHitDamage`), `voice` (voice chat: who is speaking, channels, sent and dropped), `bot [N]` / `bot off`, `reload`, `mode <id>`, `time <hours>`, `weather <id or auto>`, `quit`. Other lines go to the mode's `console` event. For example, in freeroam: `give`, `weapon`, `disarm`, `bike`, `nobike`, `inv`, `hint`, `tip`, `nametags`.
 
 ## `server.ini`
 
-| Ключ | Значение |
+| Key | Value |
 |---|---|
-| `Name` | название в списке серверов |
-| `Mode` | id режима (папка в `modes/`) |
-| `Port` | UDP-порт, по умолчанию 7777 (для LAN-поиска 7777–7786) |
-| `MaxPlayers` | до 64 |
-| `Password` | пароль входа (пусто — без пароля) |
-| `Admins` | SteamID администраторов через запятую (ники — только при `SteamAuth=off`) |
-| `SteamAuth` | `optional` (по умолчанию), `required`, `off` — проверка Steam-аккаунтов |
-| `SteamApiKey` | ключ Steam Web API для проверки |
-| `ReserveNicks` | `1` — ник закрепляется за Steam-аккаунтом |
-| `LocalAdmin` | `1` — вошедший с этого компьютера — админ |
-| `RconPassword` | пароль для `/rcon login` (пусто — RCON выключен) |
-| `Http` | `1` (по умолчанию) — режимам доступен `http.request`; `0` — нет |
-| `Scripts` | скрипты сервера (`scripts/<имя>.lua`) через запятую, см. «Скрипты сервера» |
-| `MaxHitDamage`, `MeleeRange`, `MaxHitsPerSecond`, `CheatKick` | античит: урон одного попадания, дальность ближнего боя (м), попаданий в секунду, страйков в минуту до кика (0 — не кикать) |
-| `Nametags` | `visible`, `walls` или `hidden` |
-| `Voice` | `1` (по умолчанию) — голосовой чат включён; `0` — нет. На лету: `setVoiceEnabled`, консоль `voice on|off` |
-| `VoiceRange` | на сколько метров слышен голос рядом (25) |
-| `VoiceRate`, `VoiceListeners`, `VoiceBandwidth` | голос: байт в секунду от одного игрока (8000), скольких говорящих игрок слышит сразу (8), байт в секунду голоса от всего сервера (0 — без ограничения) |
-| `SpawnX/Y/Z/Yaw` | точка появления, в единицах Unreal |
-| `Bind` | IP для прослушивания (по умолчанию все интерфейсы) |
-| `Master` | мастер-сервер, на котором сервер виден во вкладке «Интернет» (`host` или `host:port`); пусто — не объявляется. См. [`docs/master.md`](master.md) |
+| `Name` | name in the server list |
+| `Mode` | mode id (a folder in `modes/`) |
+| `Port` | UDP port, default 7777 (7777–7786 for LAN discovery) |
+| `MaxPlayers` | up to 64 |
+| `Password` | join password (empty — no password) |
+| `Admins` | administrators' SteamIDs separated by commas (nicknames — only with `SteamAuth=off`) |
+| `SteamAuth` | `optional` (default), `required`, `off` — verification of Steam accounts |
+| `SteamApiKey` | Steam Web API key for verification |
+| `ReserveNicks` | `1` — a nickname is bound to a Steam account |
+| `LocalAdmin` | `1` — a player who joins from this computer is an admin |
+| `RconPassword` | password for `/rcon login` (empty — RCON is off) |
+| `Http` | `1` (default) — `http.request` is available to modes; `0` — not |
+| `Scripts` | server scripts (`scripts/<name>.lua`) separated by commas, see "Server scripts" |
+| `MaxHitDamage`, `MeleeRange`, `MaxHitsPerSecond`, `CheatKick` | anti-cheat: single-hit damage, melee range (m), hits per second, strikes per minute before a kick (0 — do not kick) |
+| `Nametags` | `visible`, `walls` or `hidden` |
+| `Voice` | `1` (default) — voice chat on; `0` — off. On the fly: `setVoiceEnabled`, console `voice on|off` |
+| `VoiceRange` | how many meters away nearby voice is heard (25) |
+| `VoiceRate`, `VoiceListeners`, `VoiceBandwidth` | voice: bytes per second from one player (8000), how many speakers a player hears at once (8), bytes per second of voice from the whole server (0 — unlimited) |
+| `SpawnX/Y/Z/Yaw` | spawn point, in Unreal units |
+| `Bind` | IP to listen on (all interfaces by default) |
+| `Master` | the master server on which the server is visible in the "Internet" tab (`host` or `host:port`); empty — not announced. See [`docs/master.md`](master.md) |
 
-Ключи командной строки `--name`, `--mode`, `--port`, `--max`, `--password`, `--bind`, `--master-server`, `--config` переопределяют файл.
+The command-line keys `--name`, `--mode`, `--port`, `--max`, `--password`, `--bind`, `--master-server`, `--config` override the file.

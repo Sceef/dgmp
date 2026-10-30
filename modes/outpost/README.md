@@ -1,76 +1,78 @@
-# Рубеж — демонстрационный RP-режим DGMP
+**English** · [Русский](README.ru.md)
 
-Лагерь Железного Майка: регистрация, профессии, магазин и оружейная, лечение, личный мотоцикл, склад, переноска грузов, патруль и экспедиция. NPC и взаимодействия создаёт DGMP. Координаты сервисов и вылазок берутся из точек логики в `world.json`; запасной набор в `config.lua` соответствует этому размещению. Серверные `/setpoint` имеют приоритет над точками редактора, если их раньше сохраняли.
+# Rubezh — the DGMP demo RP mode
 
-## Локальная репетиция
+Iron Mike's camp: registration, professions, a shop and an armory, treatment, a personal motorcycle, storage, crate carrying, a patrol and an expedition. DGMP creates the NPCs and interactions. The coordinates of services and runs are taken from the logic points in `world.json`; the fallback set in `config.lua` matches this layout. Server `/setpoint` values take priority over editor points if they were saved earlier.
 
-Запустить `start-outpost.bat` из корня DGMP. В лаунчере подключиться к `127.0.0.1:7778`. Локальный участник получает права администратора. Сервер доступен только на этом компьютере; для игры по LAN поменять `Bind` в `server-outpost.ini` на адрес сетевого интерфейса. Для публичного запуска отдельно настроить проверку Steam и права администраторов — текущий конфиг предназначен для локальной репетиции.
+## Local rehearsal
 
-При первом входе выбрать внешность: первым в списке идёт выживший в очках, Дикона в списке нет. У коменданта нажать F и получить пропуск: он направит к кладовщику. У кладовщика два пункта: «Открыть склад» и «Начать работу». Принятие работы создаёт физический ящик: забрать его на отмеченной площадке и отнести кладовщику (поднять и поставить удержанием F). Пока ящик в руках, F принадлежит переноске и не открывает соседнего NPC. Одновременно можно выполнять только одно задание; смена профессии и формы во время задания запрещена. Следующие задания доступны у коменданта в пункте «Задания лагеря», доставку выдаёт кладовщик. `/gps shop`, `/gps garage`, `/gps clinic` показывают сервисы. I открывает рюкзак, N — голос рядом, K — рацию, E — транспорт. Язык режима соответствует языку лаунчера (русский или английский); для других языков используется английский. Список дополнительных команд доступен по запросу через `/help`.
+Run `start-outpost.bat` from the DGMP root. In the launcher connect to `127.0.0.1:7778`. The local participant gets admin rights. The server is reachable only from this computer; for LAN play change `Bind` in `server-outpost.ini` to the address of the network interface. For a public launch set up Steam verification and admin rights separately — the current config is meant for a local rehearsal.
 
-Для смены профессии вернуться к коменданту, выбрать профессию и начать смену через `/duty`. Охраннику доступен патруль, медику — `/aid <id>` и подъём раненых, механику — ремонт деталями из рюкзака.
+On the first join choose a look: the survivor in glasses comes first in the list, Deacon is not in the list. At the commander press F and get a pass: it sends you to the quartermaster. The quartermaster has two items: "Open storage" and "Start work". Accepting the job creates a physical crate: pick it up at the marked site and carry it to the quartermaster (pick up and put down by holding F). While the crate is in your hands, F belongs to carrying and does not open a neighbouring NPC. Only one job can be done at a time; changing profession and uniform during a job is forbidden. Further jobs are available at the commander under "Camp jobs", the delivery is given by the quartermaster. `/gps shop`, `/gps garage`, `/gps clinic` show the services. I opens the backpack, N — proximity voice, K — the radio, E — the vehicle. The mode's language follows the launcher language (Russian or English); for other languages English is used. The list of additional commands is available on request through `/help`.
 
-**Обучение.** После первой доставки ящика комендант выдаёт подъёмные ($80) и ведёт дальше:
-1. купить мотоцикл в гараже;
-2. купить пистолет у торговца («Оружейная»);
-3. взять «Экспедицию NERO» в «Заданиях лагеря» у коменданта;
-4. перебить фриков и отнести медикаменты лекарю в медпункт.
+To change profession, return to the commander, choose a profession and start the shift with `/duty`. A guard has the patrol, a medic has `/aid <id>` and reviving downed players, a mechanic has repairs with parts from the backpack.
 
-Шаг сохраняется в персонаже и продолжается после перезахода. При первом входе подсказка рассказывает о голосовом чате (N, K, Tab, `/voice`).
+**Tutorial.** After the first crate delivery the commander gives out the starting allowance ($80) and leads on:
+1. buy a motorcycle in the garage;
+2. buy a pistol from the trader ("Armory");
+3. take the "NERO expedition" in "Camp jobs" at the commander;
+4. kill the freakers and bring the medical supplies to the healer in the clinic.
 
-**Своё место задания.** Поиск деталей и экспедиция идут «вылазками». Вылазка одна на игрока, а у отряда (F на игроке → «Пригласить в отряд») — одна на всех. У каждой вылазки свой виртуальный мир. Кто из её участников подъезжает к точке ближе 120 м, переходит в этот мир вместе с мотоциклом. Кто отъезжает дальше 180 м, возвращается в общий мир. Поэтому тайники, фрики и медикаменты на точке только ваши: другие игроки и отряды на том же месте не видят их и ничего не портят, а у них свои. Время вылазки — `missionSeconds`. Смерть её не отменяет: после медпункта можно вернуться.
+The step is saved in the character and continues after a reconnect. On the first join a hint tells about voice chat (N, K, Tab, `/voice`).
 
-**Экспедиция NERO** («Задания лагеря» у коменданта или `/mission join`). Точку охраняют четыре фрика (нужен `Zombies=1`; без него сразу стоит ящик). Когда они убиты, на точке появляется ящик «Забрать медикаменты NERO» (F): каждый участник берёт по упаковке. Это квестовый предмет: он лежит в рюкзаке (2 кг), не продаётся, не передаётся и не жертвуется. Упаковку нужно отнести лекарю: медпункт → «Отдать медикаменты NERO». Награда — $180 и 8 репутации, лагерю +8 медикаментов. Ход вылазки — `/mission`.
+**The job site of your own.** Salvage and the NERO expedition go as "runs". A run is one per player, and a squad (F at a player → "Invite to the squad") has one for everybody. Each run has its own virtual world. A participant who comes closer than 120 m to the site moves into this world together with the motorcycle. One who goes farther than 180 m returns to the shared world. So the caches, freakers and medical supplies at the site are yours alone: other players and squads at the same place do not see them and spoil nothing, and they have their own. The run time is `missionSeconds`. Death does not cancel it: after the clinic you can come back.
 
-**Поиск деталей** («Задания лагеря» у коменданта). На точке `salvage` три тайника (ящик с инструментом, рюкзак, ящик патронов). Их обыскивают по F (4 секунды рядом с тайником), каждый даёт 1 деталь. Обыскивать может любой участник вылазки, а когда найден третий, награду получают все.
+**NERO expedition** ("Camp jobs" at the commander or `/mission join`). The site is guarded by four freakers (`Zombies=1` is needed; without it the crate stands there at once). When they are killed, a crate "Take the NERO medical supplies" (F) appears at the site: every participant takes one pack. This is a quest item: it lies in the backpack (2 kg), is not sold, not handed over and not donated. The pack must be brought to the healer: clinic → "Hand over the NERO medical supplies". The reward is $180 and 8 reputation, and the camp gets +8 medical supplies. The progress of the run is shown by `/mission`.
 
-**Где что стоит — в редакторе:** «Мир» → режим `outpost` → «Логика режима»:
-- `salvage_cache` — места тайников (несколько точек, режим берёт три случайные; без них тайники ставятся кольцом в 4 м вокруг `salvage`);
-- `expedition_zombie` — места фриков (до четырёх точек; без них фрики стоят в 9 м вокруг `expedition`);
-- `expedition_meds` — где появляется ящик медикаментов (без неё — на самой точке `expedition`).
+**Salvage** ("Camp jobs" at the commander). At the `salvage` point there are three caches (a toolbox, a backpack, an ammo crate). They are searched with F (4 seconds next to the cache), each gives 1 part. Any participant of the run can search, and when the third is found, everyone gets the reward.
 
-Ставьте точки на землю, стрелка задаёт поворот ящика. Тайники и ящик — объекты сервера в мире вылазки, а не багажники машин игры: машины игры у каждого игрока свои, и их обыск ни на что не влияет.
+**Where things stand — in the editor:** "World" → the `outpost` mode → "Mode logic":
+- `salvage_cache` — the cache places (several points, the mode takes three random ones; without them the caches are placed in a ring of 4 m around `salvage`);
+- `expedition_zombie` — the freaker places (up to four points; without them the freakers stand 9 m around `expedition`);
+- `expedition_meds` — where the medical supplies crate appears (without it — at the `expedition` point itself).
 
-Погибшие появляются в точке `clinic_spawn`; без неё — в 2 м перед медиком (точка `clinic` — место самого NPC, игрок, поставленный туда, оказывается внутри него).
+Put the points on the ground, the arrow sets the rotation of the crate. The caches and the crate are server objects in the run's world, not trunks of game vehicles: the game's vehicles are separate for each player, and searching them affects nothing.
 
-Места выдачи мотоциклов ставятся отдельно от механика: редактор → «Мир» → режим `outpost` → «Логика режима» → `garage_spawn` → «добавить». Поставить точку на пол внутри гаража, выбрать её и задать направление в «Свойствах», затем сохранить мир. Можно добавить несколько мест. Мотоцикл появляется точно в первой свободной точке, с её Z и yaw, без смещения по id игрока. Места, занятые транспортом или игроком, пропускаются. Пока точки не поставлены или все заняты, выдача не выполняется и деньги за покупку не снимаются.
+Players who die appear at the `clinic_spawn` point; without it — 2 m in front of the medic (the `clinic` point is the place of the NPC itself, a player put there ends up inside it).
 
-Покупка мотоцикла сразу выдаёт его на настроенном месте и отмечает на карте. Если создать транспорт не удалось, оплата не снимается. Пункт «Получить свой мотоцикл» используется после возврата в гараж и не требует повторной покупки. Мотоцикл, оставленный в мире, при выходе игрока убирается и при следующем входе стоит там же, с тем же топливом и состоянием. `/lock` в 30 м от своего мотоцикла отпирает или запирает его: отпертый может взять за руль любой, сзади садиться можно всегда. Вернуть мотоцикл в гараж можно откуда угодно (например, если он застрял), если на нём никто не сидит; топливо и состояние сохраняются. Мотоцикл у игрока один: после покупки пункта покупки в меню гаража нет. Лежащий мотоцикл поднимается сам, когда на него садятся по E. Сервис NPC — только для мотоцикла на месте выдачи или рядом с механиком.
+The places where motorcycles are issued are set separately from the mechanic: editor → "World" → the `outpost` mode → "Mode logic" → `garage_spawn` → "add". Put a point on the floor inside the garage, select it and set the direction in the Inspector, then save the world. You can add several places. The motorcycle appears exactly at the first free point, with its Z and yaw, without an offset by player id. Places occupied by a vehicle or a player are skipped. While no points are placed or all are occupied, issuing does not happen and the money for the purchase is not taken.
 
-Инвентарь игры (оружие, патроны, материалы) хранится в персонаже: режим сохраняет каждый снимок, который присылает клиент, и при входе выдаёт его заново (первые 5 секунд после входа снимки не сохраняются — сервер в это время забирает оружие по `StartWeapons=none`). Оружие, купленное до этого, восстанавливается из журнала покупок. Персонажи, базовая внешность и экономика сохраняются на сервере в `data/outpost/storage.json`: подтверждённые пользователи — по Steam ID, гости — по нику. Рабочая форма временная и не заменяет базовую внешность. Движок также хранит последний скин по нику в `data/skins.json`, но при входе режим восстанавливает внешность из своей учётной записи. У разных серверов должны быть отдельные папки данных: два процесса из одной папки делят сохранения. Команда `reload` в консоли сервера перестраивает режим с сохранением персонажей, но отменяет незавершённые задания.
+Buying a motorcycle issues it immediately at the configured place and marks it on the map. If creating the vehicle failed, the payment is not taken. The item "Collect your motorcycle" is used after returning to the garage and does not require buying again. A motorcycle left in the world is removed when the player leaves and stands in the same place on the next join, with the same fuel and condition. `/lock` within 30 m of your motorcycle unlocks or locks it: an unlocked one can be taken by the handlebars by anyone, the seat behind can always be taken. A motorcycle can be returned to the garage from anywhere (for example if it is stuck) if nobody is sitting on it; fuel and condition are kept. A player has one motorcycle: after the purchase there is no buy item in the garage menu. A motorcycle lying on its side stands up by itself when someone gets on it with E. The NPC service works only for a motorcycle at the issue place or next to the mechanic.
 
-## Игроки друг с другом, ранение, дуэли (`social.lua`)
+The game inventory (weapons, ammo, materials) is kept in the character: the mode saves every snapshot the client sends and issues it again on join (snapshots are not saved for the first 5 seconds after joining — the server is taking away weapons then through `StartWeapons=none`). Weapons bought earlier are restored from the purchase log. Characters, the base look and the economy are saved on the server in `data/outpost/storage.json`: confirmed users — by Steam ID, guests — by nick. The work uniform is temporary and does not replace the base look. The engine also stores the last skin by nick in `data/skins.json`, but on join the mode restores the look from its own account. Different servers must have separate data folders: two processes from one folder share the saves. The `reload` command in the server console rebuilds the mode keeping the characters, but cancels unfinished jobs.
 
-**Меню игрока.** Посмотреть на игрока ближе ~2.5 м и нажать F (подсказка «[F] Взаимодействие»; среди нескольких целей рядом F достаётся той, на которую смотрит камера). Что в меню:
-- «Пригласить в отряд» — с согласием (у второго внизу экрана «[Y] Да [N] Нет»). Отряд видит друг друга на карте и радаре, `/sq текст` — чат отряда, `/squad` — состав, `/squad leave|kick <id>|lead <id>`.
-- «Предложить обмен» — окно на двоих: вещи из рюкзака лагеря и деньги на «стол», оба жмут «Готов», обмен проходит целиком или никак (вес рюкзака учитывается).
-- «Поделиться частотой рации» — второму предлагают канал вашей рации (у обоих должна быть рация).
-- «Передать деньги» — сумма в поле ввода.
-- Медик на смене: «Оказать помощь (аптечка)» — лечение; «Поднять раненого» — 6 с на коленях, тратит аптечку, раненый встаёт с 35 %.
-- Охрана на смене: «Проверить документы» (с согласием: имя, номер, профессия, пропуск, репутация), «Обыскать» без согласия, если у игрока подняты руки (`/hands`), иначе «Попросить показать вещи»; «Связать» игрока с поднятыми руками — не ходит, не стреляет и ничего не делает, пока его не развяжут («Развязать», с согласием связанного).
-- «Вызвать на дуэль» — с согласием: бой до двух побед в своём виртуальном мире прямо на месте, у обоих M9 с 60 патронами; после дуэли возвращаются место, рюкзак и здоровье, деньги и вещи лагеря не тратятся, смерть в дуэли бесплатна.
+## Players with each other, downed state, duels (`social.lua`)
 
-**Ранение вместо смерти.** Когда полоска здоровья пуста, игрок падает раненым: 4 минуты до смерти, H — позвать медика (медикам на смене приходит вопрос, первый согласившийся получает маршрут), через минуту можно сдаться (удерживать E) — и очнуться в медпункте за плату, как раньше. Если медиков на сервере нет, сдаться можно сразу. Удар по раненому добивает. Раненый не ходит и ничего не делает, но говорит и пишет в чат.
+**The player menu.** Look at a player closer than ~2.5 m and press F (the prompt "[F] Interact"; among several targets nearby F goes to the one the camera looks at). What is in the menu:
+- "Invite to the squad" — with consent (the other player sees "[Y] Yes [N] No" at the bottom of the screen). The squad sees each other on the map and radar, `/sq text` is the squad chat, `/squad` is the roster, `/squad leave|kick <id>|lead <id>`.
+- "Offer a trade" — a window for two: items from the camp backpack and money onto the "table", both press "Ready", the trade goes through whole or not at all (backpack weight is taken into account).
+- "Share your radio channel" — the other player is offered the channel of your radio (both must have a radio).
+- "Give money" — the amount in an input field.
+- A medic on shift: "Treat (medkit)" — healing; "Revive" — 6 s on the knees, uses a medkit, the downed player gets up with 35%.
+- A guard on shift: "Check papers" (with consent: name, number, profession, pass, reputation), "Search" without consent if the player's hands are raised (`/hands`), otherwise "Ask to show belongings"; "Tie up" a player with raised hands — they do not walk, shoot or do anything until untied ("Untie", with the consent of the tied one).
+- "Challenge to a duel" — with consent: a fight to two wins in your own virtual world right on the spot, both have an M9 with 60 rounds; after the duel the place, backpack and health come back, camp money and items are not spent, a death in the duel is free.
 
-**Tab** — список игроков сервера с профессией (● — на смене), пингом, кто говорит; там же «Заглушить» и громкость голоса каждого — только у себя.
+**Downed state instead of death.** When the health bar is empty, the player falls downed: 4 minutes until death, H — call a medic (medics on shift get a question, the first to agree gets a route), after a minute you can give up (hold E) — and wake up in the clinic for a fee, as before. If there are no medics on the server, you can give up at once. A hit on a downed player finishes them off. A downed player does not walk and does nothing, but talks and writes in chat.
 
-## Граница лагеря
+**Tab** — the list of the server's players with profession (● — on shift), ping, who is speaking; there also "Mute" and the voice volume of each — for you only.
 
-Если в редакторе нет зоны с именем `outpost_camp`, код создаёт прямоугольную безопасную зону вокруг всех сервисов с запасом по краям и высоте. Чтобы обвести забор или сделать сложный контур, создать в редакторе PvE-зону, назвать её **outpost_camp**, выбрать «Многоугольник» и нарисовать границу. Режим использует сохранённую зону, сохраняя её форму. В PvE-зоне игроки не наносят друг другу урон; фрики и NPC остаются опасными.
+## The camp border
 
-## Сценарий записи
+If there is no zone named `outpost_camp` in the editor, the code creates a rectangular safe zone around all services with a margin at the edges and in height. To outline the fence or make a complex contour, create a PvE zone in the editor, name it **outpost_camp**, choose "Polygon" and draw the border. The mode uses the saved zone, keeping its shape. In a PvE zone players deal no damage to each other; freakers and NPCs stay dangerous.
 
-1. Создание персонажа, прибытие в лагерь и регистрация. Точка `wardrobe` используется для стартового выбора внешности; в меню коменданта гардероба нет.
-2. Получение работы у кладовщика: физический ящик, доставка и выплата.
-3. Магазин, рюкзак, тайник, передача денег и банк.
-4. Выбор профессий и формы: лечение другого участника, покупка и обслуживание мотоцикла, патруль двух постов.
-5. Сбор экспедиции, рация, выезд, поиск и доставка медикаментов.
-6. По желанию — постановочная тревога, фрики, ловушка и эвакуация на вертолёте.
+## Recording scenario
 
-Админский `/director` показывает пульт. `/director kit` выдаёт комплект для съёмки и меняет деньги и предметы только своего персонажа; для проверки обычной экономики его не использовать. `/scene <точка>` переносит администратора, `/bring <id>` вызывает участника, `/cinema` скрывает HUD режима. `/director dawn|day|night` меняет свет, `/director alarm` объявляет тревогу, `/director horde|trap|evac` создаёт постановочные объекты у экспедиции, `/director fly` отправляет вертолёт в лагерь, `/director clear` убирает их. Синхронизацию фриков и посадку/полёт вертолёта нужно отдельно проверить в игре с несколькими участниками перед записью.
+1. Creating a character, arriving at the camp and registration. The `wardrobe` point is used for the starting choice of look; the commander's menu has no wardrobe.
+2. Getting a job from the quartermaster: a physical crate, delivery and payout.
+3. The shop, the backpack, the stash, giving money and the bank.
+4. Choosing professions and uniforms: treating another participant, buying and servicing a motorcycle, a patrol of two posts.
+5. Gathering an expedition, the radio, setting out, searching and delivering medical supplies.
+6. Optionally — a staged alarm, freakers, a trap and evacuation by helicopter.
 
-Визуально проверить в игре: высоту и направление NPC, свободное место выдачи мотоциклов перед механиком, путь с ящиком, границы лагеря и обе площадки вертолёта. Серверные проверки не проверяют коллизии и геометрию уровня.
+The admin `/director` shows the control panel. `/director kit` issues a filming kit and changes money and items of your own character only; do not use it to test the normal economy. `/scene <point>` moves the admin, `/bring <id>` summons a participant, `/cinema` hides the mode's HUD. `/director dawn|day|night` changes the light, `/director alarm` announces an alarm, `/director horde|trap|evac` creates staged objects at the expedition, `/director fly` sends the helicopter to the camp, `/director clear` removes them. The synchronization of freakers and the landing/flight of the helicopter must be checked separately in the game with several participants before recording.
 
-## Проверки разработки
+Check visually in the game: the height and direction of the NPCs, the free motorcycle issue place in front of the mechanic, the path with the crate, the camp border and both helicopter pads. The server checks do not verify collisions and level geometry.
 
-Из корня DGMP: `build/lua-test.exe tests/outpost.lua`, `python tests/outpost_smoke.py`, `python tests/zones_smoke.py`. Нативные проверки запускают отдельные серверы и создают данные в тестовых папках `build/`, не затрагивая персонажей рабочего режима.
+## Development checks
+
+From the DGMP root: `build/lua-test.exe tests/outpost.lua`, `python tests/outpost_smoke.py`, `python tests/zones_smoke.py`. The native checks start separate servers and create data in test folders under `build/`, without touching the characters of the working mode.

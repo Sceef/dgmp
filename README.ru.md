@@ -41,9 +41,9 @@ DGMP — мод, который добавляет в Days Gone мультипл
 - **Tab — список игроков.** В нём пинг, кто говорит, свои столбцы режима, «Заглушить» и громкость каждого игрока (только у себя; заглушённый голос сервер больше не присылает) и кнопка настроек голоса. Голос на сервере можно включать и выключать на лету (`voice on|off`, `setVoiceEnabled`).
 - **Меню карты (Esc).** В углу вместо «дней прожито» показаны число игроков, название сервера и режим. Значок другого игрока на карте при наведении показывает его ник.
 - **Чат** понимает цветовые коды `{RRGGBB}`, как диалоги и HUD.
-- **Лаунчер** показывает версию каждого сервера (красным, если протокол другой) и сам обновляется из GitHub Releases ([`docs/releases.md`](docs/releases.md)).
+- **Лаунчер** показывает версию каждого сервера (красным, если протокол другой) и сам обновляется из GitHub Releases ([`docs/releases.md`](docs/releases.ru.md)).
 - **Рубеж:** поиск деталей и экспедиция NERO идут на местах заданий со своим слоем для каждого игрока или отряда; медикаменты NERO — квестовый предмет для медпункта; обучение ведёт от первой доставки до экспедиции.
-- **API:** `player:ask`, `setPlayerMenu` / `playerInteract`, `player:setControls`, `createBlip({follow = player})`, `setScoreboard`, события `playerDowned`, `playerBleedout`, `playerHelp`, `voiceIgnore`. Всё описано в [`docs/API.md`](docs/API.md), что проверено — в [`VERIFICATION.md`](VERIFICATION.md).
+- **API:** `player:ask`, `setPlayerMenu` / `playerInteract`, `player:setControls`, `createBlip({follow = player})`, `setScoreboard`, события `playerDowned`, `playerBleedout`, `playerHelp`, `voiceIgnore`. Всё описано в [`docs/API.md`](docs/API.ru.md), что проверено — в [`VERIFICATION.md`](VERIFICATION.md).
 
 ## Требования
 
@@ -80,7 +80,7 @@ build.bat
 | `build/version.dll` | клиент; лаунчер копирует его в `runtime/` при запуске |
 | `build/dgmp-probe.exe` | тестовый клиент без игры |
 
-`python tools/package-client.py` собирает ZIP клиента, `python tools/release.py` выпускает релиз ([`docs/releases.md`](docs/releases.md)).
+`python tools/package-client.py` собирает ZIP клиента, `python tools/release.py` выпускает релиз ([`docs/releases.md`](docs/releases.ru.md)).
 
 ## Запуск игры
 
@@ -124,7 +124,7 @@ dgmp-server.exe --config my.ini --name "Мой сервер" --max 32 --password
 
 ### Сервер на Linux / VPS
 
-Сборка через CMake, юнит systemd, файрвол и разбор падений описаны в [`docs/server-linux.md`](docs/server-linux.md). Коротко:
+Сборка через CMake, юнит systemd, файрвол и разбор падений описаны в [`docs/server-linux.md`](docs/server-linux.ru.md). Коротко:
 
 ```bash
 cmake -S . -B build-linux && cmake --build build-linux -j
@@ -157,11 +157,11 @@ cmake -S . -B build-linux && cmake --build build-linux -j
 
 ### Мастер-сервер
 
-`dgmp-server --master [--port 7700]` запускает список серверов для вкладки «Интернет». Как поднять свой мастер и указать его лаунчеру, описано в [`docs/master.md`](docs/master.md).
+`dgmp-server --master [--port 7700]` запускает список серверов для вкладки «Интернет». Как поднять свой мастер и указать его лаунчеру, описано в [`docs/master.md`](docs/master.ru.md).
 
 ## Режимы
 
-Режим — это папка `modes/<id>/` с файлами `meta.ini` (название, описание, автор) и `main.lua`. Минимальный пример и весь API собраны в [`docs/API.md`](docs/API.md).
+Режим — это папка `modes/<id>/` с файлами `meta.ini` (название, описание, автор) и `main.lua`. Минимальный пример и весь API собраны в [`docs/API.md`](docs/API.ru.md).
 
 Примеры, с которых удобно начинать:
 
@@ -179,16 +179,16 @@ cmake -S . -B build-linux && cmake --build build-linux -j
 
 Общие библиотеки для режимов (`logic`, `quest`, `jobs`, `rpchat`, `inventory`, `race`, `interact` — меню игрока, `squad` — отряды, `trade` — обмен, `medic` — помощь раненым, `instance` — дуэли и арены) лежат в `modes/_lib/`.
 
-Документация:
+Документация (у каждой страницы есть английская версия без `.ru`):
 
-- [`docs/API.md`](docs/API.md) — серверный Lua API: события, игроки, транспорт, NPC, объекты, HUD, хранилище, HTTP, баны, античит, `server.ini`.
-- [`docs/client-lua.md`](docs/client-lua.md) — клиентские скрипты (`modes/<id>/client/`).
-- [`docs/webui.md`](docs/webui.md) — как устроен HTML-интерфейс.
-- [`docs/quests.md`](docs/quests.md) — формат квестов и работ (`quests/<id>.json`).
-- [`docs/items.md`](docs/items.md) — ключи предметов и оружия.
-- [`docs/looks.md`](docs/looks.md) — облики персонажей.
+- [`docs/API.md`](docs/API.ru.md) — серверный Lua API: события, игроки, транспорт, NPC, объекты, HUD, хранилище, HTTP, баны, античит, `server.ini`.
+- [`docs/client-lua.md`](docs/client-lua.ru.md) — клиентские скрипты (`modes/<id>/client/`).
+- [`docs/webui.md`](docs/webui.ru.md) — как устроен HTML-интерфейс.
+- [`docs/quests.md`](docs/quests.ru.md) — формат квестов и работ (`quests/<id>.json`).
+- [`docs/items.md`](docs/items.ru.md) — ключи предметов и оружия.
+- [`docs/looks.md`](docs/looks.ru.md) — облики персонажей.
 - [`docs/zombies.md`](docs/zombies.md) — фрики в мультиплеере (прототип).
-- [`docs/releases.md`](docs/releases.md) — выпуск версии: GitHub Releases, `update.json` и обновление из лаунчера.
+- [`docs/releases.md`](docs/releases.ru.md) — выпуск версии: GitHub Releases, `update.json` и обновление из лаунчера.
 
 ### Тестирование без игры
 

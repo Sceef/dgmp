@@ -1,65 +1,67 @@
-# HTML-интерфейс в игре (WebUI) — проектное решение
+**English** · [Русский](webui.ru.md)
 
-Цель: режимы рисуют свои телефоны, инвентари, банки, меню на HTML/CSS/JS, как NUI в FiveM и WebView в alt:V / RAGE:MP. Страница лежит у режима на сервере, клиент её скачивает и показывает поверх игры, страница и Lua обмениваются сообщениями.
+# HTML interface in the game (WebUI) — design decision
 
-## Что выбрано
+Goal: modes draw their own phones, inventories, banks and menus in HTML/CSS/JS, like NUI in FiveM and WebView in alt:V / RAGE:MP. The page lives with the mode on the server, the client downloads it and shows it over the game, and the page and Lua exchange messages.
 
-**WebView2 (Edge, уже нужен лаунчеру) в режиме visual hosting, без окна на экране; его визуал захватывается Windows.Graphics.Capture в текстуру D3D11 и рисуется в наш оверлей на хуке Present.**
+## What was chosen
 
-Проверено отдельной пробой `src/tools/webprobe.cpp` (команда сборки — в начале файла): страница 800×600 с прозрачным фоном пришла кадром BGRA с альфой (премультиплицированной): фон — альфа 0, полупрозрачная плашка — промежуточная, текст и кнопка — 255. Окно на экране не создаётся, курсор и жёлтая рамка захвата не рисуются.
+**WebView2 (Edge, already required by the launcher) in visual hosting mode, with no window on screen; its visual is captured by Windows.Graphics.Capture into a D3D11 texture and drawn into our overlay on the Present hook.**
 
-### Почему так
+Verified with a separate probe `src/tools/webprobe.cpp` (the build command is at the top of the file): an 800×600 page with a transparent background arrived as a BGRA frame with alpha (premultiplied): background — alpha 0, a translucent panel — intermediate, text and button — 255. No window is created on screen, and neither the cursor nor the yellow capture border is drawn.
 
-| Вариант | Плюсы | Минусы | Итог |
+### Why this way
+
+| Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| **WebView2 + захват визуала (выбран)** | Уже стоит у игроков (лаунчер требует), современный Chromium, ничего не качать; кадр — текстура GPU, копия на GPU; работает в любом режиме экрана (рисуем внутрь кадра игры) | Нет официального off-screen API: визуал + `GraphicsCaptureItem.CreateFromVisual` (Windows 10 1903+); клавиатура — через DevTools Protocol | Да |
-| WebView2 в прозрачном окне поверх игры (`WS_EX_NOREDIRECTIONBITMAP` + DComp) | Проще, без захвата | Не видно в эксклюзивном полноэкранном режиме; окно отбирает фокус — игра встаёт на паузу; оверлеи Steam/записи видео его не видят | Нет |
-| CEF off-screen (как FiveM, alt:V, RAGE:MP) | Настоящий OSR-API, стандарт в мультиплеерных модах | ~150 МБ бинарников к каждому клиенту, сборка обёртки CMake, обновления безопасности — на нас | Нет (можно позже, если WebView2 упрётся) |
-| Ultralight | Лёгкий, OSR, рендер в GPU | Скачивание, лицензия (бесплатно только до $100k выручки), не полный Chromium | Нет |
-| RmlUi / litehtml | Маленькие, рисуют прямо в DX11 | Не настоящий HTML/JS: модам пришлось бы учить диалект; у litehtml нет JS | Нет |
+| **WebView2 + visual capture (chosen)** | Already installed for players (the launcher requires it), modern Chromium, nothing to download; the frame is a GPU texture, copied on the GPU; works in any screen mode (we draw inside the game frame) | No official off-screen API: visual + `GraphicsCaptureItem.CreateFromVisual` (Windows 10 1903+); keyboard — via the DevTools Protocol | Yes |
+| WebView2 in a transparent window over the game (`WS_EX_NOREDIRECTIONBITMAP` + DComp) | Simpler, no capture | Not visible in exclusive fullscreen; the window takes focus — the game pauses; Steam overlays/video recorders do not see it | No |
+| CEF off-screen (like FiveM, alt:V, RAGE:MP) | A real OSR API, the standard in multiplayer mods | ~150 MB of binaries per client, building the wrapper with CMake, security updates are on us | No (possible later, if WebView2 hits a wall) |
+| Ultralight | Lightweight, OSR, renders on the GPU | Download, license (free only up to $100k revenue), not full Chromium | No |
+| RmlUi / litehtml | Small, draw directly into DX11 | Not real HTML/JS: modders would have to learn a dialect; litehtml has no JS | No |
 
-## Как устроено
+## How it works
 
 ```
-сервер: modes/<режим>/ui/**  ──UiList(имя, sha256)──▶ клиент: cache/ui/<sha256>
-                              ◀──UiRequest(имя)──────
-                              ──UiData(части)───────▶
-Lua  player:ui("phone.html")  ──Ui(open)───────────▶ поток WebView ── https://mode.dgmp/phone.html
-Lua  player:uiSend(имя, t)    ──Ui(event, json)────▶   dgmp.on(имя, fn)
-Lua  on("uiMessage", fn)      ◀──UiMessage(имя,json)─  dgmp.send(имя, данные)
+server: modes/<mode>/ui/**  ──UiList(name, sha256)──▶ client: cache/ui/<sha256>
+                              ◀──UiRequest(name)──────
+                              ──UiData(parts)───────▶
+Lua  player:ui("phone.html")  ──Ui(open)───────────▶ WebView thread ── https://mode.dgmp/phone.html
+Lua  player:uiSend(name, t)    ──Ui(event, json)────▶   dgmp.on(name, fn)
+Lua  on("uiMessage", fn)      ◀──UiMessage(name,json)─  dgmp.send(name, data)
 ```
 
-### Файлы режима
-- Всё из `modes/<режим>/ui/` (с подпапками): html, css, js, json, svg, png, jpg, gif, webp, woff/woff2/ttf/otf, mp3/ogg/wav. До 4 МБ файл, до 32 МБ на режим.
-- Передача и кэш — как у картинок (`images.cpp`): список с sha256 при входе, клиент докачивает недостающее частями, кэш по хэшу в `cache/ui/`.
-- Страница открывается на виртуальном хосте `https://mode.dgmp/`; ответы на запросы к нему клиент берёт из кэша (`WebResourceRequested`). Запросы к другим хостам блокируются: всё нужное режим кладёт в `ui/` (приватность игроков, работа без интернета, одинаково у всех). Переходы с `mode.dgmp` и новые окна запрещены.
+### Mode files
+- Everything from `modes/<mode>/ui/` (with subfolders): html, css, js, json, svg, png, jpg, gif, webp, woff/woff2/ttf/otf, mp3/ogg/wav. Up to 4 MB per file, up to 32 MB per mode.
+- Transfer and cache are like images (`images.cpp`): a list with sha256 on join, the client downloads the missing parts in chunks, a cache by hash in `cache/ui/`.
+- The page opens on the virtual host `https://mode.dgmp/`; the client serves requests to it from the cache (`WebResourceRequested`). Requests to other hosts are blocked: the mode puts everything it needs into `ui/` (player privacy, works offline, the same for everyone). Navigation away from `mode.dgmp` and new windows are forbidden.
 
-### Отрисовка (`src/webui.cpp`)
-- Свой поток (STA + `DispatcherQueue`): окружение WebView2 (`cache/webview`), `CompositionController` с корнем `Windows.UI.Composition.ContainerVisual`, скрытое окно-родитель.
-- Захват: своё устройство D3D11 на адаптере игры, `Direct3D11CaptureFramePool`; новый кадр копируется в общую текстуру (keyed mutex). На потоке Present оверлей забирает её (копия в свою текстуру, если мьютекс свободен) и рисует на весь экран через ImGui с премультиплицированным смешиванием — над HUD режима, под диалогами.
-- WebView2 запускается лениво — при первом `player:ui`: режимы без HTML ничего не платят (процессы Edge ~100–150 МБ).
-- Размер страницы = клиентская область окна игры; при смене разрешения — новые границы и пересоздание пула кадров.
+### Rendering (`src/webui.cpp`)
+- Its own thread (STA + `DispatcherQueue`): the WebView2 environment (`cache/webview`), a `CompositionController` with a `Windows.UI.Composition.ContainerVisual` root, a hidden parent window.
+- Capture: its own D3D11 device on the game's adapter, `Direct3D11CaptureFramePool`; a new frame is copied into a shared texture (keyed mutex). On the Present thread the overlay takes it (a copy into its own texture, if the mutex is free) and draws it across the whole screen through ImGui with premultiplied blending — above the mode's HUD, below dialogs.
+- WebView2 starts lazily — on the first `player:ui`: modes without HTML pay nothing (Edge processes ~100–150 MB).
+- The page size = the client area of the game window; on a resolution change — new bounds and the frame pool is recreated.
 
-### Ввод
-- `focus = false` (по умолчанию): страница — только картинка (HUD на HTML), игра управляется как обычно.
-- `focus = true`: курсор виден, игра не получает ни мышь, ни клавиатуру (как в открытом диалоге). Мышь — `ICoreWebView2CompositionController::SendMouseInput` (координаты окна игры → страницы), форма курсора берётся у страницы. Клавиатура — DevTools Protocol `Input.dispatchKeyEvent` (настоящие, `isTrusted`, события: работают поля ввода, Enter, Backspace, стрелки, вставка текста); фокус страницы эмулируется (`Emulation.setFocusEmulationEnabled`).
-- Открытый диалог ImGui главнее страницы: пока он открыт, ввод его.
-- Esc страница получает сама; закрывать ли — решает режим (как в FiveM).
+### Input
+- `focus = false` (default): the page is only a picture (HTML HUD), the game is controlled as usual.
+- `focus = true`: the cursor is visible, the game receives neither mouse nor keyboard (as in an open dialog). Mouse — `ICoreWebView2CompositionController::SendMouseInput` (game window coordinates → page), the cursor shape is taken from the page. Keyboard — the DevTools Protocol `Input.dispatchKeyEvent` (real, `isTrusted`, events: input fields, Enter, Backspace, arrows and text paste work); the page focus is emulated (`Emulation.setFocusEmulationEnabled`).
+- An open ImGui dialog takes priority over the page: while it is open, input is theirs.
+- The page receives Esc itself; whether to close is up to the mode (as in FiveM).
 
-### Мост
-- Скрипт моста внедряется в каждую страницу (`AddScriptToExecuteOnDocumentCreated`): `dgmp.send(имя, данные)`, `dgmp.on(имя, fn)`, `dgmp.focused`.
-- Сообщения — JSON. Страница → сервер: до 16 КБ, до 30 в секунду (лишние отбрасываются клиентом и сервером). Сервер → страница: до 64 КБ.
-- Сервер не доверяет странице: `uiMessage` — такой же ввод игрока, как чат.
+### Bridge
+- The bridge script is injected into every page (`AddScriptToExecuteOnDocumentCreated`): `dgmp.send(name, data)`, `dgmp.on(name, fn)`, `dgmp.focused`.
+- Messages are JSON. Page → server: up to 16 KB, up to 30 per second (extras are dropped by the client and the server). Server → page: up to 64 KB.
+- The server does not trust the page: `uiMessage` is the same player input as chat.
 
-## Клиентский Lua
-Сделан: [`docs/client-lua.md`](client-lua.md). Скрипты `modes/<режим>/client/` раздаются и кэшируются так же, как файлы страницы. Логика интерфейса может жить в JS страницы или в клиентском скрипте: `onUi(name, fn)` забирает `dgmp.send` себе (на сервер оно тогда не уходит), `uiSend(name, data)` отвечает странице.
+## Client Lua
+Done: [`docs/client-lua.md`](client-lua.md). The scripts in `modes/<mode>/client/` are distributed and cached the same way as the page files. Interface logic can live in the page's JS or in a client script: `onUi(name, fn)` takes `dgmp.send` for itself (it then does not go to the server), `uiSend(name, data)` answers the page.
 
-## Проверка
-- `src/tools/webui_harness.cpp` — `webui.cpp` без игры: окно D3D11 + ImGui вместо оверлея, файлы режима «приходят» как с сервера, маленькая заглушка Lua отвечает странице. `--test` сам кликает, печатает (латиница и кириллица, Backspace, Enter), включает фокус и снимает кадры `build\harness-*.bmp`. Проверено: прозрачность и полупрозрачность (премультиплицированная альфа), загрузка css/js/svg из кэша, блокировка интернета, `isTrusted`-клики и ввод, каретка в поле ввода, `dgmp.on`/`dgmp.send` в обе стороны, повторный запуск с кэшем файлов и профиля браузера, чистый выход процесса.
-- В игре (режим `htmlui`, окно 1600×900): браузер стартует в процессе игры, панель статуса рисуется поверх кадра; телефон открывается с фокусом, клик по кнопке доходит до Lua и обратно («Lua answered: click 1»), набранный текст (латиница и кириллица) уходит в Lua и возвращается в чат игры, кнопка ✕ снимает фокус. Для таких проверок сообщения посылаются окну `UnrealWindow` (не главному окну процесса — это окно HUD DGMP).
-- Сервер и мост проверены `dgmp-probe` (`!ui <имя> [json]`): список файлов, открытие, `uiSend`, ответ Lua на сообщение страницы, снятие фокуса.
+## Verification
+- `src/tools/webui_harness.cpp` — `webui.cpp` without the game: a D3D11 window + ImGui instead of the overlay, the mode files "arrive" as from the server, a small Lua stub answers the page. `--test` clicks by itself, types (Latin and Cyrillic, Backspace, Enter), turns on focus and takes frames `build\harness-*.bmp`. Verified: transparency and translucency (premultiplied alpha), loading css/js/svg from the cache, internet blocking, `isTrusted` clicks and input, the caret in an input field, `dgmp.on`/`dgmp.send` both ways, a repeat run with the file cache and browser profile, a clean process exit.
+- In the game (the `htmlui` mode, a 1600×900 window): the browser starts inside the game process, the status panel is drawn over the frame; the phone opens with focus, a click on a button reaches Lua and back ("Lua answered: click 1"), typed text (Latin and Cyrillic) goes to Lua and returns to the game chat, the ✕ button drops focus. For such checks messages are sent to the `UnrealWindow` window (not the process's main window — that is the DGMP HUD window).
+- The server and bridge were verified with `dgmp-probe` (`!ui <name> [json]`): the file list, opening, `uiSend`, Lua's reply to a page message, dropping focus.
 
-## Ограничения прототипа
-- Одна страница (слой) на игрока; несколько окон — внутри одной страницы (SPA), как делают в FiveM.
-- IME (ввод иероглифов) не поддержан; кириллица и латиница — да (WM_CHAR).
-- Нужен WebView2 Runtime (есть у всех, кто запускал лаунчер) и Windows 10 1903+.
+## Prototype limitations
+- One page (layer) per player; several windows live inside one page (SPA), as is done in FiveM.
+- IME (entering CJK characters) is not supported; Cyrillic and Latin are (WM_CHAR).
+- WebView2 Runtime is required (everyone who has run the launcher has it) and Windows 10 1903+.
