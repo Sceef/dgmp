@@ -1,0 +1,12 @@
+{
+  "version": "0.8.1",
+  "protocol": 11,
+  "zip": "https://github.com/Sceef/dgmp/releases/download/v0.8.1/DGMP-client-0.8.1.zip",
+  "sha256": "cfc451945da24c914c5daa0d634b57ed91372d7a79240ac56122ec3de14df50b",
+  "bytes": 2968227,
+  "url": "https://github.com/Sceef/dgmp/releases/tag/v0.8.1",
+  "notes": {
+    "ru": "DGMP 0.8.1: меню игрока (F на игроке: отряд, обмен, рация, медик, охрана, дуэли), ранение вместо смерти, список игроков на Tab с личным мутом, версия сервера в списке, обновление из лаунчера. Рубеж: свои вылазки со своим слоем, медикаменты NERO для медпункта, обучение до экспедиции.",
+    "en": "DGMP 0.8.1: the player menu (F at a player: squad, trade, radio, medic, guard actions, duels), downed instead of dead, the Tab player list with personal mute, server versions in the list, updates from the launcher. Rubezh: job sites with their own layer, NERO medical supplies for the clinic, a tutorial up to the expedition."
+  }
+}
