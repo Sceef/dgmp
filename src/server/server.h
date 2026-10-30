@@ -185,6 +185,7 @@ struct Blip {
     int32_t world = -1;
     uint16_t only = 0xFFFF;                   // shown to this player only (0xFFFF: everyone)
     double onlyJoinedAt = 0;
+    uint16_t follow = 0xFFFF;                 // stays on this player (moved about every second; gone when it leaves)
 };
 
 // A freaker of the game (docs/zombies.md). The server keeps where it is; the client of its owner (the
@@ -754,6 +755,8 @@ private:
     void LootTaken(const Player& p, uint16_t worldItem);
     uint16_t nextBlip_ = 1;
     void SendBlip(Player* to, const Blip& b);       // to null: every player it is for
+    void TickFollowBlips();                         // blips that follow players: moved where they are
+    double nextFollowTick_ = 0;
     uint16_t nextObject_ = 1;
     void SendObject(_ENetPeer* peer, const Object& o);   // peer null: everyone
     void TickObjects();                                 // finished moves: objectMoved

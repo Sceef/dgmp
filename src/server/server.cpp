@@ -147,6 +147,7 @@ void Server::Run() {
         TickObjects();
         if (now >= nextLootTick_) { nextLootTick_ = now + 1; TickLoot(); }
         if (now >= nextZoneTick_) { nextZoneTick_ = now + 0.1; TickZones(); TickVoice(); TickZombies(); TickTraps(); TickAsks(); }
+        if (now >= nextFollowTick_) { nextFollowTick_ = now + 1.0; TickFollowBlips(); }
         script_->Tick(dt);
         if (now >= nextState) { nextState = now + 0.05; BroadcastStates(); }
         if (now >= nextReloadCheck) {
@@ -2370,6 +2371,19 @@ uint16_t Server::AddBlip(Blip b) {
     blips_[b.id] = b;
     SendBlip(nullptr, b);
     return b.id;
+}
+void Server::TickFollowBlips() {
+    std::vector<uint16_t> gone;
+    for (auto& [id, b] : blips_) {
+        if (b.follow == 0xFFFF) continue;
+        const Player* p = Find(b.follow);
+        if (!p || !p->ready) { gone.push_back(id); continue; }
+        const float dx = p->state.x - b.x, dy = p->state.y - b.y, dz = p->state.z - b.z;
+        if (dx * dx + dy * dy + dz * dz < 300.f * 300.f) continue;  // moved less than 3 m
+        b.x = p->state.x; b.y = p->state.y; b.z = p->state.z;
+        SendBlip(nullptr, b);
+    }
+    for (auto id : gone) RemoveBlip(id);
 }
 bool Server::UpdateBlip(const Blip& b) {
     auto it = blips_.find(b.id);

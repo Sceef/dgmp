@@ -1296,6 +1296,10 @@ struct Api {
         lua_getfield(L, idx, "world"); if (!lua_isnil(L, -1)) b.world = int32_t(luaL_checkinteger(L, -1)); lua_pop(L, 1);
         lua_getfield(L, idx, "color"); if (!lua_isnil(L, -1)) { b.color = ColorArg(L, lua_gettop(L), 0xFFFFFFFF); } lua_pop(L, 1);
         lua_getfield(L, idx, "player"); if (!lua_isnil(L, -1)) b.only = CheckPlayer(L, lua_gettop(L)).id; lua_pop(L, 1);
+        lua_getfield(L, idx, "follow");
+        if (lua_isboolean(L, -1) && !lua_toboolean(L, -1)) b.follow = 0xFFFF;
+        else if (!lua_isnil(L, -1)) { Player& f = CheckPlayer(L, lua_gettop(L)); b.follow = f.id; b.x = f.state.x; b.y = f.state.y; b.z = f.state.z; }
+        lua_pop(L, 1);
         b.scale = std::clamp(b.scale, 0.1f, 5.f);
     }
     static int CreateBlip(lua_State* L) {

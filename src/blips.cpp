@@ -14,6 +14,7 @@ struct Blip {
     UObject* holder = nullptr;   // hidden actor the marker takes its position from
     UObject* marker = nullptr;   // MiniMapLocationComponent
     bool dirty = true;           // (re)made next Update
+    bool moved = false;          // only its place changed (a blip that follows a player): the holder moves
 };
 std::map<uint16_t, Blip> blips;
 int myWorld = 0;
@@ -106,7 +107,11 @@ void Drop(Blip& b) {
 void OnBlip(uint16_t id, const net::Client::Events::BlipInfo* info) {
     if (!info) { auto it = blips.find(id); if (it != blips.end()) { Drop(it->second); blips.erase(it); } return; }
     Blip& b = blips[id];
-    b.info = *info; b.dirty = true;
+    const auto& o = b.info;
+    const bool same = b.marker && o.icon == info->icon && o.color == info->color && o.scale == info->scale && o.map == info->map && o.radar == info->radar
+        && o.edge == info->edge && o.world == info->world && o.title == info->title && o.description == info->description;
+    b.info = *info;
+    if (same) b.moved = true; else b.dirty = true;
 }
 
 void SetWorld(int world) {
@@ -124,8 +129,13 @@ void Update(UObject* pawn) {
     if (!IsValid(pawn)) return;
     for (auto& [id, b] : blips) {
         if ((b.holder && !IsValid(b.holder)) || (b.marker && !IsValid(b.marker))) b.dirty = true;
+        if (!b.dirty && b.moved && IsValid(b.holder)) {
+            b.moved = false;
+            if (auto f = Fn(b.holder, "K2_SetActorLocation")) { Params p(f); p.Set("NewLocation", FVector{b.info.x, b.info.y, b.info.z}); p.SetBool("bSweep", false); p.SetBool("bTeleport", true); Call(b.holder, "K2_SetActorLocation", &p); }
+            continue;
+        }
         if (!b.dirty) continue;
-        b.dirty = false;
+        b.dirty = false; b.moved = false;
         Drop(b);
         if (b.info.world >= 0 && b.info.world != myWorld) continue;
         b.holder = SpawnHolder(FVector{b.info.x, b.info.y, b.info.z}, pawn);

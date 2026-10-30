@@ -17,7 +17,7 @@ function players() return all end
 function getPlayer(who) for _,p in ipairs(all) do if p.id==who or p.name==who then return p end end end
 local placedLogic={}
 function worldLogic() return placedLogic end
-function log() end
+function log(...) if os.getenv("LUA_LOG") then print("LOG", ...) end end
 function broadcast() end
 function setPvp() end
 function setTime() end
@@ -36,7 +36,13 @@ function removeObject(n) objectsMade[n]=nil end
 function createZombie(x,y,z,type) local n=nextId(); zombiesMade[n]={id=n,x=x,y=y,z=z,type=type}; return n end
 function getZombie(n) return zombiesMade[n] end
 function removeZombie(n) zombiesMade[n]=nil end
-function createBlip() return nextId() end
+local blipsMade={}
+function createBlip(o) local n=nextId(); blipsMade[n]=o; return n end
+function removeBlip(n) blipsMade[n]=nil end
+local playerMenu
+function setPlayerMenu(m) playerMenu=m end
+function setScoreboard() end
+function after(ms,f) timers[#timers+1]={ms=ms,f=f,once=true}; return #timers end
 function createMarker() return nextId() end
 function removeMarker() end
 function bindKey() end
@@ -55,7 +61,10 @@ function removeHorde() end
 function removeTrap() end
 function unban() return 0 end
 local methods={}
-for _,name in ipairs({"setUniform","takeBike","hud","tip","hint","setVoiceMuted","objectiveMeter","playAnim","stopAnim","markVehicle","customize","closeItemWindow"}) do methods[name]=noop end
+for _,name in ipairs({"setUniform","takeBike","hud","tip","hint","setVoiceMuted","objectiveMeter","playAnim","stopAnim","markVehicle","customize","closeItemWindow","setScoreboard","leaveVoiceChannel","joinVoiceChannel"}) do methods[name]=noop end
+function methods:voiceChannels() local t={}; if self.channel then t[self.channel]="radio" end; return t end
+function methods:ask(text,opts,fn) if self.pendingAsk then return false end; self.pendingAsk={text=text,fn=fn}; return true end
+function methods:answer(yes) local a=self.pendingAsk; self.pendingAsk=nil; a.fn(self,yes,"answer") end
 function methods:giveWeapon(key,ammo) self.given=self.given or {}; self.given[#self.given+1]=key end
 function methods:setAmmo(key,n) self.ammoSet=self.ammoSet or {}; self.ammoSet[key]=n end
 function methods:inventory() return self.inv end
@@ -333,6 +342,34 @@ local second=player(6,"SteamTwin",false,{verified=true,steamId="222",skin="first
 check(second.skin=="survivor" and not R.acc(second).skin,"new Steam identity does not inherit another account's nickname skin")
 first.name="RenamedSteamTwin"; emit("playerJoin",first)
 check(first.skin=="first-account-skin" and first.creatorCount==1,"verified character appearance survives a nickname change")
+-- The player menu: a squad invitation asks the other player; a trade swaps both offers at once.
+local s1,s2=player(7,"SquadA",false),player(8,"SquadB",false)
+for _,pp in ipairs({s1,s2}) do R.acc(pp).intro=true; at(pp,"office") end
+check(playerMenu and playerMenu.key=="F","interact turns the player menu on")
+local function pick(pp,label)
+    for i,v in ipairs(pp.dialogSpec.items) do if v:find(label,1,true) then pp.dialogSpec.onResponse(pp,true,i,v); return true end end
+end
+emit("playerInteract",s1,s2)
+check(pick(s1,"Пригласить в отряд"),"menu offers the squad invitation")
+check(s2.pendingAsk and s2.pendingAsk.text:find("SquadA",1,true),"the invited player is asked")
+s2:answer(true)
+local squadLib=require("squad")
+check(squadLib.same(s1,s2),"a yes joins the squad")
+local marks=0; for _,b in pairs(blipsMade) do if b.follow==s1 or b.follow==s2 then marks=marks+1 end end
+check(marks==2,"squad members see each other on the map")
+R.acc(s1).bag={food=2}; R.acc(s2).bag={water=1}
+emit("playerInteract",s1,s2)
+check(pick(s1,"Предложить обмен"),"menu offers a trade")
+s2:answer(true)
+check(s1.window and s2.window,"both see the trade window")
+s1.windowAction(s1,{type="move",pane=1,item=1,count=2})
+s2.windowAction(s2,{type="move",pane=1,item=1,count=1})
+s1.windowAction(s1,{type="action",pane=2,item=1,id="ready"})
+s2.windowAction(s2,{type="move",pane=1,item=1,count=1})  -- nothing left to add: no change
+s2.windowAction(s2,{type="action",pane=2,item=1,id="ready"})
+check(R.acc(s1).bag.water==1 and not R.acc(s1).bag.food and R.acc(s2).bag.food==2 and not R.acc(s2).bag.water,"trade swaps both offers")
+emit("playerQuit",s2)
+check(not squadLib.of(s1),"a squad of one is disbanded")
 emit("stop")
 check(stored["outpost:v1"].accounts[key].money==355,"stop saves state")
 print("Outpost: "..count.." checks passed")
