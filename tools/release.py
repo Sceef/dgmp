@@ -72,7 +72,9 @@ def main():
                      f"SHA-256: `{manifest['sha256']}`\n", encoding="utf-8")
     exists = subprocess.run(["gh", "release", "view", tag, "--repo", REPO], cwd=ROOT, capture_output=True).returncode == 0
     if exists:
-        run("gh", "release", "upload", tag, str(zip_path), "--repo", REPO, "--clobber")
+        # Never another file under a published version: launchers may hold its old size and SHA-256
+        # (raw.githubusercontent.com keeps update.json for 5 minutes) and refuse the new file.
+        raise SystemExit(f"Release {tag} exists already: raise kVersion in src/shared/version.h for a new build.")
     else:
         run("gh", "release", "create", tag, str(zip_path), "--repo", REPO, "--title", f"DGMP {version}", "--notes-file", str(notes))
     run("git", "add", "update.json")
