@@ -113,9 +113,14 @@ I — рюкзак; M — карта; N — голос рядом; K — рац�
 шаблона на другом Steam-аккаунте также входит в проверку этого тестового запуска.
 
 В пакете только клиент. Сервер запускает владелец сервера; IP и порт узнавай у него.
+
+DGMP — свободная программа под лицензией GNU GPL 3.0 (licenses/DGMP-GPL-3.0.txt).
+Исходный код: https://github.com/Sceef/dgmp. Days Gone — игра Bend Studio / Sony
+Interactive Entertainment; DGMP не связан с ними, файлы игры в пакет не входят.
 """).encode("utf-8")
 
     for source, destination in (
+        ("LICENSE", "licenses/DGMP-GPL-3.0.txt"),  # DGMP itself; the source code: https://github.com/Sceef/dgmp
         ("third_party/enet/LICENSE", "licenses/ENet.txt"),
         ("third_party/imgui/LICENSE.txt", "licenses/Dear-ImGui.txt"),
         ("third_party/imguizmo/LICENSE", "licenses/ImGuizmo.txt"),
