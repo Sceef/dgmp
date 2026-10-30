@@ -1,12 +1,12 @@
 {
-  "version": "0.8.1",
+  "version": "0.8.2",
   "protocol": 11,
-  "zip": "https://github.com/Sceef/dgmp/releases/download/v0.8.1/DGMP-client-0.8.1.zip",
-  "sha256": "78a1cd4ffddcf239036ad43db8c799b101ffc38e2b4d7caf6a8278f54053866e",
-  "bytes": 2980476,
-  "url": "https://github.com/Sceef/dgmp/releases/tag/v0.8.1",
+  "zip": "https://github.com/Sceef/dgmp/releases/download/v0.8.2/DGMP-client-0.8.2.zip",
+  "sha256": "1929144042da106914231023d6c8152a06cde3bcca64d8fb4fffbbeb29b91234",
+  "bytes": 2981480,
+  "url": "https://github.com/Sceef/dgmp/releases/tag/v0.8.2",
   "notes": {
-    "ru": "DGMP 0.8.1: меню игрока (F на игроке: отряд, обмен, рация, медик, охрана, дуэли), ранение вместо смерти, список игроков на Tab с личным мутом, версия сервера в списке, обновление из лаунчера. Рубеж: свои вылазки со своим слоем, медикаменты NERO для медпункта, обучение до экспедиции.",
-    "en": "DGMP 0.8.1: the player menu (F at a player: squad, trade, radio, medic, guard actions, duels), downed instead of dead, the Tab player list with personal mute, server versions in the list, updates from the launcher. Rubezh: job sites with their own layer, NERO medical supplies for the clinic, a tutorial up to the expedition."
+    "ru": "DGMP 0.8.2: меню игрока (F на игроке: отряд, обмен, рация, медик, охрана, дуэли), ранение вместо смерти, список игроков на Tab с личным мутом и настройками голоса, версия сервера в списке, обновление из лаунчера. Рубеж: свои вылазки со своим слоем, медикаменты NERO для медпункта, обучение до экспедиции, подсказка про голосовой чат. Установка: распакуйте папку dgmp в корень Days Gone (рядом с BendGame) и запустите dgmp/DGMP.exe; дальше лаунчер обновляется сам.",
+    "en": "DGMP 0.8.2: the player menu (F at a player: squad, trade, radio, medic, guard actions, duels), downed instead of dead, the Tab player list with personal mute and voice settings, server versions in the list, updates from the launcher. Rubezh: job sites with their own layer, NERO medical supplies for the clinic, a tutorial up to the expedition, a voice chat hint. Install: unpack the dgmp folder into the Days Gone root (next to BendGame) and run dgmp/DGMP.exe; the launcher updates itself from then on."
   }
 }
