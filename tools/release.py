@@ -9,14 +9,16 @@ root says which release is the newest: version, protocol, the ZIP's address, siz
 reads it from raw.githubusercontent.com once per start (src/launcher/main.cpp, kDefaultUpdateUrl).
 Order matters: the release with its ZIP exists before update.json points at it.
 """
+import sys
+from pathlib import Path
+# tools/ holds scripts named like standard modules (inspect.py): keep it off the import path.
+sys.path = [p for p in sys.path if Path(p or ".").resolve() != Path(__file__).resolve().parent]
 import argparse
 from hashlib import sha256
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "Sceef/dgmp"
@@ -40,7 +42,7 @@ def main():
     if a.zip:
         built = Path(a.zip)
     else:
-        out = run(sys.executable, "tools/package-client.py", capture_output=True, text=True).stdout
+        out = run(sys.executable, "-P", "tools/package-client.py", capture_output=True, text=True).stdout
         print(out, end="")
         built = Path(next(line for line in out.splitlines() if line.strip().endswith(".zip")).strip())
     name = f"DGMP-client-{version}.zip"
