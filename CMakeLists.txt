@@ -77,6 +77,7 @@ if(MSVC)
   target_compile_options(dgmp-server PRIVATE /W4 /utf-8 /EHsc)
   target_compile_definitions(dgmp-server PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_link_libraries(dgmp-server PRIVATE dbghelp winhttp)
+  target_sources(dgmp-server PRIVATE src/server/dgmp-server.manifest)  # UTF-8 code page: Lua opens non-ASCII paths
 else()
   target_compile_options(dgmp-server PRIVATE -Wall -Wextra)
   target_link_options(dgmp-server PRIVATE -rdynamic)  # function names in crash stacks
