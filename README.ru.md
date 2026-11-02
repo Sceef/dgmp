@@ -80,7 +80,7 @@ build.bat
 | `build/version.dll` | клиент; лаунчер копирует его в `runtime/` при запуске |
 | `build/dgmp-probe.exe` | тестовый клиент без игры |
 
-`python tools/package-client.py` собирает ZIP клиента, `python tools/release.py` выпускает релиз ([`docs/releases.md`](docs/releases.ru.md)).
+`python tools/package-client.py` собирает ZIP релиза (клиент, `dgmp-server.exe`, `server.ini` и режимы `outpost`, `race` и `questtest`; демо остаются в репозитории), `python tools/release.py` выпускает релиз ([`docs/releases.md`](docs/releases.ru.md)).
 
 ## Запуск игры
 

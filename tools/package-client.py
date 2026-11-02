@@ -1,4 +1,4 @@
-"""Build a shareable client ZIP from an explicit allowlist. No game install or player data."""
+"""Build a shareable ZIP (client, server, standard modes) from an explicit allowlist. No game install or player data."""
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -6,10 +6,14 @@ from pathlib import Path
 import re
 import shutil
 import struct
+import subprocess
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "build" / "releases"
+# Modes shipped with the release: the playable ones and questtest (the quest editor's "Проверить" button);
+# demos and test modes stay in the repository. Only files tracked by git: no editor backups, no server data.
+MODES = ("_lib", "outpost", "race", "questtest")
 
 
 def main():
@@ -23,8 +27,14 @@ def main():
             raise ValueError(f"Required regular file missing: {source}")
         files[destination or path] = source.read_bytes()
 
-    for path in ("DGMP.exe", "build/version.dll", "build/dgmp-crashdump.exe", "prepare.ps1", "world-template.ps1"):
+    for path in ("DGMP.exe", "build/version.dll", "build/dgmp-crashdump.exe", "dgmp-server.exe", "prepare.ps1", "world-template.ps1"):
         include(path)
+    tracked = subprocess.run(["git", "ls-files", "-z", "--"] + ["modes/" + m for m in MODES], cwd=ROOT,
+                             check=True, capture_output=True).stdout.decode("utf-8").split("\0")
+    for path in filter(None, tracked):
+        include(path)
+    for mode in MODES[1:]:
+        assert "modes/" + mode + "/main.lua" in files, mode
     for path in ("launcher/ui/index.html", "launcher/ui/app.css", "launcher/ui/app.js"):
         include(path)
     for name in ("anims.txt", "lookparts.txt", "looks.txt", "parts.txt", "props_stats.txt", "props.txt", "sounds.txt"):
@@ -37,7 +47,7 @@ def main():
         data = files["worlds/bootstrap/" + entry["name"]]
         assert len(data) == entry["bytes"] and sha256(data).hexdigest().upper() == entry["sha256"].upper()
 
-    for path in ("DGMP.exe", "build/version.dll", "build/dgmp-crashdump.exe"):
+    for path in ("DGMP.exe", "build/version.dll", "build/dgmp-crashdump.exe", "dgmp-server.exe"):
         data = files[path]
         pe = struct.unpack_from("<I", data, 0x3C)[0]
         assert data[:2] == b"MZ" and data[pe:pe + 4] == b"PE\0\0"
@@ -73,6 +83,14 @@ Microphone=0
 Diagnostics=1
 """.replace(b"\n", b"\r\n")
     files["editor.ini"] = b"[Editor]\r\nLanguage=ru\r\nDiagnostics=1\r\n"
+    # The repository's server.ini (keys and passwords empty) with a shipped mode, and freakers on for Rubezh's expeditions.
+    server_ini = (ROOT / "server.ini").read_text(encoding="utf-8")
+    for key, value in (("Mode", "outpost"), ("Zombies", "1")):
+        server_ini, n = re.subn(rf"(?m)^{key}=.*$", f"{key}={value}", server_ini)
+        assert n == 1, key
+    for key in ("Password", "Admins", "SteamApiKey", "RconPassword", "Master"):
+        assert re.search(rf"(?m)^{key}=[ \t]*$", server_ini), key + " must be empty in the shipped server.ini"
+    files["server.ini"] = server_ini.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
     files["READ-ME-FIRST.txt"] = ("\ufeff" + """DGMP — тестовый клиент для Days Gone
 
 УСТАНОВКА
@@ -112,7 +130,12 @@ I — рюкзак; M — карта; N — голос рядом; K — рац�
 но повторная поездка в игре после исправления ещё не проверена. Загрузка общего
 шаблона на другом Steam-аккаунте также входит в проверку этого тестового запуска.
 
-В пакете только клиент. Сервер запускает владелец сервера; IP и порт узнавай у него.
+СВОЙ СЕРВЕР
+В пакете есть сервер dgmp-server.exe и режимы «Рубеж» (outpost) и «Гонка» (race).
+В лаунчере: «Создать сервер» → выбери режим. Остальные настройки — в server.ini.
+Редактор («Редактор» в лаунчере) сохраняет карту режима в modes/<режим>/world.json.
+Обновление из лаунчера не затирает файлы режимов и server.ini, которые ты изменил:
+новая версия такого файла ложится рядом как <файл>.new.
 
 DGMP — свободная программа под лицензией GNU GPL 3.0 (licenses/DGMP-GPL-3.0.txt).
 Исходный код: https://github.com/Sceef/dgmp. Days Gone — игра Bend Studio / Sony
@@ -138,7 +161,7 @@ Interactive Entertainment; DGMP не связан с ними, файлы игр
     manifest = {
         "schema": 1, "kind": "client-test", "buildId": identifier, "version": version,
         "protocol": protocol, "gameBuild": 1752517958, "createdUtc": now.isoformat(),
-        "clientSha256": dll_hash, "serverIncluded": False, "gameFilesIncluded": False,
+        "clientSha256": dll_hash, "serverIncluded": True, "gameFilesIncluded": False,
         "files": [{"path": name, "bytes": len(data), "sha256": sha256(data).hexdigest()} for name, data in sorted(files.items())],
     }
     files["build-info.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")

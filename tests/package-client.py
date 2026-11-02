@@ -21,15 +21,21 @@ with zipfile.ZipFile(archive) as z:
     assert all(n.startswith("dgmp/") and ".." not in PurePosixPath(n).parts for n in names)
     forbidden = {"profiles", "logs", "runtime", "cache", "dev", ".git"}
     assert all(not (set(PurePosixPath(n).parts) & forbidden) for n in names)
-    assert not any(n.endswith((".pdb", ".map", ".dmp", "server.ini", "skins.json")) for n in names)
-    assert "dgmp/dgmp-server.exe" not in names
+    assert not any(n.endswith((".pdb", ".map", ".dmp", ".bak", ".new")) for n in names)
+    assert not ({"dgmp/data/skins.json", "dgmp/data/bans.json", "dgmp/data/names.json", "dgmp/server-outpost.ini"} & set(names))
+    assert {"dgmp/dgmp-server.exe", "dgmp/server.ini", "dgmp/modes/outpost/main.lua", "dgmp/modes/race/world.json",
+            "dgmp/modes/questtest/main.lua", "dgmp/modes/_lib/race.lua"} <= set(names)
+    shipped_modes = {PurePosixPath(n).parts[2] for n in names if n.startswith("dgmp/modes/")}
+    assert shipped_modes == {"_lib", "outpost", "race", "questtest"}, shipped_modes
+    server_ini = z.read("dgmp/server.ini").decode("utf-8")
+    assert "\r\nMode=outpost\r\n" in server_ini and "\r\nSteamApiKey=\r\n" in server_ini and "\r\nAdmins=\r\n" in server_ini
     assert not any(n.endswith("DaysGone.exe") for n in names)
     info = json.loads(z.read("dgmp/build-info.json"))
-    assert not info["serverIncluded"] and not info["gameFilesIncluded"]
+    assert info["serverIncluded"] and not info["gameFilesIncluded"]
     for f in info["files"]:
         assert sha256(z.read("dgmp/" + f["path"])).hexdigest() == f["sha256"]
     z.extractall(game)
-print("PASS archive excludes personal data, symbols, server and game binaries")
+print("PASS archive has the server and the shipped modes, and no personal data, symbols, demos or game binaries")
 
 client = game / "dgmp"
 source = game / "BendGame/Binaries/Win64"
@@ -65,6 +71,19 @@ private = client / "profiles/editor/BendGame/Saved/76561198000000001/SaveGames"
 assert (private / "slot01.sav").read_bytes() == (client / "worlds/bootstrap/world.sav").read_bytes()
 assert (private / "profile.sav").read_bytes() == (client / "worlds/bootstrap/profile.sav").read_bytes()
 print("PASS template installs in a separate account folder without importing personal saves")
+
+# The packaged server loads each shipped mode from this Unicode path (Lua opens main.lua and require'd files itself).
+for mode in ("outpost", "race", "questtest"):
+    server = subprocess.Popen([str(client / "dgmp-server.exe"), "--mode", mode, "--bind", "127.0.0.1", "--port", "7791"], cwd=client,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags)
+    try:
+        output, _ = server.communicate(timeout=6)
+    except subprocess.TimeoutExpired:
+        server.kill()
+        output, _ = server.communicate()
+    log = output.decode("utf-8", errors="replace")
+    assert f'({mode}) loaded' in log and "load error" not in log, log
+print("PASS packaged server loads outpost, race and questtest")
 
 print("Archive:", archive)
 print("Evidence:", run)

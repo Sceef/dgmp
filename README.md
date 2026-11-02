@@ -80,7 +80,7 @@ Output:
 | `build/version.dll` | the client; the launcher copies it into `runtime/` at start |
 | `build/dgmp-probe.exe` | a test client without the game |
 
-`python tools/package-client.py` builds the client ZIP, `python tools/release.py` publishes a release ([`docs/releases.md`](docs/releases.md)).
+`python tools/package-client.py` builds the release ZIP (client, `dgmp-server.exe`, `server.ini` and the modes `outpost`, `race` and `questtest`; demos stay in the repository), `python tools/release.py` publishes a release ([`docs/releases.md`](docs/releases.md)).
 
 ## Running the game
 

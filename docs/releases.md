@@ -25,7 +25,7 @@ Client builds are stored not in git but in **GitHub Releases**: `DGMP-client-0.8
    - unpacks the archive with the `tar` built into Windows and checks that `build-info.json` has the same version;
    - copies the files over its folder.
 
-   The player's `DGMP.ini` and `editor.ini` are not replaced; `profiles/` and `runtime/` are not in the archive. The running `DGMP.exe` is renamed to `DGMP.exe.old`: the next start deletes it.
+   The player's `DGMP.ini` and `editor.ini` are not replaced; `profiles/` and `runtime/` are not in the archive. Mode files (`modes/`: scripts and the maps the editor saved in `world.json`) and `server.ini` are replaced only while they are what the installed release shipped (its `build-info.json` holds the SHA-256 of every file): a file the player changed stays, and the release's version lands next to it as `<name>.new`. Modes of the player's own are not in the archive and are not touched. The running `DGMP.exe` is renamed to `DGMP.exe.old`: the next start deletes it.
 4. The new launcher starts by itself. The new `version.dll` goes into `runtime/` on the next entry into the game (`prepare.ps1`).
 
 While Days Gone or your own server from the launcher is running, the update is not installed: the launcher asks you to close them. If the manifest has no `zip` and `sha256`, the button just opens the `url` page.

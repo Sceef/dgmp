@@ -150,7 +150,8 @@ json::Value Modes() {
     std::error_code ec;
     for (auto& dir : fs::directory_iterator(g_root / L"modes", ec)) {
         const auto id = Utf8(dir.path().filename().wstring());
-        if (!dir.is_directory() || id.empty() || id[0] == '_' || !fs::exists(dir.path() / L"main.lua")) continue;
+        // questtest is started by the quest editor's "Проверить", not hosted.
+        if (!dir.is_directory() || id.empty() || id[0] == '_' || id == kQuestTestMode || !fs::exists(dir.path() / L"main.lua")) continue;
         auto ini = [&](const wchar_t* key) { wchar_t b[512] = {}; GetPrivateProfileStringW(L"Mode", key, L"", b, 512, (dir.path() / L"meta.ini").c_str()); return Utf8(b); };
         auto name = ini(L"Name");
         out.push(json::Value::Object().set("id", id).set("name", name.empty() ? id : name).set("description", ini(L"Description"))
@@ -209,8 +210,10 @@ void CheckForUpdate() {
 // ---------------- installing an update ----------------
 // The release ZIP (tools/package-client.py: everything under "dgmp/") is downloaded, checked against the
 // manifest's SHA-256, unpacked with Windows' own tar and copied over this folder. The player's DGMP.ini and
-// editor.ini stay, profiles/ and runtime/ are not in it. The running DGMP.exe cannot be overwritten but can be
-// renamed: it becomes DGMP.exe.old (removed at the next start) and the new launcher starts.
+// editor.ini stay, profiles/ and runtime/ are not in it. Mode files (scripts, maps the editor saved) and
+// server.ini are replaced only while they are what the installed release shipped (its build-info.json):
+// a file the player changed stays, and the new one lands next to it as <name>.new. The running DGMP.exe
+// cannot be overwritten but can be renamed: it becomes DGMP.exe.old (removed at the next start) and the new launcher starts.
 bool Download(const std::string& url, const fs::path& to, uint64_t expected, std::string& error) {
     const std::wstring wurl = Wide(url);
     URL_COMPONENTS parts{}; parts.dwStructSize = sizeof(parts);
@@ -291,12 +294,32 @@ void InstallUpdate() {
         json::Value info;
         { std::ifstream in(from / L"build-info.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf(); json::Value::Parse(ss.str(), info); }
         if (!fs::exists(from / L"DGMP.exe") || info.str("version") != u.version) return fail(L10n("архив не той версии", "the archive is not that version"));
+        // What the installed release shipped: path -> SHA-256 (read before its build-info.json is replaced).
+        std::vector<std::pair<std::wstring, std::string>> shipped;
+        {
+            json::Value installed;
+            std::ifstream in(g_root / L"build-info.json", std::ios::binary); std::stringstream ss; ss << in.rdbuf();
+            if (json::Value::Parse(ss.str(), installed))
+                for (auto& f : installed["files"].elements()) shipped.emplace_back(Wide(f.str("path")), f.str("sha256"));
+        }
+        int kept = 0;
         // Copy everything; the player's own settings stay.
         for (auto it = fs::recursive_directory_iterator(from, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
             if (!it->is_regular_file()) continue;
-            const fs::path rel = fs::relative(it->path(), from), to = g_root / rel;
-            const std::wstring name = rel.wstring();
+            const fs::path rel = fs::relative(it->path(), from);
+            fs::path to = g_root / rel;
+            const std::wstring name = rel.generic_wstring();
             if ((name == L"DGMP.ini" || name == L"editor.ini") && fs::exists(to)) continue;
+            std::error_code present;
+            if ((name == L"server.ini" || name.rfind(L"modes/", 0) == 0) && fs::exists(to, present)) {
+                const std::string have = FileSha256(to);
+                if (have == FileSha256(it->path())) continue;
+                const auto was = std::find_if(shipped.begin(), shipped.end(), [&](const auto& f) { return f.first == name; });
+                if (was == shipped.end() || was->second != have) {
+                    Log("Update: " + Utf8(name) + " was changed here and stays; the release's version is " + Utf8(name) + ".new");
+                    to += L".new"; ++kept;
+                }
+            }
             fs::create_directories(to.parent_path(), ec);
             if (name == L"DGMP.exe") {
                 fs::remove(g_root / L"DGMP.exe.old", ec); ec.clear();
@@ -308,7 +331,9 @@ void InstallUpdate() {
         }
         fs::remove_all(work, ec);
         Log("Updated to " + u.version + "; restarting");
-        Status(L10n("Обновлено до {}. Перезапуск…", "Updated to {}. Restarting…", u.version), true);
+        if (kept) Status(L10n("Обновлено до {}; ваши изменённые файлы режимов сохранены (новые — *.new). Перезапуск…",
+                              "Updated to {}; your changed mode files stay (the new ones are *.new). Restarting…", u.version), true);
+        else Status(L10n("Обновлено до {}. Перезапуск…", "Updated to {}. Restarting…", u.version), true);
         RunOnUi([] {
             // The new launcher waits for this one's single-instance lock.
             if (g_instanceMutex) { ReleaseMutex(g_instanceMutex); CloseHandle(g_instanceMutex); g_instanceMutex = nullptr; }
