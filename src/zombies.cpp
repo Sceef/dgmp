@@ -126,6 +126,30 @@ std::set<UObject*> VisibleAI() {
     }
     return out;
 }
+std::string NativeType(UObject* pawn) {
+    static UObject* ai = nullptr;
+    static UObject* gen = nullptr;
+    static int typesAt = -1;
+    if (!IsValid(ai)) ai = FindClass("BendAIPawn");
+    if (!ai || !pawn || !IsA(pawn, ai)) return {};
+    if (!IsValid(gen)) { gen = FindRuntimeInstance("BendAmbientGenerator"); typesAt = -1; }
+    if (!gen) return {};
+    if (typesAt < 0) typesAt = PropOffset(gen, "PooledSpawnTypes");
+    if (typesAt < 0) return {};
+    struct A { uint8_t* d; int32_t n, m; }; const A types = Field<A>(gen, typesAt);
+    if (!types.d || types.n < 0 || types.n > 256) return {};
+    for (int i = 0; i < types.n; ++i) {
+        const uint8_t* type = types.d + size_t(i) * kSpawnTypeSize;
+        UObject* cls = *reinterpret_cast<UObject* const*>(type + kSpawnType_LoadedPawn);
+        if (!cls || !IsA(pawn, cls)) continue;
+        const uint8_t faction = type[kSpawnType_Faction];
+        for (const auto& known : kFactions) if (known.value == faction) {
+            if (faction == 12 || faction == 14 || faction == 23) return {};
+            return known.name;
+        }
+    }
+    return {};
+}
 
 void Step(UObject* pawn, Driven& d, double now, float dt) {
     if (d.source) {
@@ -294,8 +318,18 @@ struct Zed {
     UObject* target = nullptr; double targetAt = 0;  // owner: the pawn its AI was last told to hunt (ours or a target pawn)
     float seenHealth = -1;                        // owner: its health last frame; a drop we did not forward is our own hit
     uint16_t lastHitBy = 0xFFFF;                  // owner: who hurt it last (us, or the player whose hit the server forwarded)
+    uint16_t nativeSource = 0xFFFF;
+    uint32_t nativeToken = 0;
+    bool nativeGoneSent = false;
+    bool nativeGonePending = false;
 };
 std::map<uint16_t, Zed> zeds;
+struct NativeCandidate { UObject* pawn; double until; };
+std::map<uint32_t, NativeCandidate> nativePending;
+uint32_t nextNativeToken = 0;
+double nextNativeScan = 0;
+bool nativeAuthority = false, nativeWasActive = false;
+int nativeMaxNearby = 0;
 uint16_t myId = 0xFFFF;
 double nextReport = 0;
 
@@ -325,11 +359,12 @@ void BePuppet(Zed& z) {
     Drive(z.pawn, z.pos, z.yaw);
 }
 void BeOwned(Zed& z) {
-    Release(z.pawn); SetBrain(z.pawn, true); z.brain = 1;
+    const bool nativeOrigin = z.nativeSource == myId && z.nativeToken && z.brain == -1;
+    Release(z.pawn); if (!nativeOrigin) SetBrain(z.pawn, true); z.brain = 1;
     policy::WatchDamage(z.pawn);  // OnDamage: whether this player's hits come last (the killer)
     // The last health the previous owner reported; none (or nonsense): a fresh one.
     const float full = Prop<float>(z.pawn, "MaxHealth", 200.f);
-    SetProp<float>(z.pawn, "Health", z.health > 0 && z.health <= full ? z.health : full);
+    if (!nativeOrigin) SetProp<float>(z.pawn, "Health", z.health > 0 && z.health <= full ? z.health : full);
 }
 }  // namespace
 
@@ -360,6 +395,7 @@ bool Claimed(UObject* pawn) {
 }
 bool IsOurs(UObject* pawn) {
     if (Claimed(pawn)) return true;
+    if (nativeAuthority && !NativeType(pawn).empty()) return true;
     // Not claimed yet (Update finds new pawns every 0.25 s): anything showing up at a spawn we asked for.
     for (const auto& ps : pending) {
         if (ps.pawnClass && !IsA(pawn, ps.pawnClass)) continue;
@@ -369,6 +405,8 @@ bool IsOurs(UObject* pawn) {
     return false;
 }
 bool Active() { return !zeds.empty(); }
+bool NativeAuthority() { return nativeAuthority; }
+bool NativeWasActive() { return nativeWasActive; }
 
 // ---------------------------------------------------------------- other players as targets
 // The game's AI only perceives pawns; other players are drawn as skeletal mesh actors. So that the zombies
@@ -525,6 +563,8 @@ void UpdateTargets(UObject* localPawn, net::Client& client, double now) {
 bool IsTargetPawn(UObject* pawn) { for (auto& [id, d] : decoys) if (d.pawn == pawn) return true; return false; }
 
 void Reset() {
+    for (auto& [token, candidate] : nativePending) if (IsValid(candidate.pawn) && !Claimed(candidate.pawn)) Despawn(candidate.pawn);
+    nativePending.clear(); nativeAuthority = false; nativeWasActive = false; nativeMaxNearby = 0;
     for (auto& [id, d] : decoys) DestroyDecoy(d);
     decoys.clear();
     for (auto& [id, z] : zeds) if (IsValid(z.pawn)) Despawn(z.pawn);
@@ -549,15 +589,32 @@ void OnMessage(net::Msg op, const uint8_t* data, size_t size) {
     }
     const uint16_t id = r.U16(); const auto zop = net::ZombieOp(r.U8());
     if (!r.ok()) return;
+    if (zop == net::ZombieOp::NativeAuthority) {
+        nativeAuthority = r.U8() != 0; nativeMaxNearby = r.U8(); if (nativeAuthority) nativeWasActive = true;
+        dg::Log("zombies: native population %s", nativeAuthority ? "on" : "off"); return;
+    }
+    if (zop == net::ZombieOp::NativeRejected) {
+        const uint32_t token = r.U32();
+        if (auto candidate = nativePending.find(token); candidate != nativePending.end()) { if (IsValid(candidate->second.pawn) && !Claimed(candidate->second.pawn)) Despawn(candidate->second.pawn); nativePending.erase(candidate); }
+        return;
+    }
     if (zop == net::ZombieOp::Add) {
         Zed& z = zeds[id];
         z.type = r.Str(net::kZombieTypeMax); z.pos.X = r.F32(); z.pos.Y = r.F32(); z.pos.Z = r.F32(); z.yaw = r.F32();
         z.world = r.I32(); z.owner = r.U16(); z.health = r.F32();
+        z.nativeSource = r.U16(); z.nativeToken = r.U32();
+        if (r.ok() && z.nativeSource == myId && z.nativeToken) {
+            if (auto candidate = nativePending.find(z.nativeToken); candidate != nativePending.end()) {
+                if (IsValid(candidate->second.pawn) && !GetBoolProp(candidate->second.pawn, "bHidden") && Health(candidate->second.pawn) > 0) Spawned(id, candidate->second.pawn);
+                else z.nativeGonePending = true;
+                nativePending.erase(candidate);
+            } else z.nativeGonePending = true;
+        }
         return;
     }
     auto it = zeds.find(id); if (it == zeds.end()) return;
     Zed& z = it->second;
-    if (zop == net::ZombieOp::Owner) { z.owner = r.U16(); return; }
+    if (zop == net::ZombieOp::Owner) { z.owner = r.U16(); if (z.owner != myId) { z.nativeGoneSent = false; z.nativeGonePending = false; } return; }
     if (zop == net::ZombieOp::Damage) {
         const float damage = r.F32();
         const uint16_t attacker = r.U16();
@@ -605,13 +662,71 @@ FVector OnGround(UObject* context, const FVector& at) {
 
 void Net(double now, UObject* localPawn, net::Client& client, int world) {
     myId = client.localId();
+    for (auto it = nativePending.begin(); it != nativePending.end();) {
+        if (nativeAuthority && now <= it->second.until && IsValid(it->second.pawn) && !GetBoolProp(it->second.pawn, "bHidden")) { ++it; continue; }
+        if (IsValid(it->second.pawn) && !Claimed(it->second.pawn)) Despawn(it->second.pawn);
+        it = nativePending.erase(it);
+    }
+    if (nativeAuthority && IsValid(localPawn) && world == 0 && now >= nextNativeScan) {
+        nextNativeScan = now + 0.5;
+        const FVector me = ActorPos(localPawn);
+        int local = 0;
+        for (auto& [id, z] : zeds) if (z.nativeToken && !z.dead && z.world == world) {
+            const FVector at = IsValid(z.pawn) ? ActorPos(z.pawn) : z.pos;
+            const float dx = at.X - me.X, dy = at.Y - me.Y;
+            if (dx * dx + dy * dy <= 16000.f * 16000.f) ++local;
+        }
+        for (auto& [token, candidate] : nativePending) if (IsValid(candidate.pawn)) {
+            const FVector at = ActorPos(candidate.pawn); const float dx = at.X - me.X, dy = at.Y - me.Y;
+            if (dx * dx + dy * dy <= 16000.f * 16000.f) ++local;
+        }
+        for (UObject* actor : VisibleAI()) {
+            if (nativePending.size() >= 20) break;
+            if (Claimed(actor)) continue;
+            bool pendingArcade = false, alreadyPending = false;
+            for (const auto& ps : pending) {
+                if (ps.before.count(actor) || (ps.pawnClass && !IsA(actor, ps.pawnClass))) continue;
+                const FVector at = ActorPos(actor); const float dx = at.X - ps.at.X, dy = at.Y - ps.at.Y;
+                if (dx * dx + dy * dy < 1500.f * 1500.f) { pendingArcade = true; break; }
+            }
+            if (pendingArcade) continue;
+            for (auto& [token, candidate] : nativePending) if (candidate.pawn == actor) { alreadyPending = true; break; }
+            if (alreadyPending) continue;
+            const std::string type = NativeType(actor); if (type.empty()) continue;
+            const FVector at = ActorPos(actor); const float dx = at.X - me.X, dy = at.Y - me.Y;
+            if (dx * dx + dy * dy > 16000.f * 16000.f) continue;
+            const float health = Health(actor); if (health <= 0) continue;
+            if (local >= nativeMaxNearby) { Despawn(actor); continue; }
+            uint32_t token = ++nextNativeToken; if (!token) token = ++nextNativeToken;
+            nativePending[token] = {actor, now + 8};
+            ++local;
+            net::Writer w; w.Op(net::Msg::NativeSpawn); w.U32(token); w.Str(type);
+            w.F32(at.X); w.F32(at.Y); w.F32(at.Z); w.F32(ActorYaw(actor)); w.F32(health); client.SendZombie(w, true);
+            dg::Log("zombies: native %s at (%.0f %.0f %.0f) requested", type.c_str(), at.X, at.Y, at.Z);
+        }
+    }
     if (zeds.empty() || !IsValid(localPawn)) { for (auto& [id, d] : decoys) DestroyDecoy(d); decoys.clear(); return; }
     const FVector me = ActorPos(localPawn);
     net::Writer report; int reported = 0;
     const bool reportNow = now >= nextReport;
     if (reportNow) nextReport = now + kReportInterval;
     for (auto& [id, z] : zeds) {
-        if (z.pawn && !IsValid(z.pawn)) { z.pawn = nullptr; z.brain = -1; }
+        if (z.nativeGonePending && z.owner == myId && !z.dead) {
+            net::Writer w; w.Op(net::Msg::NativeGone); w.U16(id); client.SendZombie(w, true); z.nativeGoneSent = true; z.nativeGonePending = false;
+        }
+        if (z.pawn && !IsValid(z.pawn)) {
+            if (z.nativeToken && !z.dead && !z.diedSent && z.owner == myId && z.nativeSource == myId && !z.nativeGoneSent) {
+                net::Writer w; w.Op(net::Msg::NativeGone); w.U16(id); client.SendZombie(w, true); z.nativeGoneSent = true;
+            }
+            z.pawn = nullptr; z.brain = -1;
+        }
+        if (z.pawn && z.nativeToken && GetBoolProp(z.pawn, "bHidden")) {
+            if (!z.dead && !z.diedSent && z.owner == myId && z.nativeSource == myId && !z.nativeGoneSent) {
+                net::Writer w; w.Op(net::Msg::NativeGone); w.U16(id); client.SendZombie(w, true); z.nativeGoneSent = true;
+            }
+            z.pawn = nullptr; z.brain = -1;
+        }
+        if (z.nativeGoneSent && z.owner == myId) continue;
         const bool mine = z.owner == myId;
         const FVector at = z.pawn ? ActorPos(z.pawn) : z.pos;
         const float dx = at.X - me.X, dy = at.Y - me.Y, d2 = dx * dx + dy * dy;

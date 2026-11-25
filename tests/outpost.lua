@@ -27,6 +27,10 @@ function protectItems() end
 local createdZones={}
 function createZone(o) createdZones[o.name]=o; return o.name end
 function getZone(name) return createdZones[name] end
+local createdZombieZones={}
+function createZombieZone(o) createdZombieZones[o.name]=o end
+function getZombieZone(name) return createdZombieZones[name] end
+function setZombieZone(name,o) createdZombieZones[name]=o end
 function createActor() return nextId() end
 local uses,objectsMade,zombiesMade={}, {}, {}
 function createInteraction(o) local n=nextId(); uses[n]=o; return n end
@@ -139,6 +143,7 @@ placedLogic.garage_spawn={{x=garage.x+1800,y=garage.y+400,z=garage.z,yaw=73},
     {x=garage.x+2400,y=garage.y+400,z=garage.z,yaw=-142}}
 dofile("modes/outpost/main.lua")
 local R,S,J=require("core"),require("services"),require("jobs")
+check(#createdZombieZones.outpost_salvage.types==2 and #createdZombieZones.outpost_patrol2.types==2,"outpost config creates mixed spawn zones")
 local campZone=assert(createdZones.outpost_camp)
 for _,name in ipairs({"spawn","office","shop","clinic","garage","warehouse","cargo"}) do
     local pt=R.points[name]

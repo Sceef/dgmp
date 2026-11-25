@@ -10,11 +10,11 @@
 
 namespace net {
 
-constexpr uint16_t kProtocolVersion = 11;
+constexpr uint16_t kProtocolVersion = 12;
 constexpr uint16_t kDefaultPort = 7777;
 constexpr int kLanPortSpan = 10;        // LAN discovery probes kDefaultPort .. kDefaultPort+span-1
-constexpr int kChannels = 4;
-constexpr int kChanReliable = 0, kChanState = 1, kChanPose = 2, kChanVoice = 3;
+constexpr int kChannels = 5;
+constexpr int kChanReliable = 0, kChanState = 1, kChanPose = 2, kChanVoice = 3, kChanEffects = 4;
 constexpr float kPoseRelayRange = 25000.f;  // 250 m: bone poses only go to players this close
 constexpr int kMaxPlayersLimit = 64;
 constexpr size_t kNickMin = 3, kNickMax = 24;  // in UTF-8 code points
@@ -56,6 +56,8 @@ enum class Msg : uint8_t {
     ZombieDied = 32,   // u16 zombieId, u16 killer: a zombie this client owns died; killer: who hurt it last (this player, the
                        // player whose ZombieHit the server forwarded, 0xFFFF: neither, e.g. a fall or another freaker)
     ZombieAttack = 33, // u16 zombieId, u16 victimId, f32 damage: a zombie this client owns hurt another player (its target pawn here)
+    NativeSpawn = 34,
+    NativeGone = 35,
     UiRequest = 40,   // str path: send me this file of the mode's HTML UI (UiList: not in my cache)
     UiMessage = 41,   // str name, str json: the mode's page sent a message (dgmp.send) to the server's Lua (uiMessage)
     ScriptRequest = 42, // str path: send me this file of the mode's client scripts (ScriptList: not in my cache)
@@ -166,7 +168,7 @@ constexpr size_t kVoiceNameMax = 64;
 
 enum QuitReason : uint8_t { QuitLeft = 0, QuitTimeout = 1, QuitKicked = 2 };
 // Gameplay events the client reports (see src/gameevents.cpp for where each comes from).
-enum class ZombieOp : uint8_t { Add = 1, Owner = 2, Damage = 3, Died = 4, Remove = 5 };
+enum class ZombieOp : uint8_t { Add = 1, Owner = 2, Damage = 3, Died = 4, Remove = 5, NativeAuthority = 6, NativeRejected = 7 };
 // One zombie's state: u16 id, f32 x,y,z, f32 yaw, f32 speed (units/s), f32 health, u8 montageSeq, str montage
 // (the attack/reaction animation playing, asset path; repeated while it plays so a lost packet does not drop it).
 struct ZombieState { uint16_t id = 0; float x = 0, y = 0, z = 0, yaw = 0, speed = 0, health = 0; uint8_t montageSeq = 0; std::string montage; };

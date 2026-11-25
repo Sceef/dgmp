@@ -85,7 +85,7 @@ Diagnostics=1
     files["editor.ini"] = b"[Editor]\r\nLanguage=ru\r\nDiagnostics=1\r\n"
     # The repository's server.ini (keys and passwords empty) with a shipped mode, and freakers on for Rubezh's expeditions.
     server_ini = (ROOT / "server.ini").read_text(encoding="utf-8")
-    for key, value in (("Mode", "outpost"), ("Zombies", "1")):
+    for key, value in (("Mode", "outpost"), ("Zombies", "1"), ("NativePopulation", "1")):
         server_ini, n = re.subn(rf"(?m)^{key}=.*$", f"{key}={value}", server_ini)
         assert n == 1, key
     for key in ("Password", "Admins", "SteamApiKey", "RconPassword", "Master"):

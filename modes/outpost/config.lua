@@ -6,6 +6,14 @@ return {
     paydaySeconds = 900, payday = 60, needsSeconds = 180,
     jobSeconds = 12, jobCooldown = 90, missionSeconds = 1200,
     bikePrice = 350, treatmentPrice = 35, respawnFee = 50, tutorialAllowance = 80,
+    spawns = {
+        zones = {
+            { name = "outpost_salvage", x = 34680.5469, y = -122137.938, z = -3067.43115,
+                radius = 45, types = { "Swarmer", "Newt" }, max = 5, respawn = 60, wake = 140 },
+            { name = "outpost_patrol2", x = -9684.01367, y = -70382.6133, z = -2545.04395,
+                radius = 45, types = { "Deer", "Wolf" }, max = 4, respawn = 90, wake = 140 },
+        },
+    },
     -- Fallback matches the reviewed Iron Mike layout; editor world.json takes precedence.
     points = {
         spawn = { x = -4825.37744, y = -89710.0703, z = -1944.09045, yaw = -50.0427628 },

@@ -53,6 +53,7 @@ typedef struct DGMP_EnvironmentState {
 } DGMP_EnvironmentState;
 DGMP_API int DGMP_SetTimeOfDay(float hours);
 DGMP_API int DGMP_SetTimePaused(int paused);
+DGMP_API int DGMP_SetTimeRate(float rate);
 DGMP_API int DGMP_SetWeather(uint32_t weatherId); /* Select preset; disables ambient weather changes. */
 DGMP_API int DGMP_SetWeatherAutomatic(int enabled);
 DGMP_API int DGMP_GetEnvironmentState(DGMP_EnvironmentState* result);
@@ -62,6 +63,7 @@ DGMP_API int DGMP_SetDevMenuVisible(int visible);
 DGMP_API int DGMP_IsDevMenuVisible(void);
 typedef int (*DGMP_SetTimeOfDayFn)(float);
 typedef int (*DGMP_SetTimePausedFn)(int);
+typedef int (*DGMP_SetTimeRateFn)(float);
 typedef int (*DGMP_SetWeatherFn)(uint32_t);
 typedef int (*DGMP_SetWeatherAutomaticFn)(int);
 typedef int (*DGMP_GetEnvironmentStateFn)(DGMP_EnvironmentState*);

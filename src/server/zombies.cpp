@@ -26,6 +26,10 @@ constexpr double kZoneSleep = 30.0;       // a zone nobody has been near this lo
 constexpr int kZoneSpawnsPerTick = 2;     // a waking zone fills up gradually (0.5 s ticks)
 constexpr float kSpawnClear = 2000.f;     // new zone zombies appear at least 20 m from every player when they can
 constexpr int kHordeMax = 50;
+constexpr float kNativeOwnerRange = 20000.f;
+constexpr float kNativeSpawnRange = 16000.f;
+constexpr float kNativeDespawnRange = 22000.f;
+constexpr double kNativeForgetTime = 30.0;
 
 std::mt19937& Rng() { static std::mt19937 rng{std::random_device{}()}; return rng; }
 float Rand(float a, float b) { return std::uniform_real_distribution<float>(a, b)(Rng()); }
@@ -36,13 +40,22 @@ float Dist2(const Player& p, const Zombie& z) {
 bool Eligible(const Player& p, const Zombie& z) {
     return p.ready && p.peer && !p.bot && p.world == z.world && !(p.state.flags & net::StateDead) && !p.spectating;
 }
+bool NativeEligible(const Player& p) {
+    return p.ready && p.peer && !p.bot && p.world == 0 && !(p.state.flags & net::StateDead) && !p.spectating &&
+        std::find(p.zones.begin(), p.zones.end(), "outpost_camp") == p.zones.end();
+}
+bool NativeType(const std::string& type) {
+    for (const char* name : {"Swarmer", "Newt", "LootNewt", "RagerBear", "FreakWolf", "FreakCrow", "Wolf", "Bear", "Crow", "Cougar", "Deer", "Screamer", "Breaker", "Reacher", "Bleacher"})
+        if (type == name) return true;
+    return false;
+}
 void PutState(net::Writer& w, const Zombie& z) {
     w.U16(z.id); w.F32(z.x); w.F32(z.y); w.F32(z.z); w.F32(z.yaw); w.F32(z.speed); w.F32(z.health);
     w.U8(z.montageSeq); w.Str(z.montage);
 }
 }  // namespace
 
-const Zombie* Server::CreateZombie(const std::string& type, float x, float y, float z, float yaw, int32_t world) {
+const Zombie* Server::CreateZombie(const std::string& type, float x, float y, float z, float yaw, int32_t world, uint16_t nativeSource, uint32_t nativeToken, float health) {
     if (!cfg_.zombies || zombies_.size() >= kZombiesMax || type.empty() || type.size() > net::kZombieTypeMax) return nullptr;
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return nullptr;
     uint16_t id = nextZombie_;
@@ -50,6 +63,7 @@ const Zombie* Server::CreateZombie(const std::string& type, float x, float y, fl
     nextZombie_ = uint16_t(id + 1);
     Zombie& zb = zombies_[id];
     zb.id = id; zb.type = type; zb.x = x; zb.y = y; zb.z = z; zb.yaw = yaw; zb.world = world;
+    zb.nativeSource = nativeSource; zb.nativeToken = nativeToken; zb.owner = nativeSource; zb.ownerSince = Now(); zb.health = health;
     SendZombie(nullptr, zb);
     return &zb;
 }
@@ -73,25 +87,63 @@ bool Server::SetZombieOwner(uint16_t id, Player* owner) {
 void Server::SendZombie(Player* to, const Zombie& z) {
     net::Writer w; w.Op(net::Msg::Zombie); w.U16(z.id); w.U8(uint8_t(net::ZombieOp::Add));
     w.Str(z.type); w.F32(z.x); w.F32(z.y); w.F32(z.z); w.F32(z.yaw); w.I32(z.world); w.U16(z.owner); w.F32(z.health);
+    w.U16(z.nativeSource); w.U32(z.nativeToken);
     Send(to, w, true);
     if (z.dead) { net::Writer d; d.Op(net::Msg::Zombie); d.U16(z.id); d.U8(uint8_t(net::ZombieOp::Died)); d.U16(z.lastAttacker); Send(to, d, true); }
 }
 
 void Server::ZombiesPlayerGone(uint16_t id) {
-    for (auto& [zid, z] : zombies_) if (z.owner == id) { z.owner = 0xFFFF; z.closer = 0xFFFF; }
+    for (auto& [zid, z] : zombies_) {
+        if (z.owner == id) {
+            z.owner = 0xFFFF; z.ownerSince = Now(); z.closer = 0xFFFF;
+            if (z.nativeToken) { net::Writer w; w.Op(net::Msg::Zombie); w.U16(z.id); w.U8(uint8_t(net::ZombieOp::Owner)); w.U16(z.owner); Send(nullptr, w, true); }
+        }
+        if (z.nativeSource == id) z.nativeSource = 0xFFFF;
+    }
     // TickZombies hands them to someone else and tells everyone.
 }
 
 void Server::TickZombies() {
+    int activeNative = 0;
+    for (auto& [id, z] : zombies_) if (z.nativeToken && !z.dead) ++activeNative;
+    for (auto& [id, p] : players_) {
+        bool authority = cfg_.zombies && cfg_.nativePopulation && activeNative < cfg_.nativeMaxSpawns && cfg_.nativeMaxNearby > 0 && cfg_.mode == "outpost" && NativeEligible(*p);
+        if (authority) {
+            int local = 0;
+            for (auto& [zid, z] : zombies_) if (z.nativeToken && !z.dead && z.world == p->world) {
+                const float dx = p->state.x - z.x, dy = p->state.y - z.y;
+                if (dx * dx + dy * dy <= kNativeSpawnRange * kNativeSpawnRange) ++local;
+            }
+            if (local >= cfg_.nativeMaxNearby) authority = false;
+        }
+        if (authority) for (auto& [otherId, other] : players_) {
+            if (otherId >= id || !NativeEligible(*other)) continue;
+            const float dx = p->state.x - other->state.x, dy = p->state.y - other->state.y;
+            if (dx * dx + dy * dy <= kNativeOwnerRange * kNativeOwnerRange) { authority = false; break; }
+        }
+        if (authority == p->nativePopulation) continue;
+        p->nativePopulation = authority;
+        if (p->peer) { net::Writer w; w.Op(net::Msg::Zombie); w.U16(0); w.U8(uint8_t(net::ZombieOp::NativeAuthority)); w.U8(authority ? 1 : 0); w.U8(uint8_t(cfg_.nativeMaxNearby)); SendTo(p->peer, w, true); }
+    }
     TickZombieZones();
     if (zombies_.empty()) return;
     const double now = Now();
     std::vector<uint16_t> forget;
     for (auto& [id, z] : zombies_) {
+        if (z.nativeToken) {
+            bool nearby = false;
+            for (auto& [pid, p] : players_) if (Eligible(*p, z)) {
+                const float dx = p->state.x - z.x, dy = p->state.y - z.y;
+                if (dx * dx + dy * dy <= kNativeDespawnRange * kNativeDespawnRange) { nearby = true; break; }
+            }
+            if (!nearby) { forget.push_back(id); continue; }
+        }
         if (z.dead) { if (now - z.diedAt > kCorpseTime) forget.push_back(id); continue; }
+        if (z.nativeToken && z.owner == 0xFFFF && now - z.ownerSince > kNativeForgetTime) { forget.push_back(id); continue; }
+        const float ownRange = z.nativeToken ? kNativeOwnerRange : cfg_.zombieOwnRange;
         Player* owner = z.owner != 0xFFFF ? Find(z.owner) : nullptr;
-        if (owner && (!Eligible(*owner, z) || Dist2(*owner, z) > cfg_.zombieOwnRange * cfg_.zombieOwnRange)) owner = nullptr;
-        Player* best = nullptr; float bestD = cfg_.zombieOwnRange * cfg_.zombieOwnRange;
+        if (owner && (!Eligible(*owner, z) || Dist2(*owner, z) > ownRange * ownRange)) owner = nullptr;
+        Player* best = nullptr; float bestD = ownRange * ownRange;
         for (auto& [pid, p] : players_) if (Eligible(*p, z)) { const float d = Dist2(*p, z); if (d < bestD) { bestD = d; best = p.get(); } }
         Player* next = owner;
         if (Player* pin = z.pinned != 0xFFFF ? Find(z.pinned) : nullptr; pin && Eligible(*pin, z)) next = pin;  // the mode chose
@@ -173,6 +225,52 @@ void Server::OnZombieAttack(Player& p, const uint8_t* data, size_t size) {
     z.lastAttackAt = now;
     victim->lastAttacker = 0xFFFF;  // a zombie, not the last player who shot it, gets the kill
     Damage(victim, std::min(damage, kAttackMax), nullptr);
+}
+
+void Server::OnNativeSpawn(Player& p, const uint8_t* data, size_t size) {
+    net::Reader r(data, size);
+    const uint32_t token = r.U32(); const std::string type = r.Str(net::kZombieTypeMax);
+    const float x = r.F32(), y = r.F32(), z = r.F32(), yaw = r.F32(), health = r.F32();
+    if (!r.ok() || !token) return;
+    bool allowed = p.nativePopulation && NativeEligible(p) && NativeType(type) &&
+        std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::isfinite(yaw) && std::isfinite(health) && health > 0;
+    const float dx = x - p.state.x, dy = y - p.state.y;
+    allowed = allowed && dx * dx + dy * dy <= kNativeSpawnRange * kNativeSpawnRange && std::fabs(z - p.state.z) < 5000.f;
+    if (Zone* camp = FindZone("outpost_camp"); camp && camp->Contains(x, y, z)) allowed = false;
+    const double now = Now();
+    if (now - p.nativeWindow >= 60) { p.nativeWindow = now; p.nativeCount = 0; }
+    if (++p.nativeCount > 40) allowed = false;
+    int global = 0;
+    for (auto& [id, existing] : zombies_) {
+        if (existing.dead || !existing.nativeToken) continue;
+        ++global;
+        if (existing.nativeSource == p.id && existing.nativeToken == token) allowed = false;
+    }
+    if (global >= cfg_.nativeMaxSpawns) allowed = false;
+    Zombie sample; sample.world = p.world;
+    if (allowed) for (auto& [pid, nearby] : players_) {
+        if (!Eligible(*nearby, sample)) continue;
+        const float nearbyDx = x - nearby->state.x, nearbyDy = y - nearby->state.y;
+        if (nearbyDx * nearbyDx + nearbyDy * nearbyDy > kNativeSpawnRange * kNativeSpawnRange) continue;
+        int local = 0;
+        for (auto& [id, existing] : zombies_) {
+            if (existing.dead || !existing.nativeToken || existing.world != nearby->world) continue;
+            const float ex = existing.x - nearby->state.x, ey = existing.y - nearby->state.y;
+            if (ex * ex + ey * ey <= kNativeSpawnRange * kNativeSpawnRange) ++local;
+        }
+        if (local >= cfg_.nativeMaxNearby) { allowed = false; break; }
+    }
+    if (allowed) {
+        if (CreateZombie(type, x, y, z, yaw, p.world, p.id, token, health)) return;
+    }
+    net::Writer w; w.Op(net::Msg::Zombie); w.U16(0); w.U8(uint8_t(net::ZombieOp::NativeRejected)); w.U32(token); SendTo(p.peer, w, true);
+}
+
+void Server::OnNativeGone(Player& p, const uint8_t* data, size_t size) {
+    net::Reader r(data, size); const uint16_t id = r.U16();
+    if (!r.ok()) return;
+    auto it = zombies_.find(id);
+    if (it != zombies_.end() && it->second.nativeToken && it->second.nativeSource == p.id && it->second.owner == p.id) RemoveZombie(id);
 }
 
 void Server::OnZombieDied(Player& p, const uint8_t* data, size_t size) {

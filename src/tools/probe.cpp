@@ -110,7 +110,7 @@ int main() {
         c.on.playerJoin = [](const net::RemotePlayer& p) { std::printf("* %s (id %u) is on the server\n", p.nick.c_str(), p.id); };
         c.on.playerQuit = [](uint16_t id, uint8_t r) { std::printf("* player %u left (reason %u)\n", id, r); };
         c.on.message = [](uint32_t rgba, const std::string& t) { std::printf("[#%06X] %s\n", rgba >> 8, t.c_str()); };
-        c.on.setTime = [](float h, bool p) { std::printf("* time %.2f%s\n", h, p ? " (paused)" : ""); };
+        c.on.setTime = [](float h, bool p, float rate) { std::printf("* time %.2f%s rate %.2f\n", h, p ? " (paused)" : "", rate); };
         c.on.setWeather = [](int w) { std::printf("* weather %d\n", w); };
         c.on.setWorld = [](int world) { std::printf("* WORLD %d\n", world); };
         c.on.spectate = [](bool on, const std::vector<uint16_t>& only) { std::printf("* SPECTATE %s (%zu players)\n", on ? "on" : "off", only.size()); };

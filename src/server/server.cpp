@@ -141,6 +141,7 @@ void Server::Run() {
         if (dt < 1.0f / 30) continue;
         last = now;
         TickBots(dt);
+        TickEnvironment();
         for (auto& [id, p] : players_)
             if (p->inventoryRecheckAt && now >= p->inventoryRecheckAt) { CheckInventory(*p); break; }  // (it may kick: one a tick)
         TickMarkers();
@@ -221,6 +222,8 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
     case net::Msg::ZombieHit: OnZombieHit(*p, data + 1, size - 1); break;
     case net::Msg::ZombieDied: OnZombieDied(*p, data + 1, size - 1); break;
     case net::Msg::ZombieAttack: OnZombieAttack(*p, data + 1, size - 1); break;
+    case net::Msg::NativeSpawn: OnNativeSpawn(*p, data + 1, size - 1); break;
+    case net::Msg::NativeGone: OnNativeGone(*p, data + 1, size - 1); break;
     case net::Msg::Look: {
         // The client reports what it actually wears (its own default, or after an order).
         auto path = r.Str(net::kLookPathMax);
@@ -447,15 +450,16 @@ void Server::OnPacket(ENetPeer* peer, const uint8_t* data, size_t size) {
     case net::Msg::Shot: {
         // Its weapon fired: the players nearby (same world, 300 m) hear it.
         const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
-        if (!r.ok() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || (p->state.flags & net::StateDead)) break;
+        const float dirX = r.left() >= 12 ? r.F32() : 0, dirY = r.left() >= 8 ? r.F32() : 0, dirZ = r.left() >= 4 ? r.F32() : 0;
+        if (!r.ok() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(dirX) || !std::isfinite(dirY) || !std::isfinite(dirZ) || (p->state.flags & net::StateDead)) break;
         const double now = Now();
         if (now - p->shotWindow >= 1.0) { p->shotWindow = now; p->shotCount = 0; }
-        if (++p->shotCount > 20) break;
-        net::Writer w; w.Op(net::Msg::PlayerShot); w.U16(p->id); w.Str(cls); w.F32(x); w.F32(y); w.F32(z);
+        if (++p->shotCount > 32) break;
+        net::Writer w; w.Op(net::Msg::PlayerShot); w.U16(p->id); w.Str(cls); w.F32(x); w.F32(y); w.F32(z); w.F32(dirX); w.F32(dirY); w.F32(dirZ);
         for (auto& [id, other] : players_) {
             if (other.get() == p || !other->ready || !other->peer || !Sees(*other, *p)) continue;
             const float dx = other->state.x - x, dy = other->state.y - y, dz = other->state.z - z;
-            if (dx * dx + dy * dy + dz * dz <= 30000.f * 30000.f) enet_peer_send(other->peer, net::kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
+            if (dx * dx + dy * dy + dz * dz <= 30000.f * 30000.f) enet_peer_send(other->peer, net::kChanEffects, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
         }
         if (now - p->lastShotEvent >= 0.5) { p->lastShotEvent = now; script_->PlayerShot(*p, cls, x, y, z); }
         break;
@@ -743,8 +747,8 @@ void Server::Admit(ENetPeer* peer, const std::string& nick, const std::string& l
     SendUiList(p);
     SendScriptList(p);
     if (!watchedKeys_.empty()) SendWatchedKeys(p);
-    if (timeHours_ >= 0) { net::Writer t; t.Op(net::Msg::SetTime); t.F32(timeHours_); t.U8(timePaused_); SendTo(peer, t, true); }
-    if (weather_ != -2) { net::Writer t; t.Op(net::Msg::SetWeather); t.I32(weather_); SendTo(peer, t, true); }
+    if (timeHours_ >= 0) { net::Writer t; t.Op(net::Msg::SetTime); t.F32(CurrentTime(Now())); t.U8(timePaused_); t.F32(TimeRate()); SendTo(peer, t, true); }
+    if (effectiveWeather_ != -2) { net::Writer t; t.Op(net::Msg::SetWeather); t.I32(effectiveWeather_); SendTo(peer, t, true); }
     SendWorldEdits(peer);
     { const Spot s = SpawnSpot(); Teleport(p, s.x, s.y, s.z, s.yaw); }
     // The shared world save comes with the story's weapons: everyone starts with only the knife, rock
@@ -2077,14 +2081,61 @@ int Server::PlayerCount() const {
 void Server::Message(Player* to, uint32_t rgba, const std::string& text) {
     net::Writer w; w.Op(net::Msg::Message); w.U32(rgba); w.Str(text.substr(0, 1024)); Send(to, w, true);
 }
-void Server::SetTime(float hours, bool paused) {
-    timeHours_ = std::fmod(std::fmod(hours, 24.f) + 24.f, 24.f); timePaused_ = paused;
-    net::Writer w; w.Op(net::Msg::SetTime); w.F32(timeHours_); w.U8(paused); Send(nullptr, w, true);
+void Server::SetTime(float hours, bool) {
+    timeHours_ = std::fmod(std::fmod(hours, 24.f) + 24.f, 24.f);
+    timePaused_ = cfg_.environmentMode == Config::EnvironmentMode::Paused;
+    timeSetAt_ = Now();
+    net::Writer w; w.Op(net::Msg::SetTime); w.F32(timeHours_); w.U8(timePaused_); w.F32(TimeRate()); Send(nullptr, w, true);
 }
-void Server::SetWeather(int id) { weather_ = id; net::Writer w; w.Op(net::Msg::SetWeather); w.I32(id); Send(nullptr, w, true); }
+void Server::SetWeather(int id) {
+    if (id < 0) {
+        weather_ = -1;
+        if (cfg_.environmentMode == Config::EnvironmentMode::Local) {
+            weatherAutomatic_ = false;
+            effectiveWeather_ = -1;
+            net::Writer w; w.Op(net::Msg::SetWeather); w.I32(-1); Send(nullptr, w, true);
+            return;
+        }
+        weatherAutomatic_ = true;
+        nextWeatherChange_ = 0;
+        TickEnvironment();
+        return;
+    }
+    weatherAutomatic_ = false;
+    nextWeatherChange_ = 0;
+    weather_ = id;
+    effectiveWeather_ = id;
+    net::Writer w; w.Op(net::Msg::SetWeather); w.I32(id); Send(nullptr, w, true);
+}
+float Server::CurrentTime(double now) const {
+    if (timeHours_ < 0 || timePaused_ || cfg_.environmentMode == Config::EnvironmentMode::Local) return timeHours_;
+    const double daySeconds = double(cfg_.dayDurationMinutes) * 60.0;
+    return std::fmod(timeHours_ + static_cast<float>((now - timeSetAt_) * 24.0 / daySeconds), 24.f);
+}
+float Server::TimeRate() const {
+    return cfg_.environmentMode == Config::EnvironmentMode::Synchronized ? 1440.f / cfg_.dayDurationMinutes : 1.f;
+}
+void Server::TickEnvironment() {
+    const double now = Now();
+    if (weatherAutomatic_ && now >= nextWeatherChange_) {
+        // The server selects the preset so clients never run independent automatic weather simulations.
+        constexpr int weather[] = {0, 1, 2, 1, 0, 1, 3, 1, 0, 2, 4, 1, 0, 3, 5, 1};
+        constexpr int weatherCount = int(sizeof(weather) / sizeof(weather[0]));
+        const int64_t current = UnixNow();
+        const int64_t period = cfg_.weatherInterval;
+        const int id = weather[int((current / period) % weatherCount)];
+        nextWeatherChange_ = now + double(period - current % period);
+        effectiveWeather_ = id;
+        net::Writer w; w.Op(net::Msg::SetWeather); w.I32(id); Send(nullptr, w, true);
+    }
+    if (cfg_.environmentMode == Config::EnvironmentMode::Synchronized && timeHours_ >= 0 && !timePaused_ && now >= nextEnvironmentSync_) {
+        nextEnvironmentSync_ = now + cfg_.environmentSyncInterval;
+        net::Writer w; w.Op(net::Msg::SetTime); w.F32(CurrentTime(now)); w.U8(0); w.F32(TimeRate()); Send(nullptr, w, true);
+    }
+}
 void Server::SetPlayerTime(Player* p, float hours, bool paused) {
     if (!p || p->bot) return;
-    net::Writer w; w.Op(net::Msg::SetTime); w.F32(std::fmod(std::fmod(hours, 24.f) + 24.f, 24.f)); w.U8(paused); Send(p, w, true);
+    net::Writer w; w.Op(net::Msg::SetTime); w.F32(std::fmod(std::fmod(hours, 24.f) + 24.f, 24.f)); w.U8(paused); w.F32(1); Send(p, w, true);
 }
 void Server::SetPlayerWeather(Player* p, int id) {
     if (!p || p->bot) return;

@@ -23,12 +23,12 @@ with zipfile.ZipFile(archive) as z:
     assert all(not (set(PurePosixPath(n).parts) & forbidden) for n in names)
     assert not any(n.endswith((".pdb", ".map", ".dmp", ".bak", ".new")) for n in names)
     assert not ({"dgmp/data/skins.json", "dgmp/data/bans.json", "dgmp/data/names.json", "dgmp/server-outpost.ini"} & set(names))
-    assert {"dgmp/dgmp-server.exe", "dgmp/server.ini", "dgmp/modes/outpost/main.lua", "dgmp/modes/race/world.json",
+    assert {"dgmp/dgmp-server.exe", "dgmp/server.ini", "dgmp/modes/outpost/main.lua", "dgmp/modes/outpost/spawns.lua", "dgmp/modes/race/world.json",
             "dgmp/modes/questtest/main.lua", "dgmp/modes/_lib/race.lua"} <= set(names)
     shipped_modes = {PurePosixPath(n).parts[2] for n in names if n.startswith("dgmp/modes/")}
     assert shipped_modes == {"_lib", "outpost", "race", "questtest"}, shipped_modes
     server_ini = z.read("dgmp/server.ini").decode("utf-8")
-    assert "\r\nMode=outpost\r\n" in server_ini and "\r\nSteamApiKey=\r\n" in server_ini and "\r\nAdmins=\r\n" in server_ini
+    assert "\r\nMode=outpost\r\n" in server_ini and "\r\nNativePopulation=1\r\n" in server_ini and "\r\nNativeMaxSpawns=100\r\n" in server_ini and "\r\nNativeMaxNearby=10\r\n" in server_ini and "\r\nSteamApiKey=\r\n" in server_ini and "\r\nAdmins=\r\n" in server_ini
     assert not any(n.endswith("DaysGone.exe") for n in names)
     info = json.loads(z.read("dgmp/build-info.json"))
     assert info["serverIncluded"] and not info["gameFilesIncluded"]

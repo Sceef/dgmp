@@ -46,7 +46,7 @@ public:
         std::function<void(const RemotePlayer&)> playerJoin;
         std::function<void(uint16_t id, uint8_t reason)> playerQuit;
         std::function<void(uint32_t rgba, const std::string& text)> message;
-        std::function<void(float hours, bool paused)> setTime;
+        std::function<void(float hours, bool paused, float rate)> setTime;
         std::function<void(int weather)> setWeather;
         std::function<void(float x, float y, float z, float yaw)> teleport;
         std::function<void(const std::string& title, const std::string& text, const std::string& image, bool pause, float seconds)> hint;
@@ -66,7 +66,7 @@ public:
         std::function<void(float percent)> setHealth;  // 0: die
         std::function<void(const std::string& path, uint8_t flags, float rate)> playAnim;  // path "": stop
         std::function<void(const std::string& path, const float* at, float volume, float pitch)> sound;  // at null: 2D
-        std::function<void(uint16_t id, const std::string& weaponClass, float x, float y, float z)> playerShot;
+        std::function<void(uint16_t id, const std::string& weaponClass, float x, float y, float z, float dx, float dy, float dz)> playerShot;
         std::function<void(uint16_t id, const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz)> playerThrow;
         // Voice chat: a frame of that player's voice (VoiceRoute; range: where Near fades out, units) and
         // this server's voice setup (VoiceFlags, the channel names the radio key / a call talk to).
@@ -148,7 +148,7 @@ public:
     void SendUse(uint16_t interaction);
     void SendKey(uint8_t virtualKey);
     void SendAnimEnd(uint8_t reason);
-    void SendShot(const std::string& weaponClass, float x, float y, float z);
+    void SendShot(const std::string& weaponClass, float x, float y, float z, float dx = 0, float dy = 0, float dz = 0);
     void SendThrow(const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz);
     void SendVoice(VoiceKey key, VoiceCodec codec, int gain, const uint8_t* frame, size_t size);  // unreliable, kChanVoice; gain: microphone volume %
     void SendImageRequest(const std::string& name);

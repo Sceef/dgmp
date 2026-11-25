@@ -1683,7 +1683,7 @@ void HookClient() {
     };
     client.on.pose = OnPose;
     client.on.message = [](uint32_t rgba, const std::string& text) { hud::AddMessage(rgba, W(text)); };
-    client.on.setTime = [](float hours, bool paused) { DGMP_SetTimeOfDay(hours); DGMP_SetTimePaused(paused ? 1 : 0); };
+    client.on.setTime = [](float hours, bool paused, float rate) { DGMP_SetTimeOfDay(hours); DGMP_SetTimeRate(rate); DGMP_SetTimePaused(paused ? 1 : 0); };
     client.on.setWeather = [](int id) { if (id < 0) DGMP_SetWeatherAutomatic(1); else DGMP_SetWeather(uint32_t(id)); };
     client.on.teleport = [](float x, float y, float z, float yaw) {
         teleport = {true, {x, y, z}, yaw, !initialTeleportSeen};
@@ -1742,7 +1742,7 @@ void HookClient() {
         FVector v{}; if (at) v = FVector{at[0], at[1], at[2]};
         sounds::Play(path, at ? &v : nullptr, volume, pitch);
     };
-    client.on.playerShot = [](uint16_t id, const std::string& cls, float x, float y, float z) { sounds::OnPlayerShot(id, cls, FVector{x, y, z}); };
+    client.on.playerShot = [](uint16_t id, const std::string& cls, float x, float y, float z, float dx, float dy, float dz) { sounds::OnPlayerShot(id, cls, FVector{x, y, z}, FVector{dx, dy, dz}); };
     client.on.playerThrow = [](uint16_t id, const std::string& mesh, float scale, float x, float y, float z, float vx, float vy, float vz) { throws::OnThrow(id, mesh, scale, FVector{x, y, z}, FVector{vx, vy, vz}); };
     client.on.voice = [](uint16_t id, net::VoiceRoute route, net::VoiceCodec codec, int gain, float range, const uint8_t* frame, size_t size) { voice::OnFrame(id, route, codec, gain, range, frame, size); };
     client.on.voiceSetup = [](uint8_t flags, const std::string& radio, const std::string& call) { voice::OnSetup(flags, radio, call); };

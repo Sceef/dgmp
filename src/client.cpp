@@ -559,8 +559,8 @@ void SweepManagers(double now) {
             nextEvents=now+5; BoolArg(events,"Pause","ForceUnload",true); Call(events,"RemoveAllEventsQueuedToLoad");
         }
         if(auto gen=Instance("BendAmbientGenerator")) {
-            if(Once(gen)) Call(gen,"ForceDespawnAll");
-            if(auto f=Fn(gen,"SetImportanceToBlockBelow")) { Params p(f); p.Set<uint8_t>("importance",255); Call(gen,"SetImportanceToBlockBelow",&p); }
+            if(Once(gen) && !zombies::NativeWasActive()) Call(gen,"ForceDespawnAll");
+            if(auto f=Fn(gen,"SetImportanceToBlockBelow")) { Params p(f); p.Set<uint8_t>("importance",zombies::NativeAuthority()?0:255); Call(gen,"SetImportanceToBlockBelow",&p); }
         }
     }
 }

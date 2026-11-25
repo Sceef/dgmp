@@ -20,6 +20,7 @@ end
 if not getZone("outpost_camp") then createZone({name="outpost_camp",type="pve",shape="box",x=(minX+maxX)/2,y=(minY+maxY)/2,z=(minZ+maxZ)/2,
     length=(maxX-minX)/100+30,width=(maxY-minY)/100+30,height=(maxZ-minZ)/200+20,yaw=0,
     world=0}) end
+require("spawns")
 setTime(13,true)
 local serviceBlips={
     office={icon="MAP_player_safehouse",title=L("Комендатура","Command office"),description=L("Регистрация, профессии и задания лагеря.","Registration, professions and camp jobs.")},

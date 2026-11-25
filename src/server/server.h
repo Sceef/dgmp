@@ -58,9 +58,17 @@ struct Config {
     int voiceRate = 8000;
     int voiceListeners = 8;
     int voiceBandwidth = 0;
+    // Server-owned environment cadence, configured in server.ini.
+    enum class EnvironmentMode : uint8_t { Paused, Local, Synchronized } environmentMode = EnvironmentMode::Synchronized;
+    int dayDurationMinutes = 1440;
+    int weatherInterval = 600;
+    int environmentSyncInterval = 30;
     // Freakers (docs/zombies.md, experimental): createZombie works only with Zombies=1; a zombie is run by
     // the client of the player nearest to it within zombieOwnRange (units).
     bool zombies = false;
+    bool nativePopulation = false;
+    int nativeMaxSpawns = 100;
+    int nativeMaxNearby = 10;
     float zombieOwnRange = 15000;
 };
 
@@ -207,6 +215,8 @@ struct Zombie {
     uint8_t montageSeq = 0; std::string montage;
     std::string zone;                         // the zombie zone that spawned it ("": the mode did)
     uint16_t horde = 0;                       // the horde it belongs to (createHorde; 0: none)
+    uint16_t nativeSource = 0xFFFF;
+    uint32_t nativeToken = 0;
 };
 
 // A zombie zone (docs/zombies.md "Zones"): while a player is near, it keeps `max` zombies inside it, a dead
@@ -357,6 +367,9 @@ struct Player {
     double hitWindow = 0; int hitCount = 0;        // hit report rate limit
     int8_t pvp = -1;                               // player:setPvp: -1 the rules decide, 0 never hurts / is hurt by players, 1 always (both need it)
     std::vector<std::string> zones;                // names of the enabled zones it stands in
+    bool nativePopulation = false;
+    double nativeWindow = 0;
+    int nativeCount = 0;
     std::string zoneHud;                           // the zone line on its screen now ("": none)
     uint16_t carrying = 0;                         // the box (Carry) in its hands (0: none)
     int64_t money = 0;                             // the mode's money (docs/API.md "Деньги"); not kept by the server
@@ -623,7 +636,7 @@ public:
     void LeaveVoiceChannel(Player& p, const std::string& name);              // "": all of them
     static const char* Talking(const Player& p);   // "talk", "radio" or null
     // Freakers (src/server/zombies.cpp, docs/zombies.md); null / false when Zombies=0
-    const Zombie* CreateZombie(const std::string& type, float x, float y, float z, float yaw, int32_t world);
+    const Zombie* CreateZombie(const std::string& type, float x, float y, float z, float yaw, int32_t world, uint16_t nativeSource = 0xFFFF, uint32_t nativeToken = 0, float health = -1);
     bool RemoveZombie(uint16_t id);
     bool SetZombieOwner(uint16_t id, Player* owner);  // pin its owner (null: the nearest player again)
     const Zombie* FindZombie(uint16_t id) const { auto it = zombies_.find(id); return it == zombies_.end() ? nullptr : &it->second; }
@@ -652,6 +665,9 @@ public:
     void Log(const char* fmt, ...);
 
 private:
+    void TickEnvironment();
+    float CurrentTime(double now) const;
+    float TimeRate() const;
     void HandleConsole(const std::string& line);
     void OnConnect(_ENetPeer* peer);
     void OnDisconnect(_ENetPeer* peer, uint8_t reason);
@@ -706,6 +722,8 @@ private:
     void OnZombieHit(Player& p, const uint8_t* data, size_t size);
     void OnZombieDied(Player& p, const uint8_t* data, size_t size);
     void OnZombieAttack(Player& p, const uint8_t* data, size_t size);
+    void OnNativeSpawn(Player& p, const uint8_t* data, size_t size);
+    void OnNativeGone(Player& p, const uint8_t* data, size_t size);
     void SendZombie(Player* to, const Zombie& z);  // to null: everyone
     void ZombiesPlayerGone(uint16_t id);           // its zombies go to the next nearest
     void TickZombieZones();                        // fill the zones players are near, empty the others
@@ -847,6 +865,12 @@ private:
     std::mutex consoleLock_;
     std::vector<std::string> consoleQueue_;
     float timeHours_ = -1; bool timePaused_ = false; int weather_ = -2;  // -1 auto, -2 never set
+    // Automatic weather sends concrete presets; moving time is periodically corrected from this server clock.
+    double timeSetAt_ = 0;
+    int effectiveWeather_ = -2;
+    bool weatherAutomatic_ = false;
+    double nextWeatherChange_ = 0;
+    double nextEnvironmentSync_ = 0;
     FILE* log_ = nullptr;
 };
 

@@ -528,7 +528,8 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
     }
     case Msg::PlayerShot: {
         const uint16_t id = r.U16(); const auto cls = r.Str(128); const float x = r.F32(), y = r.F32(), z = r.F32();
-        if (r.ok() && on.playerShot) on.playerShot(id, cls, x, y, z);
+        const float dx = r.left() >= 12 ? r.F32() : 0, dy = r.left() >= 8 ? r.F32() : 0, dz = r.left() >= 4 ? r.F32() : 0;
+        if (r.ok() && on.playerShot) on.playerShot(id, cls, x, y, z, dx, dy, dz);
         break;
     }
     case Msg::PlayAnim: { const auto path = r.Str(512); const uint8_t flags = r.U8(); const float rate = r.F32(); if (r.ok() && on.playAnim) on.playAnim(path, flags, rate); break; }
@@ -559,7 +560,7 @@ void Client::OnPacket(const uint8_t* data, size_t size, double now) {
     case Msg::Settings: { const auto tags = static_cast<NametagMode>(r.U8()); const uint8_t coll = r.left() ? r.U8() : 0; if (r.ok() && on.settings) on.settings(tags, coll); break; }
     case Msg::PlayerGear: { const auto id = r.U16(); size_t n = 0; const uint8_t* rest = r.Rest(n); if (r.ok() && on.gear) on.gear(id, rest, n); break; }
     case Msg::Message: { const auto c = r.U32(); const auto t = r.Str(); if (r.ok() && on.message) on.message(c, t); break; }
-    case Msg::SetTime: { const auto h = r.F32(); const auto p = r.U8(); if (r.ok() && on.setTime) on.setTime(h, p != 0); break; }
+    case Msg::SetTime: { const auto h = r.F32(); const auto p = r.U8(); const float rate = r.left() >= 4 ? r.F32() : 1.f; if (r.ok() && on.setTime) on.setTime(h, p != 0, rate); break; }
     case Msg::SetWeather: { const auto w = r.I32(); if (r.ok() && on.setWeather) on.setWeather(w); break; }
     case Msg::Teleport: {
         const float x = r.F32(), y = r.F32(), z = r.F32(), yaw = r.F32();
@@ -708,10 +709,10 @@ void Client::SendThrow(const std::string& mesh, float scale, float x, float y, f
     Writer w; w.Op(Msg::Throw); w.Str(mesh.substr(0, 256)); w.F32(scale); w.F32(x); w.F32(y); w.F32(z); w.F32(vx); w.F32(vy); w.F32(vz);
     enet_peer_send(peer_, kChanReliable, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
-void Client::SendShot(const std::string& weaponClass, float x, float y, float z) {
+void Client::SendShot(const std::string& weaponClass, float x, float y, float z, float dx, float dy, float dz) {
     if (status_ != Status::Connected) return;
-    Writer w; w.Op(Msg::Shot); w.Str(weaponClass.substr(0, 128)); w.F32(x); w.F32(y); w.F32(z);
-    enet_peer_send(peer_, kChanState, enet_packet_create(w.buf.data(), w.buf.size(), 0));
+    Writer w; w.Op(Msg::Shot); w.Str(weaponClass.substr(0, 128)); w.F32(x); w.F32(y); w.F32(z); w.F32(dx); w.F32(dy); w.F32(dz);
+    enet_peer_send(peer_, kChanEffects, enet_packet_create(w.buf.data(), w.buf.size(), ENET_PACKET_FLAG_RELIABLE));
 }
 void Client::SendVoice(VoiceKey key, VoiceCodec codec, int gain, const uint8_t* frame, size_t size) {
     if (status_ != Status::Connected || !size || size > kVoiceFrameMax) return;

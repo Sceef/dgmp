@@ -10,7 +10,7 @@
 using namespace ue;
 namespace environment {
 namespace {
-enum class Kind { Time, Pause, Weather, Automatic };
+enum class Kind { Time, Pause, Rate, Weather, Automatic };
 struct Request { Kind kind; float value; uint64_t revision; };
 std::mutex mutex;
 Snapshot published;
@@ -99,6 +99,10 @@ bool Apply(const Request& r) {
         if(!OneFloat("SetWorldTimeRate",value?0.f:resumeRate)) return false;
         paused=value; return true;
     }
+    if(r.kind==Kind::Rate) {
+        resumeRate=r.value;
+        return paused || OneFloat("SetWorldTimeRate",resumeRate);
+    }
     if(r.kind==Kind::Automatic) {
         automatic=r.value!=0; automaticOverride=true;
         if(auto o=Precipitation();IsValid(o)) SetBoolProp(o,"SampleWeatherDataDynamically",automatic);
@@ -161,6 +165,7 @@ extern "C" __declspec(dllexport) int DGMP_SetTimeOfDay(float hours) {
     return std::isfinite(hours) && hours>=0 && hours<24 && Enqueue(Kind::Time,hours);
 }
 extern "C" __declspec(dllexport) int DGMP_SetTimePaused(int value) { return (value==0 || value==1) && Enqueue(Kind::Pause,float(value)); }
+extern "C" __declspec(dllexport) int DGMP_SetTimeRate(float value) { return std::isfinite(value) && value>0 && value<=1440 && Enqueue(Kind::Rate,value); }
 extern "C" __declspec(dllexport) int DGMP_SetWeather(uint32_t id) {
     if(id>255) return 0;
     { std::lock_guard lock(mutex); if(!published.weather.empty() && std::none_of(published.weather.begin(),published.weather.end(),[id](const auto& w){return w.id==id;})) return 0; }
